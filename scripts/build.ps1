@@ -1,6 +1,6 @@
 ﻿param(
   [string]$OutputPath = "$PSScriptRoot\..\FigmaCnPatcher.exe",
-  [string]$Version = "0.2.1"
+  [string]$Version = "0.2.2"
 )
 
 $ErrorActionPreference = "Stop"
@@ -8,6 +8,7 @@ $root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $source = Join-Path $root "src\FigmaCnPatcher.ps1"
 $output = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputPath)
 $generatedSource = Join-Path ([System.IO.Path]::GetTempPath()) ("FigmaCnPatcher.embedded." + [Guid]::NewGuid().ToString("N") + ".ps1")
+$iconFile = Join-Path $root "assets\figma-cn-patcher.ico"
 
 Import-Module ps2exe -ErrorAction Stop
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $output) | Out-Null
@@ -40,6 +41,7 @@ try {
     -product "FigmaCnPatcher" `
     -company "tnanren-ux" `
     -version "$Version.0" `
+    -iconFile $iconFile `
     -STA `
     -DPIAware
 } finally {

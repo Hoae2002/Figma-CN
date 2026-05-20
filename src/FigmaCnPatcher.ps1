@@ -17,7 +17,7 @@ if ($args -contains "-Status" -or $args -contains "/Status") { $Status = $true }
 if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClose = $true }
 
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V2"
-$PatcherVersion = "0.2.1"
+$PatcherVersion = "0.2.2"
 $PayloadFile = "i.js"
 $BackupFile = "app.asar.figma-zh-official-preload-original"
 $LicenseCommentTarget = "/*! Bundled license information:"
@@ -170,16 +170,22 @@ function Get-AsarFileSlice {
   }
 }
 
-function Build-Payload {
-  $baseDir = Get-BaseDir
-  function Read-PayloadText {
-    param([string]$RelativePath)
-    if ($EmbeddedPayloadFiles.ContainsKey($RelativePath)) {
-      $bytes = [System.Convert]::FromBase64String($EmbeddedPayloadFiles[$RelativePath])
-      return [System.Text.Encoding]::UTF8.GetString($bytes)
-    }
-    return [System.IO.File]::ReadAllText((Join-Path $baseDir $RelativePath), [System.Text.Encoding]::UTF8)
+function Read-PayloadText {
+  param([string]$RelativePath)
+  if ($EmbeddedPayloadFiles.ContainsKey($RelativePath)) {
+    $bytes = [System.Convert]::FromBase64String($EmbeddedPayloadFiles[$RelativePath])
+    return [System.Text.Encoding]::UTF8.GetString($bytes)
   }
+  return [System.IO.File]::ReadAllText((Join-Path (Get-BaseDir) $RelativePath), [System.Text.Encoding]::UTF8)
+}
+
+function Get-PayloadVersion {
+  $manifest = Read-PayloadText "payload\manifest.json" | ConvertFrom-Json
+  if ($manifest.version) { return [string]$manifest.version }
+  return "unknown"
+}
+
+function Build-Payload {
   $manifest = Read-PayloadText "payload\manifest.json" | ConvertFrom-Json
   $dictionary = Read-PayloadText "payload\src\dictionary\zh-CN.js"
   $core = Read-PayloadText "payload\src\content\localizer-core.js"
@@ -224,6 +230,7 @@ function Get-PatchStatus {
   $source = [System.Text.Encoding]::UTF8.GetString($main.Bytes)
   return [pscustomobject]@{
     PatcherVersion = $PatcherVersion
+    PayloadVersion = Get-PayloadVersion
     AppDir = $Target.AppDir
     FigmaVersion = $Target.FigmaVersion
     AsarPath = $Target.AsarPath
@@ -309,7 +316,9 @@ function Install-Patch {
   Write-RuntimeFiles $SelectedRuntimeDir
   $result = Patch-Asar $target $SelectedRuntimeDir
   Write-Log "Install result: $($result | ConvertTo-Json -Compress)"
-  return Get-PatchStatus $target $SelectedRuntimeDir
+  $status = Get-PatchStatus $target $SelectedRuntimeDir
+  $status | Add-Member -NotePropertyName AlreadyPatched -NotePropertyValue ([bool]$result.AlreadyPatched) -Force
+  return $status
 }
 
 function Uninstall-Patch {
@@ -360,6 +369,9 @@ function Invoke-SelfTest {
     if (-not $installStatus.Patched) { throw "Self-test install did not mark the app as patched." }
     if (-not $installStatus.HasBackup) { throw "Self-test did not create a backup." }
     if (-not $installStatus.HasRuntimePayload) { throw "Self-test did not write the runtime payload." }
+    if ($installStatus.PayloadVersion -ne "0.8.14") { throw "Self-test payload version mismatch." }
+    $repeatInstallStatus = Install-Patch $fakeAppDir $fakeRuntime -SkipProcessCheck
+    if (-not $repeatInstallStatus.AlreadyPatched) { throw "Self-test repeat install did not report already patched." }
     $uninstallStatus = Uninstall-Patch $fakeAppDir $fakeRuntime -SkipProcessCheck
     if ($uninstallStatus.Patched) { throw "Self-test uninstall did not restore the original app.asar." }
     Write-Host "Self-test passed."
@@ -372,6 +384,7 @@ function Format-StatusText {
   param($Status)
   return @(
     "补丁程序版本：$($Status.PatcherVersion)"
+    "词库版本：$($Status.PayloadVersion)"
     "Figma 路径：$($Status.AppDir)"
     "Figma 版本：$($Status.FigmaVersion)"
     "补丁状态：$(if ($Status.Patched) { "已安装" } else { "未安装" })"
@@ -383,6 +396,7 @@ function Format-StatusText {
 function Set-StatusLabels {
   param($Status)
   $script:ValuePatcher.Text = "v$($Status.PatcherVersion)"
+  $script:ValuePayload.Text = "v$($Status.PayloadVersion)"
   $script:ValueFigmaVersion.Text = $Status.FigmaVersion
   $script:ValuePatchState.Text = if ($Status.Patched) { "已安装" } else { "未安装" }
   $script:ValueBackupState.Text = if ($Status.HasBackup) { "已存在" } else { "未找到" }
@@ -476,7 +490,7 @@ function Show-Gui {
   $statusGroup.Left = 18
   $statusGroup.Top = 222
   $statusGroup.Width = 764
-  $statusGroup.Height = 130
+  $statusGroup.Height = 154
   $statusGroup.Anchor = "Top,Left,Right"
 
   function New-StatusLabel {
@@ -502,21 +516,25 @@ function Show-Gui {
 
   $script:ValuePatcher = New-StatusValue 24
   $script:ValuePatcher.Text = "v$PatcherVersion"
-  $script:ValueFigmaVersion = New-StatusValue 46
-  $script:ValuePatchState = New-StatusValue 68
-  $script:ValueBackupState = New-StatusValue 90
-  $script:ValueRuntimeState = New-StatusValue 112
+  $script:ValuePayload = New-StatusValue 46
+  $script:ValuePayload.Text = "v$(Get-PayloadVersion)"
+  $script:ValueFigmaVersion = New-StatusValue 68
+  $script:ValuePatchState = New-StatusValue 90
+  $script:ValueBackupState = New-StatusValue 112
+  $script:ValueRuntimeState = New-StatusValue 134
 
   $statusGroup.Controls.AddRange(@(
     (New-StatusLabel "补丁程序版本：" 24),
     $script:ValuePatcher,
-    (New-StatusLabel "Figma 版本：" 46),
+    (New-StatusLabel "词库版本：" 46),
+    $script:ValuePayload,
+    (New-StatusLabel "Figma 版本：" 68),
     $script:ValueFigmaVersion,
-    (New-StatusLabel "补丁状态：" 68),
+    (New-StatusLabel "补丁状态：" 90),
     $script:ValuePatchState,
-    (New-StatusLabel "备份状态：" 90),
+    (New-StatusLabel "备份状态：" 112),
     $script:ValueBackupState,
-    (New-StatusLabel "运行时文件：" 112),
+    (New-StatusLabel "运行时文件：" 134),
     $script:ValueRuntimeState
   ))
 
@@ -553,7 +571,7 @@ function Show-Gui {
       Get-PatchStatus $target $txtRuntime.Text
     } {
       param($result)
-      Show-InfoMessage ("检测完成。`r`n`r`nFigma 路径：$($result.AppDir)`r`nFigma 版本：$($result.FigmaVersion)`r`n补丁状态：$(if ($result.Patched) { "已安装" } else { "未安装" })")
+      Show-InfoMessage ("检测完成。`r`n`r`nFigma 路径：$($result.AppDir)`r`nFigma 版本：$($result.FigmaVersion)`r`n词库版本：v$($result.PayloadVersion)`r`n补丁状态：$(if ($result.Patched) { "已安装" } else { "未安装" })")
     } "检测失败"
   })
   $btnInstall.Add_Click({
@@ -561,7 +579,11 @@ function Show-Gui {
       Install-Patch $txtApp.Text $txtRuntime.Text -Force
     } {
       param($result)
-      Show-InfoMessage ("安装成功。`r`n`r`nFigma 版本：$($result.FigmaVersion)`r`n补丁状态：已安装")
+      if ($result.AlreadyPatched) {
+        Show-InfoMessage ("该补丁已安装，不需要重复安装。`r`n`r`nFigma 版本：$($result.FigmaVersion)`r`n词库版本：v$($result.PayloadVersion)")
+      } else {
+        Show-InfoMessage ("安装成功。`r`n`r`nFigma 版本：$($result.FigmaVersion)`r`n词库版本：v$($result.PayloadVersion)`r`n补丁状态：已安装")
+      }
     } "安装失败"
   })
   $btnUninstall.Add_Click({
