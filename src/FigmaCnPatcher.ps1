@@ -16,9 +16,10 @@ if ($args -contains "-Uninstall" -or $args -contains "/Uninstall") { $Uninstall 
 if ($args -contains "-Status" -or $args -contains "/Status") { $Status = $true }
 if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClose = $true }
 
-$PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V2"
-$PatcherVersion = "0.2.6"
+$PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V3"
+$PatcherVersion = "0.2.7"
 $PayloadFile = "i.js"
+$MainPayloadFile = "m.js"
 $BackupFile = "app.asar.figma-zh-official-preload-original"
 $LicenseCommentTarget = "/*! Bundled license information:"
 $EmbeddedPayloadFiles = @{}
@@ -209,18 +210,25 @@ function Build-Payload {
   ) -join "`n"
 }
 
+function Build-MainPayload {
+  return Read-PayloadText "payload\src\main\menu-localizer.js"
+}
+
 function Build-MainHook {
   param([string]$RuntimeDir)
   $payloadPath = Join-Path $RuntimeDir $PayloadFile
+  $mainPayloadPath = Join-Path $RuntimeDir $MainPayloadFile
   $marker = ConvertTo-JsString $PatchMarker
   $payload = ConvertTo-JsString $payloadPath
-  return ";(()=>{const M=$marker;try{const E=require(""electron""),F=require(""fs""),P=$payload;let C;function p(){return C||(C=F.readFileSync(P,""utf8""))}function j(w){if(!w||w._fz)return;w._fz=1;const r=()=>{try{let u=w.getURL();/^https:\/\/([^\/]+\.)?figma\.com/i.test(u)&&w.executeJavaScript(p(),true).catch(()=>{})}catch(e){}};w.on(""dom-ready"",r);w.on(""did-finish-load"",r)}E.app.on(""web-contents-created"",(_,w)=>j(w));E.webContents.getAllWebContents().forEach(j)}catch(e){}})();"
+  $mainPayload = ConvertTo-JsString $mainPayloadPath
+  return ";(()=>{const M=$marker;try{const E=require(""electron""),F=require(""fs""),P=$payload,Q=$mainPayload;try{F.existsSync(Q)&&eval(F.readFileSync(Q,""utf8""))}catch(e){}let C;function p(){return C||(C=F.readFileSync(P,""utf8""))}function j(w){if(!w||w._fz)return;w._fz=1;const r=()=>{try{let u=w.getURL();/^https:\/\/([^\/]+\.)?figma\.com/i.test(u)&&w.executeJavaScript(p(),true).catch(()=>{})}catch(e){}};w.on(""dom-ready"",r);w.on(""did-finish-load"",r)}E.app.on(""web-contents-created"",(_,w)=>j(w));E.webContents.getAllWebContents().forEach(j)}catch(e){}})();"
 }
 
 function Write-RuntimeFiles {
   param([string]$RuntimeDir)
   New-Item -ItemType Directory -Force -Path $RuntimeDir | Out-Null
   [System.IO.File]::WriteAllText((Join-Path $RuntimeDir $PayloadFile), (Build-Payload), [System.Text.Encoding]::UTF8)
+  [System.IO.File]::WriteAllText((Join-Path $RuntimeDir $MainPayloadFile), (Build-MainPayload), [System.Text.Encoding]::UTF8)
 }
 
 function Get-PatchStatus {
@@ -239,6 +247,7 @@ function Get-PatchStatus {
     Patched = $source.Contains($PatchMarker)
     HasBackup = Test-Path -LiteralPath $Target.BackupPath
     HasRuntimePayload = Test-Path -LiteralPath (Join-Path $RuntimeDir $PayloadFile)
+    HasRuntimeMainPayload = Test-Path -LiteralPath (Join-Path $RuntimeDir $MainPayloadFile)
     MainSha256 = Get-Sha256Hex $main.Bytes
   }
 }
@@ -312,6 +321,13 @@ function Install-Patch {
     Write-Log "Backup created: $($target.BackupPath)"
   } else {
     Write-Log "Using existing backup: $($target.BackupPath)"
+    $currentAsar = Read-Asar $target.AsarPath
+    $currentMain = Get-AsarFileSlice $currentAsar "main.js"
+    $currentSource = [System.Text.Encoding]::UTF8.GetString($currentMain.Bytes)
+    if (-not $currentSource.Contains($PatchMarker)) {
+      Copy-Item -LiteralPath $target.BackupPath -Destination $target.AsarPath -Force
+      Write-Log "Restored original app.asar before updating patch hook."
+    }
   }
   Write-RuntimeFiles $SelectedRuntimeDir
   $result = Patch-Asar $target $SelectedRuntimeDir
@@ -369,7 +385,8 @@ function Invoke-SelfTest {
     if (-not $installStatus.Patched) { throw "Self-test install did not mark the app as patched." }
     if (-not $installStatus.HasBackup) { throw "Self-test did not create a backup." }
     if (-not $installStatus.HasRuntimePayload) { throw "Self-test did not write the runtime payload." }
-    if ($installStatus.PayloadVersion -ne "0.8.15") { throw "Self-test payload version mismatch." }
+    if (-not $installStatus.HasRuntimeMainPayload) { throw "Self-test did not write the main runtime payload." }
+    if ($installStatus.PayloadVersion -ne "0.8.16") { throw "Self-test payload version mismatch." }
     $repeatInstallStatus = Install-Patch $fakeAppDir $fakeRuntime -SkipProcessCheck
     if (-not $repeatInstallStatus.AlreadyPatched) { throw "Self-test repeat install did not report already patched." }
     $uninstallStatus = Uninstall-Patch $fakeAppDir $fakeRuntime -SkipProcessCheck

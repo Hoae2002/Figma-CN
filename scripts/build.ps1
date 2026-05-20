@@ -1,6 +1,6 @@
 ﻿param(
   [string]$OutputPath = "$PSScriptRoot\..\FigmaCnPatcher.exe",
-  [string]$Version = "0.2.6"
+  [string]$Version = "0.2.7"
 )
 
 $ErrorActionPreference = "Stop"
@@ -17,7 +17,8 @@ $payloadFiles = @(
   "payload\manifest.json",
   "payload\src\dictionary\zh-CN.js",
   "payload\src\content\localizer-core.js",
-  "payload\src\content\content.js"
+  "payload\src\content\content.js",
+  "payload\src\main\menu-localizer.js"
 )
 
 $embeddedLines = @('$EmbeddedPayloadFiles = @{')
