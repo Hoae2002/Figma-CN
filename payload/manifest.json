@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "Figma 中文助手",
+  "description": "轻量汉化网页版 Figma 的界面文案，不处理画布内容。",
+  "version": "0.8.14",
+  "action": {
+    "default_popup": "src/popup/popup.html",
+    "default_title": "Figma 中文助手"
+  },
+  "permissions": [
+    "activeTab",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://www.figma.com/*",
+    "https://figma.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.figma.com/*",
+        "https://figma.com/*"
+      ],
+      "js": [
+        "src/dictionary/zh-CN.js",
+        "src/content/localizer-core.js",
+        "src/content/content.js"
+      ],
+      "run_at": "document_start"
+    }
+  ]
+}
