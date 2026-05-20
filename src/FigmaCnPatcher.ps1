@@ -17,7 +17,7 @@ if ($args -contains "-Status" -or $args -contains "/Status") { $Status = $true }
 if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClose = $true }
 
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V2"
-$PatcherVersion = "0.2.5"
+$PatcherVersion = "0.2.6"
 $PayloadFile = "i.js"
 $BackupFile = "app.asar.figma-zh-official-preload-original"
 $LicenseCommentTarget = "/*! Bundled license information:"
@@ -369,7 +369,7 @@ function Invoke-SelfTest {
     if (-not $installStatus.Patched) { throw "Self-test install did not mark the app as patched." }
     if (-not $installStatus.HasBackup) { throw "Self-test did not create a backup." }
     if (-not $installStatus.HasRuntimePayload) { throw "Self-test did not write the runtime payload." }
-    if ($installStatus.PayloadVersion -ne "0.8.14") { throw "Self-test payload version mismatch." }
+    if ($installStatus.PayloadVersion -ne "0.8.15") { throw "Self-test payload version mismatch." }
     $repeatInstallStatus = Install-Patch $fakeAppDir $fakeRuntime -SkipProcessCheck
     if (-not $repeatInstallStatus.AlreadyPatched) { throw "Self-test repeat install did not report already patched." }
     $uninstallStatus = Uninstall-Patch $fakeAppDir $fakeRuntime -SkipProcessCheck
