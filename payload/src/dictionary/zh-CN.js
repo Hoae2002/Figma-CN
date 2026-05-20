@@ -294,7 +294,6 @@
     "After creating a team, you can invite others to join.": "团队创建完成后，您可以邀请其他人加入。",
     "After delay": "延迟触发",
     "After selecting points…": "选择点后…",
-    "AI": "人工智能",
     "AI balance": "AI 余额",
     "AI beta": "AI 测试版",
     "AI features": "AI 功能",
@@ -4386,7 +4385,6 @@
     "Admin": "管理",
     "Adjust": "调整",
     "Advanced": "高级",
-    "AI": "人工智能",
     "AI balance": "AI 余额",
     "Align": "对齐",
     "Alignment": "对齐方式",
@@ -4759,6 +4757,6 @@
     uiTerms,
     commonTerms,
     patterns,
-    version: "0.8.16"
+    version: "0.8.17"
   };
 })();

@@ -48,6 +48,25 @@
     "[aria-multiline='true']"
   ].join(",");
 
+  const USER_NAMED_CONTENT_SELECTOR = [
+    "[data-testid*='file-name' i]",
+    "[data-testid*='filename' i]",
+    "[data-testid*='project-name' i]",
+    "[data-testid*='team-name' i]",
+    "[data-testid*='workspace-name' i]",
+    "[data-testid*='folder-name' i]",
+    "[data-testid*='resource-name' i]",
+    "[data-testid*='file-title' i]",
+    "[data-testid*='project-title' i]",
+    "a[href*='/file/']",
+    "a[href*='/design/']",
+    "a[href*='/board/']",
+    "a[href*='/slides/']",
+    "a[href*='/proto/']",
+    "a[href*='/files/project/']",
+    "a[href*='/team/']"
+  ].join(",");
+
   const ATTR_SKIP_SELECTOR = [
     "canvas",
     "svg",
@@ -314,6 +333,26 @@
     ));
   }
 
+  function looksLikeUserProvidedName(value) {
+    const text = normalizeText(value);
+    if (!text || text.length > 96) return false;
+    if (!/[A-Za-z0-9\u4e00-\u9fff]/.test(text)) return false;
+    if (/[。！？?：:;]/.test(text)) return false;
+    return true;
+  }
+
+  function isFileBrowserRoute() {
+    return /\/files(?:\/|$)|\/file_browser(?:\/|$)|\/team\//.test(window.location.pathname);
+  }
+
+  function isUserNamedContentElement(element, text) {
+    if (!element || element.nodeType !== Node.ELEMENT_NODE) return false;
+    if (!looksLikeUserProvidedName(text)) return false;
+    if (element.closest(USER_NAMED_CONTENT_SELECTOR)) return true;
+    if (!isFileBrowserRoute()) return false;
+    return Boolean(element.closest("h1,h2,[role='heading']"));
+  }
+
   function isTextInputElement(element) {
     if (!element || element.nodeType !== Node.ELEMENT_NODE) return false;
     if (element.matches("textarea")) return true;
@@ -424,6 +463,7 @@
 
   function shouldTranslateAttribute(element, name) {
     if (isLayerTreeContentElement(element)) return false;
+    if (isUserNamedContentElement(element, element.getAttribute(name))) return false;
     if (name === "placeholder") return true;
     return !isIconOnlyControlElement(element);
   }
@@ -821,6 +861,7 @@
     const parent = node.parentElement;
     if (!parent || isSkippableElement(parent)) return false;
     if (isLayerTreeContentElement(parent)) return false;
+    if (isUserNamedContentElement(parent, node.nodeValue)) return false;
     if (isEditableElement(parent)) return false;
     return true;
   }

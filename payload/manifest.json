@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Figma 中文助手",
   "description": "轻量汉化网页版 Figma 的界面文案，不处理画布内容。",
-  "version": "0.8.16",
+  "version": "0.8.17",
   "action": {
     "default_popup": "src/popup/popup.html",
     "default_title": "Figma 中文助手"
