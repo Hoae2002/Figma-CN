@@ -17,7 +17,7 @@ if ($args -contains "-Status" -or $args -contains "/Status") { $Status = $true }
 if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClose = $true }
 
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V2"
-$PatcherVersion = "0.2.4"
+$PatcherVersion = "0.2.5"
 $PayloadFile = "i.js"
 $BackupFile = "app.asar.figma-zh-official-preload-original"
 $LicenseCommentTarget = "/*! Bundled license information:"
@@ -422,27 +422,46 @@ function Show-Gui {
   $form.Text = "Figma 客户端汉化补丁 v$PatcherVersion"
   $form.StartPosition = "CenterScreen"
   $form.Width = 820
-  $form.Height = 430
-  $form.MinimumSize = New-Object System.Drawing.Size(780, 400)
+  $form.Height = 470
+  $form.MinimumSize = New-Object System.Drawing.Size(780, 450)
   $form.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 9)
   try {
     $exePath = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
     $form.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon($exePath)
   } catch {}
 
+  function New-InputBox {
+    param([int]$Left, [int]$Top, [int]$Width)
+    $panel = New-Object System.Windows.Forms.Panel
+    $panel.Left = $Left
+    $panel.Top = $Top
+    $panel.Width = $Width
+    $panel.Height = 34
+    $panel.BorderStyle = "FixedSingle"
+    $panel.BackColor = [System.Drawing.SystemColors]::Window
+    $panel.Anchor = "Top,Left,Right"
+
+    $textBox = New-Object System.Windows.Forms.TextBox
+    $textBox.Left = 8
+    $textBox.Top = 7
+    $textBox.Width = $Width - 16
+    $textBox.BorderStyle = "None"
+    $textBox.BackColor = [System.Drawing.SystemColors]::Window
+    $textBox.Anchor = "Top,Left,Right"
+    $panel.Controls.Add($textBox)
+
+    return [pscustomobject]@{ Panel = $panel; TextBox = $textBox }
+  }
+
   $labelApp = New-Object System.Windows.Forms.Label
   $labelApp.Text = "Figma客户端目录"
   $labelApp.Left = 18
   $labelApp.Top = 20
   $labelApp.Width = 160
+  $labelApp.Height = 18
 
-  $txtApp = New-Object System.Windows.Forms.TextBox
-  $txtApp.Left = 18
-  $txtApp.Top = 42
-  $txtApp.Width = 650
-  $txtApp.Height = 34
-  $txtApp.AutoSize = $false
-  $txtApp.Anchor = "Top,Left,Right"
+  $appInput = New-InputBox 18 42 650
+  $txtApp = $appInput.TextBox
   try { $txtApp.Text = Find-LatestFigmaAppDir } catch { $txtApp.Text = "" }
 
   $btnBrowse = New-Object System.Windows.Forms.Button
@@ -458,14 +477,10 @@ function Show-Gui {
   $labelRuntime.Left = 18
   $labelRuntime.Top = 82
   $labelRuntime.Width = 160
+  $labelRuntime.Height = 18
 
-  $txtRuntime = New-Object System.Windows.Forms.TextBox
-  $txtRuntime.Left = 18
-  $txtRuntime.Top = 104
-  $txtRuntime.Width = 650
-  $txtRuntime.Height = 34
-  $txtRuntime.AutoSize = $false
-  $txtRuntime.Anchor = "Top,Left,Right"
+  $runtimeInput = New-InputBox 18 104 650
+  $txtRuntime = $runtimeInput.TextBox
   $txtRuntime.Text = $RuntimeDir
 
   $labelNotice = New-Object System.Windows.Forms.Label
@@ -609,7 +624,7 @@ function Show-Gui {
   })
 
   $form.Controls.AddRange(@(
-    $labelApp, $txtApp, $btnBrowse, $labelRuntime, $txtRuntime, $labelNotice,
+    $labelApp, $appInput.Panel, $btnBrowse, $labelRuntime, $runtimeInput.Panel, $labelNotice,
     $btnStatus, $btnInstall, $btnUninstall, $statusGroup
   ))
 
