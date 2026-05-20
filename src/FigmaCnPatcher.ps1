@@ -17,6 +17,7 @@ if ($args -contains "-Status" -or $args -contains "/Status") { $Status = $true }
 if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClose = $true }
 
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V2"
+$PatcherVersion = "0.2.0"
 $PayloadFile = "i.js"
 $BackupFile = "app.asar.figma-zh-official-preload-original"
 $LicenseCommentTarget = "/*! Bundled license information:"
@@ -82,6 +83,13 @@ function Find-LatestFigmaAppDir {
   return $items[0].FullName
 }
 
+function Get-FigmaVersionFromAppDir {
+  param([string]$AppDir)
+  $name = Split-Path -Leaf $AppDir
+  if ($name -match '^app-(.+)$') { return $Matches[1] }
+  return "unknown"
+}
+
 function Resolve-Target {
   param([string]$SelectedAppDir)
   $resolvedAppDir = if ($SelectedAppDir) { (Resolve-Path -LiteralPath $SelectedAppDir).Path } else { Find-LatestFigmaAppDir }
@@ -93,6 +101,7 @@ function Resolve-Target {
   }
   return [pscustomobject]@{
     AppDir = $resolvedAppDir
+    FigmaVersion = Get-FigmaVersionFromAppDir $resolvedAppDir
     ResourcesDir = $resourcesDir
     AsarPath = $asarPath
     BackupPath = $backupPath
@@ -205,7 +214,9 @@ function Get-PatchStatus {
   $main = Get-AsarFileSlice $asar "main.js"
   $source = [System.Text.Encoding]::UTF8.GetString($main.Bytes)
   return [pscustomobject]@{
+    PatcherVersion = $PatcherVersion
     AppDir = $Target.AppDir
+    FigmaVersion = $Target.FigmaVersion
     AsarPath = $Target.AsarPath
     BackupPath = $Target.BackupPath
     RuntimeDir = (Resolve-Path -LiteralPath $RuntimeDir -ErrorAction SilentlyContinue).Path
@@ -277,8 +288,8 @@ function Assert-FigmaClosed {
 }
 
 function Install-Patch {
-  param([string]$SelectedAppDir, [string]$SelectedRuntimeDir, [switch]$Force)
-  Assert-FigmaClosed -Force:$Force
+  param([string]$SelectedAppDir, [string]$SelectedRuntimeDir, [switch]$Force, [switch]$SkipProcessCheck)
+  if (-not $SkipProcessCheck) { Assert-FigmaClosed -Force:$Force }
   $target = Resolve-Target $SelectedAppDir
   if (-not (Test-Path -LiteralPath $target.BackupPath)) {
     Copy-Item -LiteralPath $target.AsarPath -Destination $target.BackupPath -Force
@@ -293,8 +304,8 @@ function Install-Patch {
 }
 
 function Uninstall-Patch {
-  param([string]$SelectedAppDir, [string]$SelectedRuntimeDir, [switch]$Force)
-  Assert-FigmaClosed -Force:$Force
+  param([string]$SelectedAppDir, [string]$SelectedRuntimeDir, [switch]$Force, [switch]$SkipProcessCheck)
+  if (-not $SkipProcessCheck) { Assert-FigmaClosed -Force:$Force }
   $target = Resolve-Target $SelectedAppDir
   if (-not (Test-Path -LiteralPath $target.BackupPath)) {
     throw "Backup not found: $($target.BackupPath)"
@@ -336,11 +347,11 @@ function Invoke-SelfTest {
   $fakeRuntime = Join-Path $temp "runtime"
   try {
     New-FakeAsar $fakeAsar
-    $installStatus = Install-Patch $fakeAppDir $fakeRuntime
+    $installStatus = Install-Patch $fakeAppDir $fakeRuntime -SkipProcessCheck
     if (-not $installStatus.Patched) { throw "Self-test install did not mark the app as patched." }
     if (-not $installStatus.HasBackup) { throw "Self-test did not create a backup." }
     if (-not $installStatus.HasRuntimePayload) { throw "Self-test did not write the runtime payload." }
-    $uninstallStatus = Uninstall-Patch $fakeAppDir $fakeRuntime
+    $uninstallStatus = Uninstall-Patch $fakeAppDir $fakeRuntime -SkipProcessCheck
     if ($uninstallStatus.Patched) { throw "Self-test uninstall did not restore the original app.asar." }
     Write-Host "Self-test passed."
   } finally {
@@ -351,12 +362,33 @@ function Invoke-SelfTest {
 function Format-StatusText {
   param($Status)
   return @(
-    "Figma app: $($Status.AppDir)"
-    "Patched: $($Status.Patched)"
-    "Backup: $($Status.HasBackup)"
-    "Runtime payload: $($Status.HasRuntimePayload)"
-    "Main SHA256: $($Status.MainSha256)"
+    "补丁程序版本：$($Status.PatcherVersion)"
+    "Figma 路径：$($Status.AppDir)"
+    "Figma 版本：$($Status.FigmaVersion)"
+    "补丁状态：$(if ($Status.Patched) { "已安装" } else { "未安装" })"
+    "备份状态：$(if ($Status.HasBackup) { "已存在" } else { "未找到" })"
+    "运行时文件：$(if ($Status.HasRuntimePayload) { "已生成" } else { "未生成" })"
   ) -join "`r`n"
+}
+
+function Set-StatusLabels {
+  param($Status)
+  $script:ValuePatcher.Text = $Status.PatcherVersion
+  $script:ValueFigmaVersion.Text = $Status.FigmaVersion
+  $script:ValuePatchState.Text = if ($Status.Patched) { "已安装" } else { "未安装" }
+  $script:ValueBackupState.Text = if ($Status.HasBackup) { "已存在" } else { "未找到" }
+  $script:ValueRuntimeState.Text = if ($Status.HasRuntimePayload) { "已生成" } else { "未生成" }
+  $script:ValueAsarHash.Text = $Status.MainSha256
+}
+
+function Show-InfoMessage {
+  param([string]$Text, [string]$Title = "Figma 客户端汉化补丁")
+  [System.Windows.Forms.MessageBox]::Show($Text, $Title, "OK", "Information") | Out-Null
+}
+
+function Show-ErrorMessage {
+  param([string]$Text)
+  [System.Windows.Forms.MessageBox]::Show($Text, "Figma 客户端汉化补丁", "OK", "Error") | Out-Null
 }
 
 function Show-Gui {
@@ -365,11 +397,11 @@ function Show-Gui {
   [System.Windows.Forms.Application]::EnableVisualStyles()
 
   $form = New-Object System.Windows.Forms.Form
-  $form.Text = "Figma 客户端汉化补丁"
+  $form.Text = "Figma 客户端汉化补丁 v$PatcherVersion"
   $form.StartPosition = "CenterScreen"
   $form.Width = 760
-  $form.Height = 520
-  $form.MinimumSize = New-Object System.Drawing.Size(720, 460)
+  $form.Height = 400
+  $form.MinimumSize = New-Object System.Drawing.Size(720, 360)
 
   $labelApp = New-Object System.Windows.Forms.Label
   $labelApp.Text = "Figma app-* 目录"
@@ -404,49 +436,95 @@ function Show-Gui {
   $txtRuntime.Anchor = "Top,Left,Right"
   $txtRuntime.Text = $RuntimeDir
 
-  $chkForce = New-Object System.Windows.Forms.CheckBox
-  $chkForce.Text = "安装或卸载前强制关闭 Figma"
-  $chkForce.Left = 18
-  $chkForce.Top = 142
-  $chkForce.Width = 260
+  $labelNotice = New-Object System.Windows.Forms.Label
+  $labelNotice.Text = "提示：安装或卸载时会自动强制关闭 Figma，请先保存未同步的工作。"
+  $labelNotice.Left = 18
+  $labelNotice.Top = 142
+  $labelNotice.Width = 700
+  $labelNotice.Anchor = "Top,Left,Right"
+  $labelNotice.ForeColor = [System.Drawing.Color]::FromArgb(150, 70, 0)
 
   $btnStatus = New-Object System.Windows.Forms.Button
-  $btnStatus.Text = "检查状态"
+  $btnStatus.Text = "自动检查路径和版本"
   $btnStatus.Left = 18
   $btnStatus.Top = 178
-  $btnStatus.Width = 130
+  $btnStatus.Width = 170
 
   $btnInstall = New-Object System.Windows.Forms.Button
   $btnInstall.Text = "安装补丁"
-  $btnInstall.Left = 160
+  $btnInstall.Left = 202
   $btnInstall.Top = 178
   $btnInstall.Width = 130
 
   $btnUninstall = New-Object System.Windows.Forms.Button
   $btnUninstall.Text = "卸载补丁"
-  $btnUninstall.Left = 302
+  $btnUninstall.Left = 344
   $btnUninstall.Top = 178
   $btnUninstall.Width = 130
 
-  $script:LogBox = New-Object System.Windows.Forms.TextBox
-  $script:LogBox.Left = 18
-  $script:LogBox.Top = 224
-  $script:LogBox.Width = 702
-  $script:LogBox.Height = 235
-  $script:LogBox.Multiline = $true
-  $script:LogBox.ScrollBars = "Vertical"
-  $script:LogBox.ReadOnly = $true
-  $script:LogBox.Anchor = "Top,Bottom,Left,Right"
+  $statusGroup = New-Object System.Windows.Forms.GroupBox
+  $statusGroup.Text = "当前检测结果"
+  $statusGroup.Left = 18
+  $statusGroup.Top = 222
+  $statusGroup.Width = 702
+  $statusGroup.Height = 110
+  $statusGroup.Anchor = "Top,Left,Right"
+
+  function New-StatusLabel {
+    param([string]$Text, [int]$Left, [int]$Top, [int]$Width = 100)
+    $label = New-Object System.Windows.Forms.Label
+    $label.Text = $Text
+    $label.Left = $Left
+    $label.Top = $Top
+    $label.Width = $Width
+    return $label
+  }
+
+  function New-StatusValue {
+    param([int]$Left, [int]$Top, [int]$Width = 190)
+    $label = New-Object System.Windows.Forms.Label
+    $label.Text = "未检测"
+    $label.Left = $Left
+    $label.Top = $Top
+    $label.Width = $Width
+    $label.AutoEllipsis = $true
+    return $label
+  }
+
+  $script:ValuePatcher = New-StatusValue 110 24
+  $script:ValuePatcher.Text = $PatcherVersion
+  $script:ValueFigmaVersion = New-StatusValue 440 24
+  $script:ValuePatchState = New-StatusValue 110 50
+  $script:ValueBackupState = New-StatusValue 440 50
+  $script:ValueRuntimeState = New-StatusValue 110 76
+  $script:ValueAsarHash = New-StatusValue 440 76 240
+
+  $statusGroup.Controls.AddRange(@(
+    (New-StatusLabel "补丁程序版本：" 16 24),
+    $script:ValuePatcher,
+    (New-StatusLabel "Figma 版本：" 344 24 90),
+    $script:ValueFigmaVersion,
+    (New-StatusLabel "补丁状态：" 16 50),
+    $script:ValuePatchState,
+    (New-StatusLabel "备份状态：" 344 50 90),
+    $script:ValueBackupState,
+    (New-StatusLabel "运行时文件：" 16 76),
+    $script:ValueRuntimeState,
+    (New-StatusLabel "主文件校验：" 344 76 90),
+    $script:ValueAsarHash
+  ))
 
   $runAction = {
-    param([scriptblock]$Action)
+    param([scriptblock]$Action, [scriptblock]$OnSuccess, [string]$FailurePrefix = "操作失败")
     try {
       $form.UseWaitCursor = $true
       $result = & $Action
-      if ($result) { Write-Log (Format-StatusText $result) }
+      if ($result) {
+        Set-StatusLabels $result
+        if ($OnSuccess) { & $OnSuccess $result }
+      }
     } catch {
-      Write-Log "Error: $($_.Exception.Message)"
-      [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, "Figma 客户端汉化补丁", "OK", "Error") | Out-Null
+      Show-ErrorMessage "$FailurePrefix：`r`n`r`n$($_.Exception.Message)"
     } finally {
       $form.UseWaitCursor = $false
     }
@@ -463,23 +541,38 @@ function Show-Gui {
 
   $btnStatus.Add_Click({
     & $runAction {
-      $target = Resolve-Target $txtApp.Text
+      $latest = Find-LatestFigmaAppDir
+      $txtApp.Text = $latest
+      $target = Resolve-Target $latest
       Get-PatchStatus $target $txtRuntime.Text
-    }
+    } {
+      param($result)
+      Show-InfoMessage ("检测完成。`r`n`r`nFigma 路径：$($result.AppDir)`r`nFigma 版本：$($result.FigmaVersion)`r`n补丁状态：$(if ($result.Patched) { "已安装" } else { "未安装" })")
+    } "检测失败"
   })
   $btnInstall.Add_Click({
-    & $runAction { Install-Patch $txtApp.Text $txtRuntime.Text -Force:$chkForce.Checked }
+    & $runAction {
+      Install-Patch $txtApp.Text $txtRuntime.Text -Force
+    } {
+      param($result)
+      Show-InfoMessage ("安装成功。`r`n`r`nFigma 版本：$($result.FigmaVersion)`r`n补丁状态：已安装")
+    } "安装失败"
   })
   $btnUninstall.Add_Click({
-    & $runAction { Uninstall-Patch $txtApp.Text $txtRuntime.Text -Force:$chkForce.Checked }
+    & $runAction {
+      $target = Resolve-Target $txtApp.Text
+      Uninstall-Patch $target.AppDir $txtRuntime.Text -Force
+    } {
+      param($result)
+      Show-InfoMessage ("卸载成功。`r`n`r`nFigma 版本：$($result.FigmaVersion)`r`n补丁状态：未安装")
+    } "卸载失败"
   })
 
   $form.Controls.AddRange(@(
-    $labelApp, $txtApp, $btnBrowse, $labelRuntime, $txtRuntime, $chkForce,
-    $btnStatus, $btnInstall, $btnUninstall, $script:LogBox
+    $labelApp, $txtApp, $btnBrowse, $labelRuntime, $txtRuntime, $labelNotice,
+    $btnStatus, $btnInstall, $btnUninstall, $statusGroup
   ))
 
-  Write-Log "Ready. Close Figma before installing or uninstalling."
   [void]$form.ShowDialog()
 }
 

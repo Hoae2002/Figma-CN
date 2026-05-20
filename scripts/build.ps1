@@ -1,5 +1,6 @@
 ﻿param(
-  [string]$OutputPath = "$PSScriptRoot\..\dist\FigmaCnPatcher.exe"
+  [string]$OutputPath = "$PSScriptRoot\..\dist\FigmaCnPatcher.exe",
+  [string]$Version = "0.2.0"
 )
 
 $ErrorActionPreference = "Stop"
@@ -25,9 +26,9 @@ Invoke-ps2exe `
   -description "Figma Desktop Chinese patcher" `
   -product "FigmaCnPatcher" `
   -company "tnanren-ux" `
-  -version "0.1.0.0" `
+  -version "$Version.0" `
   -STA `
   -DPIAware `
   -winFormsDPIAware
 
-Write-Host "Built $output"
+Write-Host "Built $output v$Version"
