@@ -17,7 +17,7 @@ if ($args -contains "-Status" -or $args -contains "/Status") { $Status = $true }
 if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClose = $true }
 
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V2"
-$PatcherVersion = "0.2.2"
+$PatcherVersion = "0.2.3"
 $PayloadFile = "i.js"
 $BackupFile = "app.asar.figma-zh-official-preload-original"
 $LicenseCommentTarget = "/*! Bundled license information:"
@@ -425,6 +425,10 @@ function Show-Gui {
   $form.Height = 430
   $form.MinimumSize = New-Object System.Drawing.Size(780, 400)
   $form.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 9)
+  try {
+    $exePath = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+    $form.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon($exePath)
+  } catch {}
 
   $labelApp = New-Object System.Windows.Forms.Label
   $labelApp.Text = "Figma客户端目录"
@@ -444,6 +448,7 @@ function Show-Gui {
   $btnBrowse.Left = 682
   $btnBrowse.Top = 42
   $btnBrowse.Width = 100
+  $btnBrowse.Height = 30
   $btnBrowse.Anchor = "Top,Right"
 
   $labelRuntime = New-Object System.Windows.Forms.Label
@@ -472,18 +477,21 @@ function Show-Gui {
   $btnStatus.Left = 18
   $btnStatus.Top = 178
   $btnStatus.Width = 170
+  $btnStatus.Height = 34
 
   $btnInstall = New-Object System.Windows.Forms.Button
   $btnInstall.Text = "安装补丁"
   $btnInstall.Left = 202
   $btnInstall.Top = 178
   $btnInstall.Width = 130
+  $btnInstall.Height = 34
 
   $btnUninstall = New-Object System.Windows.Forms.Button
   $btnUninstall.Text = "卸载补丁"
   $btnUninstall.Left = 344
   $btnUninstall.Top = 178
   $btnUninstall.Width = 130
+  $btnUninstall.Height = 34
 
   $statusGroup = New-Object System.Windows.Forms.GroupBox
   $statusGroup.Text = "当前检测结果"
