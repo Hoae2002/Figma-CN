@@ -2,15 +2,17 @@
 
 Windows 图形界面补丁器，用于给官方 Figma Desktop 客户端注入汉化脚本。
 
-当前补丁程序版本：`0.2.0`
+当前补丁程序版本：`0.2.1`
 
 ## 使用
 
 运行：
 
 ```powershell
-.\dist\FigmaCnPatcher.exe
+.\FigmaCnPatcher.exe
 ```
+
+下载仓库后直接双击根目录里的 `FigmaCnPatcher.exe` 即可使用，不需要进入 `dist` 目录。
 
 界面里有三个操作：
 

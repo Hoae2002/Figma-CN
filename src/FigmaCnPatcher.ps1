@@ -17,10 +17,11 @@ if ($args -contains "-Status" -or $args -contains "/Status") { $Status = $true }
 if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClose = $true }
 
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V2"
-$PatcherVersion = "0.2.0"
+$PatcherVersion = "0.2.1"
 $PayloadFile = "i.js"
 $BackupFile = "app.asar.figma-zh-official-preload-original"
 $LicenseCommentTarget = "/*! Bundled license information:"
+$EmbeddedPayloadFiles = @{}
 
 function Get-BaseDir {
   $scriptDir = if ($PSScriptRoot) {
@@ -171,10 +172,18 @@ function Get-AsarFileSlice {
 
 function Build-Payload {
   $baseDir = Get-BaseDir
-  $manifest = [System.IO.File]::ReadAllText((Join-Path $baseDir "payload\manifest.json"), [System.Text.Encoding]::UTF8) | ConvertFrom-Json
-  $dictionary = [System.IO.File]::ReadAllText((Join-Path $baseDir "payload\src\dictionary\zh-CN.js"), [System.Text.Encoding]::UTF8)
-  $core = [System.IO.File]::ReadAllText((Join-Path $baseDir "payload\src\content\localizer-core.js"), [System.Text.Encoding]::UTF8)
-  $content = [System.IO.File]::ReadAllText((Join-Path $baseDir "payload\src\content\content.js"), [System.Text.Encoding]::UTF8)
+  function Read-PayloadText {
+    param([string]$RelativePath)
+    if ($EmbeddedPayloadFiles.ContainsKey($RelativePath)) {
+      $bytes = [System.Convert]::FromBase64String($EmbeddedPayloadFiles[$RelativePath])
+      return [System.Text.Encoding]::UTF8.GetString($bytes)
+    }
+    return [System.IO.File]::ReadAllText((Join-Path $baseDir $RelativePath), [System.Text.Encoding]::UTF8)
+  }
+  $manifest = Read-PayloadText "payload\manifest.json" | ConvertFrom-Json
+  $dictionary = Read-PayloadText "payload\src\dictionary\zh-CN.js"
+  $core = Read-PayloadText "payload\src\content\localizer-core.js"
+  $content = Read-PayloadText "payload\src\content\content.js"
   $version = if ($manifest.version) { $manifest.version } else { "unknown" }
 
   return @(
@@ -373,12 +382,11 @@ function Format-StatusText {
 
 function Set-StatusLabels {
   param($Status)
-  $script:ValuePatcher.Text = $Status.PatcherVersion
+  $script:ValuePatcher.Text = "v$($Status.PatcherVersion)"
   $script:ValueFigmaVersion.Text = $Status.FigmaVersion
   $script:ValuePatchState.Text = if ($Status.Patched) { "已安装" } else { "未安装" }
   $script:ValueBackupState.Text = if ($Status.HasBackup) { "已存在" } else { "未找到" }
   $script:ValueRuntimeState.Text = if ($Status.HasRuntimePayload) { "已生成" } else { "未生成" }
-  $script:ValueAsarHash.Text = $Status.MainSha256
 }
 
 function Show-InfoMessage {
@@ -399,12 +407,13 @@ function Show-Gui {
   $form = New-Object System.Windows.Forms.Form
   $form.Text = "Figma 客户端汉化补丁 v$PatcherVersion"
   $form.StartPosition = "CenterScreen"
-  $form.Width = 760
-  $form.Height = 400
-  $form.MinimumSize = New-Object System.Drawing.Size(720, 360)
+  $form.Width = 820
+  $form.Height = 430
+  $form.MinimumSize = New-Object System.Drawing.Size(780, 400)
+  $form.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 9)
 
   $labelApp = New-Object System.Windows.Forms.Label
-  $labelApp.Text = "Figma app-* 目录"
+  $labelApp.Text = "Figma客户端目录"
   $labelApp.Left = 18
   $labelApp.Top = 20
   $labelApp.Width = 160
@@ -412,15 +421,15 @@ function Show-Gui {
   $txtApp = New-Object System.Windows.Forms.TextBox
   $txtApp.Left = 18
   $txtApp.Top = 44
-  $txtApp.Width = 580
+  $txtApp.Width = 650
   $txtApp.Anchor = "Top,Left,Right"
   try { $txtApp.Text = Find-LatestFigmaAppDir } catch { $txtApp.Text = "" }
 
   $btnBrowse = New-Object System.Windows.Forms.Button
   $btnBrowse.Text = "浏览"
-  $btnBrowse.Left = 610
+  $btnBrowse.Left = 682
   $btnBrowse.Top = 42
-  $btnBrowse.Width = 110
+  $btnBrowse.Width = 100
   $btnBrowse.Anchor = "Top,Right"
 
   $labelRuntime = New-Object System.Windows.Forms.Label
@@ -432,7 +441,7 @@ function Show-Gui {
   $txtRuntime = New-Object System.Windows.Forms.TextBox
   $txtRuntime.Left = 18
   $txtRuntime.Top = 106
-  $txtRuntime.Width = 580
+  $txtRuntime.Width = 650
   $txtRuntime.Anchor = "Top,Left,Right"
   $txtRuntime.Text = $RuntimeDir
 
@@ -466,52 +475,49 @@ function Show-Gui {
   $statusGroup.Text = "当前检测结果"
   $statusGroup.Left = 18
   $statusGroup.Top = 222
-  $statusGroup.Width = 702
-  $statusGroup.Height = 110
+  $statusGroup.Width = 764
+  $statusGroup.Height = 130
   $statusGroup.Anchor = "Top,Left,Right"
 
   function New-StatusLabel {
-    param([string]$Text, [int]$Left, [int]$Top, [int]$Width = 100)
+    param([string]$Text, [int]$Top)
     $label = New-Object System.Windows.Forms.Label
     $label.Text = $Text
-    $label.Left = $Left
+    $label.Left = 18
     $label.Top = $Top
-    $label.Width = $Width
+    $label.Width = 120
     return $label
   }
 
   function New-StatusValue {
-    param([int]$Left, [int]$Top, [int]$Width = 190)
+    param([int]$Top)
     $label = New-Object System.Windows.Forms.Label
     $label.Text = "未检测"
-    $label.Left = $Left
+    $label.Left = 145
     $label.Top = $Top
-    $label.Width = $Width
+    $label.Width = 590
     $label.AutoEllipsis = $true
     return $label
   }
 
-  $script:ValuePatcher = New-StatusValue 110 24
-  $script:ValuePatcher.Text = $PatcherVersion
-  $script:ValueFigmaVersion = New-StatusValue 440 24
-  $script:ValuePatchState = New-StatusValue 110 50
-  $script:ValueBackupState = New-StatusValue 440 50
-  $script:ValueRuntimeState = New-StatusValue 110 76
-  $script:ValueAsarHash = New-StatusValue 440 76 240
+  $script:ValuePatcher = New-StatusValue 24
+  $script:ValuePatcher.Text = "v$PatcherVersion"
+  $script:ValueFigmaVersion = New-StatusValue 46
+  $script:ValuePatchState = New-StatusValue 68
+  $script:ValueBackupState = New-StatusValue 90
+  $script:ValueRuntimeState = New-StatusValue 112
 
   $statusGroup.Controls.AddRange(@(
-    (New-StatusLabel "补丁程序版本：" 16 24),
+    (New-StatusLabel "补丁程序版本：" 24),
     $script:ValuePatcher,
-    (New-StatusLabel "Figma 版本：" 344 24 90),
+    (New-StatusLabel "Figma 版本：" 46),
     $script:ValueFigmaVersion,
-    (New-StatusLabel "补丁状态：" 16 50),
+    (New-StatusLabel "补丁状态：" 68),
     $script:ValuePatchState,
-    (New-StatusLabel "备份状态：" 344 50 90),
+    (New-StatusLabel "备份状态：" 90),
     $script:ValueBackupState,
-    (New-StatusLabel "运行时文件：" 16 76),
-    $script:ValueRuntimeState,
-    (New-StatusLabel "主文件校验：" 344 76 90),
-    $script:ValueAsarHash
+    (New-StatusLabel "运行时文件：" 112),
+    $script:ValueRuntimeState
   ))
 
   $runAction = {
