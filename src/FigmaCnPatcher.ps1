@@ -17,7 +17,7 @@ if ($args -contains "-Status" -or $args -contains "/Status") { $Status = $true }
 if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClose = $true }
 
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V2"
-$PatcherVersion = "0.2.3"
+$PatcherVersion = "0.2.4"
 $PayloadFile = "i.js"
 $BackupFile = "app.asar.figma-zh-official-preload-original"
 $LicenseCommentTarget = "/*! Bundled license information:"
@@ -438,8 +438,10 @@ function Show-Gui {
 
   $txtApp = New-Object System.Windows.Forms.TextBox
   $txtApp.Left = 18
-  $txtApp.Top = 44
+  $txtApp.Top = 42
   $txtApp.Width = 650
+  $txtApp.Height = 34
+  $txtApp.AutoSize = $false
   $txtApp.Anchor = "Top,Left,Right"
   try { $txtApp.Text = Find-LatestFigmaAppDir } catch { $txtApp.Text = "" }
 
@@ -448,7 +450,7 @@ function Show-Gui {
   $btnBrowse.Left = 682
   $btnBrowse.Top = 42
   $btnBrowse.Width = 100
-  $btnBrowse.Height = 30
+  $btnBrowse.Height = 34
   $btnBrowse.Anchor = "Top,Right"
 
   $labelRuntime = New-Object System.Windows.Forms.Label
@@ -459,15 +461,17 @@ function Show-Gui {
 
   $txtRuntime = New-Object System.Windows.Forms.TextBox
   $txtRuntime.Left = 18
-  $txtRuntime.Top = 106
+  $txtRuntime.Top = 104
   $txtRuntime.Width = 650
+  $txtRuntime.Height = 34
+  $txtRuntime.AutoSize = $false
   $txtRuntime.Anchor = "Top,Left,Right"
   $txtRuntime.Text = $RuntimeDir
 
   $labelNotice = New-Object System.Windows.Forms.Label
   $labelNotice.Text = "提示：安装或卸载时会自动强制关闭 Figma，请先保存未同步的工作。"
   $labelNotice.Left = 18
-  $labelNotice.Top = 142
+  $labelNotice.Top = 146
   $labelNotice.Width = 700
   $labelNotice.Anchor = "Top,Left,Right"
   $labelNotice.ForeColor = [System.Drawing.Color]::FromArgb(150, 70, 0)
@@ -475,28 +479,28 @@ function Show-Gui {
   $btnStatus = New-Object System.Windows.Forms.Button
   $btnStatus.Text = "自动检查路径和版本"
   $btnStatus.Left = 18
-  $btnStatus.Top = 178
+  $btnStatus.Top = 184
   $btnStatus.Width = 170
   $btnStatus.Height = 34
 
   $btnInstall = New-Object System.Windows.Forms.Button
   $btnInstall.Text = "安装补丁"
   $btnInstall.Left = 202
-  $btnInstall.Top = 178
+  $btnInstall.Top = 184
   $btnInstall.Width = 130
   $btnInstall.Height = 34
 
   $btnUninstall = New-Object System.Windows.Forms.Button
   $btnUninstall.Text = "卸载补丁"
   $btnUninstall.Left = 344
-  $btnUninstall.Top = 178
+  $btnUninstall.Top = 184
   $btnUninstall.Width = 130
   $btnUninstall.Height = 34
 
   $statusGroup = New-Object System.Windows.Forms.GroupBox
   $statusGroup.Text = "当前检测结果"
   $statusGroup.Left = 18
-  $statusGroup.Top = 222
+  $statusGroup.Top = 234
   $statusGroup.Width = 764
   $statusGroup.Height = 154
   $statusGroup.Anchor = "Top,Left,Right"
