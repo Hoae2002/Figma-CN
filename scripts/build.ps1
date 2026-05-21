@@ -1,6 +1,6 @@
 ﻿param(
   [string]$OutputPath = "$PSScriptRoot\..\FigmaCnPatcher.exe",
-  [string]$Version = "0.2.8"
+  [string]$Version = "0.2.9"
 )
 
 $ErrorActionPreference = "Stop"

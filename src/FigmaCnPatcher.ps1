@@ -17,7 +17,7 @@ if ($args -contains "-Status" -or $args -contains "/Status") { $Status = $true }
 if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClose = $true }
 
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V3"
-$PatcherVersion = "0.2.8"
+$PatcherVersion = "0.2.9"
 $PayloadFile = "i.js"
 $MainPayloadFile = "m.js"
 $BackupFile = "app.asar.figma-zh-official-preload-original"
@@ -67,7 +67,10 @@ function Find-LatestFigmaAppDir {
   }
 
   $items = Get-ChildItem -LiteralPath $figmaRoot -Directory |
-    Where-Object { Get-SemverParts $_.Name } |
+    Where-Object {
+      (Get-SemverParts $_.Name) -and
+      (Test-Path -LiteralPath (Join-Path $_.FullName "resources\app.asar"))
+    } |
     Sort-Object @{
       Expression = { (Get-SemverParts $_.Name)[0] }
       Descending = $true
@@ -80,7 +83,7 @@ function Find-LatestFigmaAppDir {
     }
 
   if (-not $items -or $items.Count -eq 0) {
-    throw "No app-* Figma version directory found in: $figmaRoot"
+    throw "No complete app-* Figma version directory found in: $figmaRoot"
   }
   return $items[0].FullName
 }
@@ -375,12 +378,24 @@ function New-FakeAsar {
 
 function Invoke-SelfTest {
   $temp = Join-Path ([System.IO.Path]::GetTempPath()) ("figma-cn-patcher-test-" + [Guid]::NewGuid().ToString("N"))
+  $originalLocalAppData = $env:LOCALAPPDATA
   New-Item -ItemType Directory -Force -Path (Join-Path $temp "app-1.2.3\resources") | Out-Null
   $fakeAppDir = Join-Path $temp "app-1.2.3"
   $fakeAsar = Join-Path $fakeAppDir "resources\app.asar"
   $fakeRuntime = Join-Path $temp "runtime"
   try {
     New-FakeAsar $fakeAsar
+    $fakeLocalAppData = Join-Path $temp "localappdata"
+    $fakeFigmaRoot = Join-Path $fakeLocalAppData "Figma"
+    $validOlderAppDir = Join-Path $fakeFigmaRoot "app-10.1.0"
+    $incompleteNewerAppDir = Join-Path $fakeFigmaRoot "app-99.9.9"
+    New-Item -ItemType Directory -Force -Path (Join-Path $validOlderAppDir "resources") | Out-Null
+    New-Item -ItemType Directory -Force -Path $incompleteNewerAppDir | Out-Null
+    New-FakeAsar (Join-Path $validOlderAppDir "resources\app.asar")
+    $env:LOCALAPPDATA = $fakeLocalAppData
+    $detectedAppDir = Find-LatestFigmaAppDir
+    if ($detectedAppDir -ne $validOlderAppDir) { throw "Self-test did not skip incomplete update directory." }
+    $env:LOCALAPPDATA = $originalLocalAppData
     $installStatus = Install-Patch $fakeAppDir $fakeRuntime -SkipProcessCheck
     if (-not $installStatus.Patched) { throw "Self-test install did not mark the app as patched." }
     if (-not $installStatus.HasBackup) { throw "Self-test did not create a backup." }
@@ -393,6 +408,7 @@ function Invoke-SelfTest {
     if ($uninstallStatus.Patched) { throw "Self-test uninstall did not restore the original app.asar." }
     Write-Host "Self-test passed."
   } finally {
+    $env:LOCALAPPDATA = $originalLocalAppData
     Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
   }
 }
