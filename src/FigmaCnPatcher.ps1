@@ -21,7 +21,7 @@ if ($args -contains "-UpdateFigma" -or $args -contains "/UpdateFigma") { $Update
 if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClose = $true }
 
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V3"
-$PatcherVersion = "0.3.3"
+$PatcherVersion = "0.3.4"
 $PayloadFile = "i.js"
 $MainPayloadFile = "m.js"
 $BackupFile = "app.asar.figma-zh-official-preload-original"
@@ -60,7 +60,7 @@ function ConvertTo-JsString {
 
 function Get-SemverParts {
   param([string]$Name)
-  if ($Name -match '^app-(\d+)\.(\d+)\.(\d+)$') {
+  if ($Name -match '^(?:app-)?(\d+)\.(\d+)\.(\d+)') {
     return @([int]$Matches[1], [int]$Matches[2], [int]$Matches[3])
   }
   return $null
@@ -75,16 +75,16 @@ function Find-LatestFigmaAppDir {
   $items = Get-ChildItem -LiteralPath $figmaRoot -Directory |
     Where-Object {
       (Get-SemverParts $_.Name) -and
-      (Test-Path -LiteralPath (Join-Path $_.FullName "resources\app.asar"))
+      (Test-FigmaAppDir $_.FullName)
     } |
     Sort-Object @{
-      Expression = { (Get-SemverParts $_.Name)[0] }
+      Expression = { (Get-SemverParts (Get-FigmaVersionFromAppDir $_.FullName))[0] }
       Descending = $true
     }, @{
-      Expression = { (Get-SemverParts $_.Name)[1] }
+      Expression = { (Get-SemverParts (Get-FigmaVersionFromAppDir $_.FullName))[1] }
       Descending = $true
     }, @{
-      Expression = { (Get-SemverParts $_.Name)[2] }
+      Expression = { (Get-SemverParts (Get-FigmaVersionFromAppDir $_.FullName))[2] }
       Descending = $true
     }
 
@@ -147,6 +147,15 @@ function Find-CurrentFigmaAppDir {
 
 function Get-FigmaVersionFromAppDir {
   param([string]$AppDir)
+  $exePath = Join-Path $AppDir "Figma.exe"
+  if (Test-Path -LiteralPath $exePath) {
+    $versionInfo = (Get-Item -LiteralPath $exePath).VersionInfo
+    foreach ($version in @($versionInfo.ProductVersion, $versionInfo.FileVersion)) {
+      if ($version -and $version -match '(\d+\.\d+\.\d+)') {
+        return $Matches[1]
+      }
+    }
+  }
   $name = Split-Path -Leaf $AppDir
   if ($name -match '^app-(.+)$') { return $Matches[1] }
   return "unknown"
@@ -463,10 +472,16 @@ function Update-FigmaOfficial {
   }
 
   Assert-FigmaClosed -Force:$Force
-  $installer = Join-Path ([System.IO.Path]::GetTempPath()) "FigmaSetup-official-latest.exe"
+  $installerExt = [System.IO.Path]::GetExtension(([Uri]$release.InstallerUrl).AbsolutePath)
+  if (-not $installerExt) { $installerExt = ".exe" }
+  $installer = Join-Path ([System.IO.Path]::GetTempPath()) "FigmaSetup-official-latest$installerExt"
   try {
-    Invoke-WebRequest -Uri $OfficialInstallerUrl -OutFile $installer -UseBasicParsing -TimeoutSec 900
-    $process = Start-Process -FilePath $installer -ArgumentList "/S" -PassThru
+    Invoke-WebRequest -Uri $release.InstallerUrl -OutFile $installer -UseBasicParsing -TimeoutSec 900
+    if ($installerExt -ieq ".msi") {
+      $process = Start-Process -FilePath "msiexec.exe" -ArgumentList @("/i", $installer, "/qn", "/norestart") -PassThru
+    } else {
+      $process = Start-Process -FilePath $installer -ArgumentList "/S" -PassThru
+    }
     if (-not $process.WaitForExit(600000)) {
       Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
       throw "Figma official updater did not finish within 10 minutes."
@@ -554,12 +569,20 @@ function Invoke-SelfTest {
     $fakeFigmaRoot = Join-Path $fakeLocalAppData "Figma"
     $validOlderAppDir = Join-Path $fakeFigmaRoot "app-10.1.0"
     $incompleteNewerAppDir = Join-Path $fakeFigmaRoot "app-99.9.9"
+    $mismatchedNewerAppDir = Join-Path $fakeFigmaRoot "app-99.8.0"
     New-Item -ItemType Directory -Force -Path (Join-Path $validOlderAppDir "resources") | Out-Null
     New-Item -ItemType Directory -Force -Path $incompleteNewerAppDir | Out-Null
+    New-Item -ItemType Directory -Force -Path (Join-Path $mismatchedNewerAppDir "resources") | Out-Null
+    New-Item -ItemType File -Force -Path (Join-Path $validOlderAppDir "Figma.exe") | Out-Null
     New-FakeAsar (Join-Path $validOlderAppDir "resources\app.asar")
+    New-FakeAsar (Join-Path $mismatchedNewerAppDir "resources\app.asar")
+    $versionedExe = (Get-Command pwsh.exe -ErrorAction SilentlyContinue).Source
+    if (-not $versionedExe) { $versionedExe = (Get-Command powershell.exe -ErrorAction Stop).Source }
+    Copy-Item -LiteralPath $versionedExe -Destination (Join-Path $mismatchedNewerAppDir "Figma.exe") -Force
     $env:LOCALAPPDATA = $fakeLocalAppData
     $detectedAppDir = Find-LatestFigmaAppDir
-    if ($detectedAppDir -ne $validOlderAppDir) { throw "Self-test did not skip incomplete update directory." }
+    if ($detectedAppDir -ne $validOlderAppDir) { throw "Self-test did not skip incomplete or mismatched update directory." }
+    if ((Get-FigmaVersionFromAppDir $mismatchedNewerAppDir) -eq "99.8.0") { throw "Self-test used folder name instead of executable version." }
     $env:LOCALAPPDATA = $originalLocalAppData
     if ((Compare-VersionString "126.4.10" "126.3.12") -le 0) { throw "Self-test version compare failed." }
     if ((Compare-VersionString "126.3.12" "126.4.10") -ge 0) { throw "Self-test version compare failed." }
@@ -629,8 +652,8 @@ function Show-Gui {
   $form.Text = "Figma 客户端汉化补丁 v$PatcherVersion"
   $form.StartPosition = "CenterScreen"
   $form.Width = 900
-  $form.Height = 585
-  $form.MinimumSize = New-Object System.Drawing.Size(860, 565)
+  $form.Height = 625
+  $form.MinimumSize = New-Object System.Drawing.Size(860, 605)
   $form.BackColor = [System.Drawing.Color]::FromArgb(246, 248, 251)
   $form.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 9)
   try {
@@ -758,6 +781,14 @@ function Show-Gui {
   $txtRuntime = $runtimeInput.TextBox
   $txtRuntime.Text = $RuntimeDir
 
+  $btnBrowseRuntime = New-Object System.Windows.Forms.Button
+  $btnBrowseRuntime.Text = "浏览"
+  $btnBrowseRuntime.Left = 764
+  $btnBrowseRuntime.Top = 274
+  $btnBrowseRuntime.Width = 100
+  $btnBrowseRuntime.Height = 34
+  $btnBrowseRuntime.Anchor = "Top,Right"
+
   $labelNotice = New-Object System.Windows.Forms.Label
   $labelNotice.Text = "提示：安装或卸载时会自动强制关闭 Figma，请先保存未同步的工作。"
   $labelNotice.Left = 18
@@ -797,7 +828,7 @@ function Show-Gui {
   $btnCheckUpdate.ForeColor = [System.Drawing.Color]::White
   $btnCheckUpdate.FlatStyle = "Flat"
 
-  foreach ($button in @($btnBrowse, $btnStatus, $btnInstall, $btnUninstall, $btnCheckUpdate)) {
+  foreach ($button in @($btnBrowse, $btnBrowseRuntime, $btnStatus, $btnInstall, $btnUninstall, $btnCheckUpdate)) {
     $button.FlatStyle = "Flat"
     $button.FlatAppearance.BorderSize = 0
     $button.TextAlign = "MiddleCenter"
@@ -808,10 +839,29 @@ function Show-Gui {
     }
   }
 
+  $progressLabel = New-Object System.Windows.Forms.Label
+  $progressLabel.Text = "准备就绪"
+  $progressLabel.Left = 18
+  $progressLabel.Top = 394
+  $progressLabel.Width = 846
+  $progressLabel.Height = 18
+  $progressLabel.Anchor = "Top,Left,Right"
+  $progressLabel.ForeColor = [System.Drawing.Color]::FromArgb(74, 85, 104)
+
+  $progressBar = New-Object System.Windows.Forms.ProgressBar
+  $progressBar.Left = 18
+  $progressBar.Top = 414
+  $progressBar.Width = 846
+  $progressBar.Height = 12
+  $progressBar.Anchor = "Top,Left,Right"
+  $progressBar.Minimum = 0
+  $progressBar.Maximum = 100
+  $progressBar.Value = 0
+
   $statusGroup = New-Object System.Windows.Forms.GroupBox
   $statusGroup.Text = "当前检测结果"
   $statusGroup.Left = 18
-  $statusGroup.Top = 396
+  $statusGroup.Top = 438
   $statusGroup.Width = 846
   $statusGroup.Height = 96
   $statusGroup.Anchor = "Top,Left,Right"
@@ -864,19 +914,32 @@ function Show-Gui {
     $script:ValueRuntimeState
   ))
 
+  function Set-ProgressState {
+    param([int]$Percent, [string]$Message)
+    $value = [Math]::Max(0, [Math]::Min(100, $Percent))
+    $progressBar.Value = $value
+    $progressLabel.Text = $Message
+    $form.Refresh()
+    [System.Windows.Forms.Application]::DoEvents()
+  }
+
   $runAction = {
-    param([scriptblock]$Action, [scriptblock]$OnSuccess, [string]$FailurePrefix = "操作失败")
+    param([scriptblock]$Action, [scriptblock]$OnSuccess, [string]$FailurePrefix = "操作失败", [string]$ProgressText = "正在处理...")
     try {
       $form.UseWaitCursor = $true
+      Set-ProgressState 8 $ProgressText
       $result = & $Action
+      Set-ProgressState 100 "操作完成"
       if ($result) {
         Set-StatusLabels $result
         if ($OnSuccess) { & $OnSuccess $result }
       }
     } catch {
+      Set-ProgressState 0 "操作失败"
       Show-ErrorMessage "$FailurePrefix：`r`n`r`n$($_.Exception.Message)"
     } finally {
       $form.UseWaitCursor = $false
+      if ($progressBar.Value -eq 100) { Set-ProgressState 0 "准备就绪" }
     }
   }
 
@@ -889,6 +952,16 @@ function Show-Gui {
     }
   })
 
+  $btnBrowseRuntime.Add_Click({
+    $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+    $dialog.Description = "选择汉化补丁运行时目录"
+    $dialog.ShowNewFolderButton = $true
+    if ($txtRuntime.Text -and (Test-Path -LiteralPath $txtRuntime.Text)) { $dialog.SelectedPath = $txtRuntime.Text }
+    if ($dialog.ShowDialog($form) -eq "OK") {
+      $txtRuntime.Text = $dialog.SelectedPath
+    }
+  })
+
   $btnStatus.Add_Click({
     & $runAction {
       $current = Find-CurrentFigmaAppDir
@@ -897,10 +970,11 @@ function Show-Gui {
     } {
       param($result)
       Show-InfoMessage ("检测完成。`r`n`r`nFigma 路径：$($result.AppDir)`r`nFigma 版本：$($result.FigmaVersion)`r`n词库版本：v$($result.PayloadVersion)`r`n补丁状态：$(if ($result.Patched) { "已安装" } else { "未安装" })")
-    } "检测失败"
+    } "检测失败" "正在检测当前版本..."
   })
   $btnCheckUpdate.Add_Click({
     & $runAction {
+      Set-ProgressState 12 "正在检查官方最新版本..."
       $current = Find-CurrentFigmaAppDir
       $txtApp.Text = $current
       $status = Get-CompleteStatus $current $txtRuntime.Text -CheckOfficial
@@ -912,18 +986,21 @@ function Show-Gui {
         "Question"
       )
       if ($choice -ne "Yes") { return $status }
+      Set-ProgressState 35 "正在下载并安装官方新版..."
       $updated = Update-FigmaOfficial $txtRuntime.Text -Force
       $txtApp.Text = $updated.AppDir
+      Set-ProgressState 92 "正在安装汉化补丁..."
       return Get-CompleteStatus $updated.AppDir $txtRuntime.Text -CheckOfficial
     } {
       param($result)
       if ($result.PSObject.Properties.Name -contains "OfficialLatestVersion") {
         Show-InfoMessage ("检测完成。`r`n`r`n当前版本：$($result.FigmaVersion)`r`n官方最新版：$($result.OfficialLatestVersion)`r`n补丁状态：$(if ($result.Patched) { "已安装" } else { "未安装" })")
       }
-    } "检查或更新失败"
+    } "检查或更新失败" "正在检查或更新官方版本..."
   })
   $btnInstall.Add_Click({
     & $runAction {
+      Set-ProgressState 30 "正在安装汉化补丁..."
       Install-Patch $txtApp.Text $txtRuntime.Text -Force
     } {
       param($result)
@@ -932,22 +1009,23 @@ function Show-Gui {
       } else {
         Show-InfoMessage ("安装成功。`r`n`r`nFigma 版本：$($result.FigmaVersion)`r`n词库版本：v$($result.PayloadVersion)`r`n补丁状态：已安装")
       }
-    } "安装失败"
+    } "安装失败" "正在安装汉化补丁..."
   })
   $btnUninstall.Add_Click({
     & $runAction {
+      Set-ProgressState 35 "正在卸载汉化补丁..."
       $target = Resolve-Target $txtApp.Text
       Uninstall-Patch $target.AppDir $txtRuntime.Text -Force
     } {
       param($result)
       Show-InfoMessage ("卸载成功。`r`n`r`nFigma 版本：$($result.FigmaVersion)`r`n补丁状态：未安装")
-    } "卸载失败"
+    } "卸载失败" "正在卸载汉化补丁..."
   })
 
   $form.Controls.AddRange(@(
     $header, $currentGroup,
-    $labelApp, $appInput.Panel, $btnBrowse, $labelRuntime, $runtimeInput.Panel, $labelNotice,
-    $btnStatus, $btnInstall, $btnUninstall, $btnCheckUpdate, $statusGroup
+    $labelApp, $appInput.Panel, $btnBrowse, $labelRuntime, $runtimeInput.Panel, $btnBrowseRuntime, $labelNotice,
+    $btnStatus, $btnInstall, $btnUninstall, $btnCheckUpdate, $progressLabel, $progressBar, $statusGroup
   ))
 
   try {
