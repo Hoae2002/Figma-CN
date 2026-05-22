@@ -21,12 +21,13 @@ if ($args -contains "-UpdateFigma" -or $args -contains "/UpdateFigma") { $Update
 if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClose = $true }
 
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V3"
-$PatcherVersion = "0.3.0"
+$PatcherVersion = "0.3.1"
 $PayloadFile = "i.js"
 $MainPayloadFile = "m.js"
 $BackupFile = "app.asar.figma-zh-official-preload-original"
 $LicenseCommentTarget = "/*! Bundled license information:"
-$OfficialReleaseJsonUrl = "https://desktop.figma.com/win/RELEASE.json"
+$OfficialReleasesXmlUrl = "https://desktop.figma.com/win/releases.xml"
+$OfficialInstallerUrl = "https://desktop.figma.com/win/FigmaSetup.exe"
 $EmbeddedPayloadFiles = @{}
 
 function Get-BaseDir {
@@ -93,6 +94,57 @@ function Find-LatestFigmaAppDir {
   return $items[0].FullName
 }
 
+function Test-FigmaAppDir {
+  param([string]$Path)
+  if (-not $Path) { return $false }
+  return (
+    (Test-Path -LiteralPath (Join-Path $Path "Figma.exe")) -and
+    (Test-Path -LiteralPath (Join-Path $Path "resources\app.asar"))
+  )
+}
+
+function Find-ShortcutFigmaAppDir {
+  $shortcutRoots = @(
+    [Environment]::GetFolderPath("Desktop"),
+    [Environment]::GetFolderPath("CommonDesktopDirectory")
+  ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
+
+  try {
+    $shell = New-Object -ComObject WScript.Shell
+    foreach ($root in $shortcutRoots) {
+      $links = Get-ChildItem -LiteralPath $root -Filter "*.lnk" -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -like "*Figma*" }
+      foreach ($link in $links) {
+        $shortcut = $shell.CreateShortcut($link.FullName)
+        $target = [string]$shortcut.TargetPath
+        if ($target -and (Split-Path -Leaf $target) -ieq "Figma.exe") {
+          $appDir = Split-Path -Parent $target
+          if (Test-FigmaAppDir $appDir) { return $appDir }
+        }
+      }
+    }
+  } catch {}
+
+  return $null
+}
+
+function Find-CurrentFigmaAppDir {
+  $runningProcesses = Get-Process -Name "Figma" -ErrorAction SilentlyContinue
+  foreach ($process in $runningProcesses) {
+    $processPath = ""
+    try { $processPath = [string]$process.Path } catch {}
+    if ($processPath -and (Split-Path -Leaf $processPath) -ieq "Figma.exe") {
+      $appDir = Split-Path -Parent $processPath
+      if (Test-FigmaAppDir $appDir) { return $appDir }
+    }
+  }
+
+  $shortcutAppDir = Find-ShortcutFigmaAppDir
+  if ($shortcutAppDir) { return $shortcutAppDir }
+
+  return Find-LatestFigmaAppDir
+}
+
 function Get-FigmaVersionFromAppDir {
   param([string]$AppDir)
   $name = Split-Path -Leaf $AppDir
@@ -116,26 +168,24 @@ function Compare-VersionString {
 
 function Get-OfficialLatestFigmaRelease {
   param([string]$CurrentVersion = "0.0.0")
-  $releaseUrl = "{0}?id=Figma&localVersion={1}&arch=x64&osVersion={2}&minUpdateStage=0" -f @(
-    $OfficialReleaseJsonUrl,
-    [Uri]::EscapeDataString($CurrentVersion),
-    [Uri]::EscapeDataString([Environment]::OSVersion.Version.ToString())
-  )
-  $response = Invoke-WebRequest -Uri $releaseUrl -UseBasicParsing -TimeoutSec 20
-  $release = $response.Content | ConvertFrom-Json
-  if (-not $release.version) { throw "Official Figma release response did not include a version." }
+  $response = Invoke-WebRequest -Uri $OfficialReleasesXmlUrl -UseBasicParsing -TimeoutSec 20
+  [xml]$xml = $response.Content
+  $item = @($xml.rss.channel.item | Select-Object -First 1)[0]
+  if (-not $item -or -not $item.title) { throw "Official Figma releases feed did not include a version." }
+  if ([string]$item.title -notmatch 'Figma\s+(\d+\.\d+\.\d+)') { throw "Cannot parse official Figma version from releases feed." }
+  $version = $Matches[1]
+  $link = [string]$item.link
   return [pscustomobject]@{
-    Version = [string]$release.version
-    Name = [string]$release.name
-    PackageUrl = "https://desktop.figma.com/win/Figma-$($release.version)-full.nupkg"
-    ReleasesUrl = $releaseUrl.Replace("RELEASE.json", "RELEASES")
-    ReleaseUrl = $releaseUrl
+    Version = $version
+    Name = [string]$item.title
+    InstallerUrl = if ($link) { $link } else { $OfficialInstallerUrl }
+    ReleaseUrl = $OfficialReleasesXmlUrl
   }
 }
 
 function Resolve-Target {
   param([string]$SelectedAppDir)
-  $resolvedAppDir = if ($SelectedAppDir) { (Resolve-Path -LiteralPath $SelectedAppDir).Path } else { Find-LatestFigmaAppDir }
+  $resolvedAppDir = if ($SelectedAppDir) { (Resolve-Path -LiteralPath $SelectedAppDir).Path } else { Find-CurrentFigmaAppDir }
   $resourcesDir = Join-Path $resolvedAppDir "resources"
   $asarPath = Join-Path $resourcesDir "app.asar"
   $backupPath = Join-Path $resourcesDir $BackupFile
@@ -411,16 +461,10 @@ function Update-FigmaOfficial {
   }
 
   Assert-FigmaClosed -Force:$Force
-  $figmaRoot = Split-Path -Parent $currentTarget.AppDir
-  $updater = Join-Path $figmaRoot "Update.exe"
-  if (-not (Test-Path -LiteralPath $updater)) { throw "Figma Update.exe not found: $updater" }
-
-  $feedDir = Join-Path ([System.IO.Path]::GetTempPath()) ("figma-official-update-" + [Guid]::NewGuid().ToString("N"))
-  New-Item -ItemType Directory -Force -Path $feedDir | Out-Null
+  $installer = Join-Path ([System.IO.Path]::GetTempPath()) "FigmaSetup-official-latest.exe"
   try {
-    Invoke-WebRequest -Uri $release.ReleasesUrl -OutFile (Join-Path $feedDir "RELEASES") -UseBasicParsing -TimeoutSec 60
-    Invoke-WebRequest -Uri $release.PackageUrl -OutFile (Join-Path $feedDir ("Figma-$($release.Version)-full.nupkg")) -UseBasicParsing -TimeoutSec 900
-    $process = Start-Process -FilePath $updater -ArgumentList @("--update", $feedDir) -PassThru
+    Invoke-WebRequest -Uri $OfficialInstallerUrl -OutFile $installer -UseBasicParsing -TimeoutSec 900
+    $process = Start-Process -FilePath $installer -ArgumentList "/S" -PassThru
     if (-not $process.WaitForExit(600000)) {
       Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
       throw "Figma official updater did not finish within 10 minutes."
@@ -429,7 +473,7 @@ function Update-FigmaOfficial {
       throw "Figma official updater exited with code $($process.ExitCode)."
     }
   } finally {
-    Remove-Item -LiteralPath $feedDir -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue
   }
 
   Start-Sleep -Seconds 3
@@ -437,7 +481,35 @@ function Update-FigmaOfficial {
   if ((Compare-VersionString $target.FigmaVersion $release.Version) -lt 0) {
     throw "Figma update did not reach official version $($release.Version). Current version: $($target.FigmaVersion)."
   }
+  Repair-FigmaShortcuts $target.AppDir
   return Install-Patch $target.AppDir $SelectedRuntimeDir -Force:$Force
+}
+
+function Repair-FigmaShortcuts {
+  param([string]$AppDir)
+  if (-not (Test-FigmaAppDir $AppDir)) { return }
+  $target = Join-Path $AppDir "Figma.exe"
+  $shortcutRoots = @(
+    [Environment]::GetFolderPath("Desktop"),
+    [Environment]::GetFolderPath("CommonDesktopDirectory")
+  ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
+
+  try {
+    $shell = New-Object -ComObject WScript.Shell
+    foreach ($root in $shortcutRoots) {
+      $links = Get-ChildItem -LiteralPath $root -Filter "*.lnk" -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -like "*Figma*" }
+      foreach ($link in $links) {
+        $shortcut = $shell.CreateShortcut($link.FullName)
+        if ($shortcut.TargetPath -and (Split-Path -Leaf $shortcut.TargetPath) -ieq "Figma.exe") {
+          $shortcut.TargetPath = $target
+          $shortcut.WorkingDirectory = $AppDir
+          $shortcut.IconLocation = "$target,0"
+          $shortcut.Save()
+        }
+      }
+    }
+  } catch {}
 }
 
 function New-FakeAsar {
@@ -552,8 +624,8 @@ function Show-Gui {
   $form.Text = "Figma 客户端汉化补丁 v$PatcherVersion"
   $form.StartPosition = "CenterScreen"
   $form.Width = 900
-  $form.Height = 630
-  $form.MinimumSize = New-Object System.Drawing.Size(860, 610)
+  $form.Height = 585
+  $form.MinimumSize = New-Object System.Drawing.Size(860, 565)
   $form.BackColor = [System.Drawing.Color]::FromArgb(246, 248, 251)
   $form.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 9)
   try {
@@ -615,7 +687,7 @@ function Show-Gui {
   $currentGroup.Left = 18
   $currentGroup.Top = 88
   $currentGroup.Width = 846
-  $currentGroup.Height = 108
+  $currentGroup.Height = 86
   $currentGroup.Anchor = "Top,Left,Right"
   $currentGroup.BackColor = [System.Drawing.Color]::White
 
@@ -644,7 +716,7 @@ function Show-Gui {
   $script:ValueCurrentPath = New-Object System.Windows.Forms.Label
   $script:ValueCurrentPath.Text = "客户端目录：未检测"
   $script:ValueCurrentPath.Left = 18
-  $script:ValueCurrentPath.Top = 66
+  $script:ValueCurrentPath.Top = 58
   $script:ValueCurrentPath.Width = 790
   $script:ValueCurrentPath.Height = 22
   $script:ValueCurrentPath.AutoEllipsis = $true
@@ -654,18 +726,18 @@ function Show-Gui {
   $labelApp = New-Object System.Windows.Forms.Label
   $labelApp.Text = "Figma客户端目录"
   $labelApp.Left = 18
-  $labelApp.Top = 214
+  $labelApp.Top = 190
   $labelApp.Width = 160
   $labelApp.Height = 18
 
-  $appInput = New-InputBox 18 236 730
+  $appInput = New-InputBox 18 212 730
   $txtApp = $appInput.TextBox
-  try { $txtApp.Text = Find-LatestFigmaAppDir } catch { $txtApp.Text = "" }
+  try { $txtApp.Text = Find-CurrentFigmaAppDir } catch { $txtApp.Text = "" }
 
   $btnBrowse = New-Object System.Windows.Forms.Button
   $btnBrowse.Text = "浏览"
   $btnBrowse.Left = 764
-  $btnBrowse.Top = 236
+  $btnBrowse.Top = 212
   $btnBrowse.Width = 100
   $btnBrowse.Height = 34
   $btnBrowse.Anchor = "Top,Right"
@@ -673,18 +745,18 @@ function Show-Gui {
   $labelRuntime = New-Object System.Windows.Forms.Label
   $labelRuntime.Text = "运行时目录"
   $labelRuntime.Left = 18
-  $labelRuntime.Top = 276
+  $labelRuntime.Top = 252
   $labelRuntime.Width = 160
   $labelRuntime.Height = 18
 
-  $runtimeInput = New-InputBox 18 298 730
+  $runtimeInput = New-InputBox 18 274 730
   $txtRuntime = $runtimeInput.TextBox
   $txtRuntime.Text = $RuntimeDir
 
   $labelNotice = New-Object System.Windows.Forms.Label
   $labelNotice.Text = "提示：安装或卸载时会自动强制关闭 Figma，请先保存未同步的工作。"
   $labelNotice.Left = 18
-  $labelNotice.Top = 340
+  $labelNotice.Top = 316
   $labelNotice.Width = 700
   $labelNotice.Anchor = "Top,Left,Right"
   $labelNotice.ForeColor = [System.Drawing.Color]::FromArgb(150, 70, 0)
@@ -692,40 +764,51 @@ function Show-Gui {
   $btnStatus = New-Object System.Windows.Forms.Button
   $btnStatus.Text = "自动检查路径和版本"
   $btnStatus.Left = 18
-  $btnStatus.Top = 374
+  $btnStatus.Top = 350
   $btnStatus.Width = 170
   $btnStatus.Height = 34
 
   $btnInstall = New-Object System.Windows.Forms.Button
   $btnInstall.Text = "安装补丁"
   $btnInstall.Left = 202
-  $btnInstall.Top = 374
+  $btnInstall.Top = 350
   $btnInstall.Width = 130
   $btnInstall.Height = 34
 
   $btnUninstall = New-Object System.Windows.Forms.Button
   $btnUninstall.Text = "卸载补丁"
   $btnUninstall.Left = 344
-  $btnUninstall.Top = 374
+  $btnUninstall.Top = 350
   $btnUninstall.Width = 130
   $btnUninstall.Height = 34
 
   $btnCheckUpdate = New-Object System.Windows.Forms.Button
   $btnCheckUpdate.Text = "检查/更新官方最新版"
   $btnCheckUpdate.Left = 486
-  $btnCheckUpdate.Top = 374
+  $btnCheckUpdate.Top = 350
   $btnCheckUpdate.Width = 180
   $btnCheckUpdate.Height = 34
   $btnCheckUpdate.BackColor = [System.Drawing.Color]::FromArgb(18, 119, 242)
   $btnCheckUpdate.ForeColor = [System.Drawing.Color]::White
   $btnCheckUpdate.FlatStyle = "Flat"
 
+  foreach ($button in @($btnBrowse, $btnStatus, $btnInstall, $btnUninstall, $btnCheckUpdate)) {
+    $button.FlatStyle = "Flat"
+    $button.FlatAppearance.BorderSize = 0
+    $button.TextAlign = "MiddleCenter"
+    $button.UseVisualStyleBackColor = $false
+    if ($button -ne $btnCheckUpdate) {
+      $button.BackColor = [System.Drawing.Color]::FromArgb(238, 242, 247)
+      $button.ForeColor = [System.Drawing.Color]::FromArgb(28, 35, 45)
+    }
+  }
+
   $statusGroup = New-Object System.Windows.Forms.GroupBox
   $statusGroup.Text = "当前检测结果"
   $statusGroup.Left = 18
-  $statusGroup.Top = 420
+  $statusGroup.Top = 396
   $statusGroup.Width = 846
-  $statusGroup.Height = 120
+  $statusGroup.Height = 96
   $statusGroup.Anchor = "Top,Left,Right"
 
   function New-StatusLabel {
@@ -803,9 +886,9 @@ function Show-Gui {
 
   $btnStatus.Add_Click({
     & $runAction {
-      $latest = Find-LatestFigmaAppDir
-      $txtApp.Text = $latest
-      Get-CompleteStatus $latest $txtRuntime.Text
+      $current = Find-CurrentFigmaAppDir
+      $txtApp.Text = $current
+      Get-CompleteStatus $current $txtRuntime.Text
     } {
       param($result)
       Show-InfoMessage ("检测完成。`r`n`r`nFigma 路径：$($result.AppDir)`r`nFigma 版本：$($result.FigmaVersion)`r`n词库版本：v$($result.PayloadVersion)`r`n补丁状态：$(if ($result.Patched) { "已安装" } else { "未安装" })")
@@ -813,9 +896,9 @@ function Show-Gui {
   })
   $btnCheckUpdate.Add_Click({
     & $runAction {
-      $latest = Find-LatestFigmaAppDir
-      $txtApp.Text = $latest
-      $status = Get-CompleteStatus $latest $txtRuntime.Text -CheckOfficial
+      $current = Find-CurrentFigmaAppDir
+      $txtApp.Text = $current
+      $status = Get-CompleteStatus $current $txtRuntime.Text -CheckOfficial
       if ($status.IsOfficialLatest) { return $status }
       $choice = [System.Windows.Forms.MessageBox]::Show(
         "检测到官方最新版 Figma $($status.OfficialLatestVersion)，当前电脑是 $($status.FigmaVersion)。`r`n`r`n点击 是 会下载官方更新包并自动更新，更新完成后会自动安装汉化补丁。",
@@ -863,7 +946,7 @@ function Show-Gui {
   ))
 
   try {
-    $initialAppDir = Find-LatestFigmaAppDir
+    $initialAppDir = Find-CurrentFigmaAppDir
     $txtApp.Text = $initialAppDir
     Set-StatusLabels (Get-CompleteStatus $initialAppDir $txtRuntime.Text)
   } catch {
