@@ -625,11 +625,19 @@ function Set-StatusLabels {
   $script:ValuePatchState.Text = if ($Status.Patched) { "已安装" } else { "未安装" }
   $script:ValueBackupState.Text = if ($Status.HasBackup) { "已存在" } else { "未找到" }
   $script:ValueRuntimeState.Text = if ($Status.HasRuntimePayload) { "已生成" } else { "未生成" }
-  if ($script:ValueCurrentFigma) { $script:ValueCurrentFigma.Text = "Figma $($Status.FigmaVersion)" }
+  if ($script:ValueCurrentFigma) { $script:ValueCurrentFigma.Text = "当前版本：$($Status.FigmaVersion)" }
   if ($script:ValueCurrentPath) { $script:ValueCurrentPath.Text = "客户端目录：$($Status.AppDir)" }
   if ($script:ValueCurrentPatch) { $script:ValueCurrentPatch.Text = "补丁状态：$(if ($Status.Patched) { "已安装" } else { "未安装" })" }
   if ($script:ValueOfficialLatest -and ($Status.PSObject.Properties.Name -contains "OfficialLatestVersion")) {
-    $script:ValueOfficialLatest.Text = "官方最新版：$($Status.OfficialLatestVersion)$(if ($Status.IsOfficialLatest) { "（已是最新）" } else { "（可更新）" })"
+    $compare = Compare-VersionString $Status.FigmaVersion $Status.OfficialLatestVersion
+    $latestState = if ($compare -lt 0) {
+      "可更新"
+    } elseif ($compare -eq 0) {
+      "已是最新"
+    } else {
+      "当前版本较新"
+    }
+    $script:ValueOfficialLatest.Text = "官方最新版：$($Status.OfficialLatestVersion)（$latestState）"
   }
 }
 
@@ -684,6 +692,64 @@ function Show-Gui {
     return [pscustomobject]@{ Panel = $panel; TextBox = $textBox }
   }
 
+  function New-RoundedButtonPath {
+    param([System.Drawing.Rectangle]$Bounds, [int]$Radius)
+    $path = New-Object System.Drawing.Drawing2D.GraphicsPath
+    $diameter = $Radius * 2
+    $path.AddArc($Bounds.Left, $Bounds.Top, $diameter, $diameter, 180, 90)
+    $path.AddArc($Bounds.Right - $diameter, $Bounds.Top, $diameter, $diameter, 270, 90)
+    $path.AddArc($Bounds.Right - $diameter, $Bounds.Bottom - $diameter, $diameter, $diameter, 0, 90)
+    $path.AddArc($Bounds.Left, $Bounds.Bottom - $diameter, $diameter, $diameter, 90, 90)
+    $path.CloseFigure()
+    return $path
+  }
+
+  function Set-RoundedButtonRegion {
+    param([System.Windows.Forms.Button]$Button)
+    $rect = $Button.ClientRectangle
+    if ($rect.Width -le 0 -or $rect.Height -le 0) { return }
+    $path = New-RoundedButtonPath $rect 4
+    $Button.Region = New-Object System.Drawing.Region($path)
+    $path.Dispose()
+  }
+
+  function Set-ButtonStyle {
+    param(
+      [System.Windows.Forms.Button]$Button,
+      [System.Drawing.Color]$BackColor,
+      [System.Drawing.Color]$ForeColor,
+      [System.Drawing.Color]$BorderColor
+    )
+    $Button.FlatStyle = "Flat"
+    $Button.FlatAppearance.BorderSize = 0
+    $Button.FlatAppearance.MouseOverBackColor = [System.Windows.Forms.ControlPaint]::Light($BackColor)
+    $Button.FlatAppearance.MouseDownBackColor = [System.Windows.Forms.ControlPaint]::Dark($BackColor)
+    $Button.BackColor = $BackColor
+    $Button.ForeColor = $ForeColor
+    $Button.TextAlign = "MiddleCenter"
+    $Button.Padding = New-Object System.Windows.Forms.Padding(0, 2, 0, 0)
+    $Button.Margin = New-Object System.Windows.Forms.Padding(0)
+    $Button.UseVisualStyleBackColor = $false
+    $Button.Tag = [pscustomobject]@{ BorderColor = $BorderColor }
+    Set-RoundedButtonRegion $Button
+    $Button.Add_Resize({ param($sender, $eventArgs) Set-RoundedButtonRegion $sender })
+    $Button.Add_Paint({
+      param($sender, $eventArgs)
+      $rect = $sender.ClientRectangle
+      if ($rect.Width -le 3 -or $rect.Height -le 3) { return }
+      $rect.X += 1
+      $rect.Y += 1
+      $rect.Width -= 3
+      $rect.Height -= 3
+      $eventArgs.Graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::None
+      $path = New-RoundedButtonPath $rect 4
+      $pen = New-Object System.Drawing.Pen($sender.Tag.BorderColor, 1)
+      $eventArgs.Graphics.DrawPath($pen, $path)
+      $pen.Dispose()
+      $path.Dispose()
+    })
+  }
+
   $header = New-Object System.Windows.Forms.Panel
   $header.Left = 0
   $header.Top = 0
@@ -723,7 +789,7 @@ function Show-Gui {
   $script:ValueCurrentFigma.Text = "未检测"
   $script:ValueCurrentFigma.Left = 18
   $script:ValueCurrentFigma.Top = 28
-  $script:ValueCurrentFigma.Width = 190
+  $script:ValueCurrentFigma.Width = 200
   $script:ValueCurrentFigma.Height = 28
   $script:ValueCurrentFigma.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 13, [System.Drawing.FontStyle]::Bold)
 
@@ -731,15 +797,23 @@ function Show-Gui {
   $script:ValueOfficialLatest.Text = "官方最新版：未检查"
   $script:ValueOfficialLatest.Left = 220
   $script:ValueOfficialLatest.Top = 32
-  $script:ValueOfficialLatest.Width = 240
+  $script:ValueOfficialLatest.Width = 270
   $script:ValueOfficialLatest.Height = 22
 
   $script:ValueCurrentPatch = New-Object System.Windows.Forms.Label
   $script:ValueCurrentPatch.Text = "补丁状态：未检测"
-  $script:ValueCurrentPatch.Left = 480
+  $script:ValueCurrentPatch.Left = 510
   $script:ValueCurrentPatch.Top = 32
-  $script:ValueCurrentPatch.Width = 160
+  $script:ValueCurrentPatch.Width = 150
   $script:ValueCurrentPatch.Height = 22
+
+  $btnRefreshLatest = New-Object System.Windows.Forms.Button
+  $btnRefreshLatest.Text = "刷新"
+  $btnRefreshLatest.Left = 746
+  $btnRefreshLatest.Top = 26
+  $btnRefreshLatest.Width = 82
+  $btnRefreshLatest.Height = 30
+  $btnRefreshLatest.Anchor = "Top,Right"
 
   $script:ValueCurrentPath = New-Object System.Windows.Forms.Label
   $script:ValueCurrentPath.Text = "客户端目录：未检测"
@@ -749,7 +823,7 @@ function Show-Gui {
   $script:ValueCurrentPath.Height = 22
   $script:ValueCurrentPath.AutoEllipsis = $true
 
-  $currentGroup.Controls.AddRange(@($script:ValueCurrentFigma, $script:ValueOfficialLatest, $script:ValueCurrentPatch, $script:ValueCurrentPath))
+  $currentGroup.Controls.AddRange(@($script:ValueCurrentFigma, $script:ValueOfficialLatest, $script:ValueCurrentPatch, $btnRefreshLatest, $script:ValueCurrentPath))
 
   $labelApp = New-Object System.Windows.Forms.Label
   $labelApp.Text = "Figma客户端目录"
@@ -824,18 +898,18 @@ function Show-Gui {
   $btnCheckUpdate.Top = 350
   $btnCheckUpdate.Width = 180
   $btnCheckUpdate.Height = 34
-  $btnCheckUpdate.BackColor = [System.Drawing.Color]::FromArgb(18, 119, 242)
-  $btnCheckUpdate.ForeColor = [System.Drawing.Color]::White
-  $btnCheckUpdate.FlatStyle = "Flat"
 
-  foreach ($button in @($btnBrowse, $btnBrowseRuntime, $btnStatus, $btnInstall, $btnUninstall, $btnCheckUpdate)) {
-    $button.FlatStyle = "Flat"
-    $button.FlatAppearance.BorderSize = 0
-    $button.TextAlign = "MiddleCenter"
-    $button.UseVisualStyleBackColor = $false
+  foreach ($button in @($btnBrowse, $btnBrowseRuntime, $btnStatus, $btnInstall, $btnUninstall, $btnCheckUpdate, $btnRefreshLatest)) {
     if ($button -ne $btnCheckUpdate) {
-      $button.BackColor = [System.Drawing.Color]::FromArgb(238, 242, 247)
-      $button.ForeColor = [System.Drawing.Color]::FromArgb(28, 35, 45)
+      Set-ButtonStyle $button `
+        ([System.Drawing.Color]::FromArgb(244, 247, 251)) `
+        ([System.Drawing.Color]::FromArgb(28, 35, 45)) `
+        ([System.Drawing.Color]::FromArgb(140, 154, 174))
+    } else {
+      Set-ButtonStyle $button `
+        ([System.Drawing.Color]::FromArgb(18, 119, 242)) `
+        ([System.Drawing.Color]::White) `
+        ([System.Drawing.Color]::FromArgb(12, 92, 190))
     }
   }
 
@@ -847,6 +921,7 @@ function Show-Gui {
   $progressLabel.Height = 18
   $progressLabel.Anchor = "Top,Left,Right"
   $progressLabel.ForeColor = [System.Drawing.Color]::FromArgb(74, 85, 104)
+  $progressLabel.Visible = $false
 
   $progressBar = New-Object System.Windows.Forms.ProgressBar
   $progressBar.Left = 18
@@ -857,6 +932,7 @@ function Show-Gui {
   $progressBar.Minimum = 0
   $progressBar.Maximum = 100
   $progressBar.Value = 0
+  $progressBar.Visible = $false
 
   $statusGroup = New-Object System.Windows.Forms.GroupBox
   $statusGroup.Text = "当前检测结果"
@@ -917,8 +993,19 @@ function Show-Gui {
   function Set-ProgressState {
     param([int]$Percent, [string]$Message)
     $value = [Math]::Max(0, [Math]::Min(100, $Percent))
+    $progressLabel.Visible = $true
+    $progressBar.Visible = $true
     $progressBar.Value = $value
     $progressLabel.Text = $Message
+    $form.Refresh()
+    [System.Windows.Forms.Application]::DoEvents()
+  }
+
+  function Hide-ProgressState {
+    $progressBar.Value = 0
+    $progressLabel.Text = ""
+    $progressLabel.Visible = $false
+    $progressBar.Visible = $false
     $form.Refresh()
     [System.Windows.Forms.Application]::DoEvents()
   }
@@ -939,7 +1026,7 @@ function Show-Gui {
       Show-ErrorMessage "$FailurePrefix：`r`n`r`n$($_.Exception.Message)"
     } finally {
       $form.UseWaitCursor = $false
-      if ($progressBar.Value -eq 100) { Set-ProgressState 0 "准备就绪" }
+      Hide-ProgressState
     }
   }
 
@@ -959,6 +1046,29 @@ function Show-Gui {
     if ($txtRuntime.Text -and (Test-Path -LiteralPath $txtRuntime.Text)) { $dialog.SelectedPath = $txtRuntime.Text }
     if ($dialog.ShowDialog($form) -eq "OK") {
       $txtRuntime.Text = $dialog.SelectedPath
+    }
+  })
+
+  $btnRefreshLatest.Add_Click({
+    try {
+      $form.UseWaitCursor = $true
+      Set-ProgressState 20 "正在刷新官方最新版本..."
+      $release = Get-OfficialLatestFigmaRelease
+      $script:ValueOfficialLatest.Text = "官方最新版：$($release.Version)"
+      try {
+        $current = if ($txtApp.Text -and (Test-FigmaAppDir $txtApp.Text)) { $txtApp.Text } else { Find-CurrentFigmaAppDir }
+        $txtApp.Text = $current
+        Set-StatusLabels (Get-CompleteStatus $current $txtRuntime.Text -CheckOfficial)
+      } catch {
+        $script:ValueCurrentFigma.Text = "未检测到 Figma"
+        $script:ValueCurrentPatch.Text = "补丁状态：未检测"
+        $script:ValueCurrentPath.Text = "客户端目录：未找到完整的 Figma 客户端"
+      }
+    } catch {
+      Show-ErrorMessage "刷新失败：`r`n`r`n$($_.Exception.Message)"
+    } finally {
+      $form.UseWaitCursor = $false
+      Hide-ProgressState
     }
   })
 
@@ -1033,8 +1143,9 @@ function Show-Gui {
     $txtApp.Text = $initialAppDir
     Set-StatusLabels (Get-CompleteStatus $initialAppDir $txtRuntime.Text)
   } catch {
-    $script:ValueCurrentFigma.Text = "未检测到完整 Figma 客户端"
-    $script:ValueCurrentPath.Text = $_.Exception.Message
+    $script:ValueCurrentFigma.Text = "未检测到 Figma"
+    $script:ValueCurrentPatch.Text = "补丁状态：未检测"
+    $script:ValueCurrentPath.Text = "客户端目录：未找到完整的 Figma 客户端"
   }
 
   [void]$form.ShowDialog()
