@@ -21,7 +21,7 @@ if ($args -contains "-UpdateFigma" -or $args -contains "/UpdateFigma") { $Update
 if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClose = $true }
 
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V3"
-$PatcherVersion = "0.3.2"
+$PatcherVersion = "0.3.3"
 $PayloadFile = "i.js"
 $MainPayloadFile = "m.js"
 $BackupFile = "app.asar.figma-zh-official-preload-original"
@@ -490,19 +490,10 @@ function Update-FigmaOfficial {
 function Repair-FigmaShortcuts {
   param([string]$AppDir)
   if (-not (Test-FigmaAppDir $AppDir)) { return }
-  $target = Join-Path $AppDir "Figma.exe"
   $figmaRoot = Split-Path -Parent $AppDir
-  $iconPath = Join-Path $figmaRoot "Figma.ico"
-  try {
-    Add-Type -AssemblyName System.Drawing
-    $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($target)
-    if ($icon) {
-      $stream = [System.IO.File]::Create($iconPath)
-      try { $icon.Save($stream) } finally { $stream.Dispose(); $icon.Dispose() }
-    }
-  } catch {
-    $iconPath = $target
-  }
+  $target = Join-Path $AppDir "Figma.exe"
+  $launcher = Join-Path $figmaRoot "Figma.exe"
+  $iconSource = if (Test-Path -LiteralPath $launcher) { $launcher } else { $target }
   $shortcutRoots = @(
     [Environment]::GetFolderPath("Desktop"),
     [Environment]::GetFolderPath("CommonDesktopDirectory")
@@ -518,7 +509,7 @@ function Repair-FigmaShortcuts {
         if ($shortcut.TargetPath -and (Split-Path -Leaf $shortcut.TargetPath) -ieq "Figma.exe") {
           $shortcut.TargetPath = $target
           $shortcut.WorkingDirectory = $AppDir
-          $shortcut.IconLocation = if (Test-Path -LiteralPath $iconPath) { $iconPath } else { "$target,0" }
+          $shortcut.IconLocation = "$iconSource,0"
           $shortcut.Save()
         }
       }
