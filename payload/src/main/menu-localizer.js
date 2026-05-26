@@ -2,6 +2,10 @@
   "use strict";
 
   const { app, dialog, Menu } = require("electron");
+  const fs = require("fs");
+  const https = require("https");
+  const path = require("path");
+  const { spawn } = require("child_process");
   const labels = {
     "New Window": "新建窗口",
     "New Tab": "新建标签页",
@@ -131,6 +135,102 @@
     };
   }
 
+  function compareVersions(left, right) {
+    const leftParts = String(left || "0.0.0").split(".").map((part) => Number.parseInt(part, 10) || 0);
+    const rightParts = String(right || "0.0.0").split(".").map((part) => Number.parseInt(part, 10) || 0);
+    const count = Math.max(leftParts.length, rightParts.length);
+    for (let index = 0; index < count; index += 1) {
+      const l = leftParts[index] || 0;
+      const r = rightParts[index] || 0;
+      if (l > r) return 1;
+      if (l < r) return -1;
+    }
+    return 0;
+  }
+
+  function readFeatureConfig() {
+    try {
+      const runtimeDir = global.__FIGMA_ZH_RUNTIME_DIR__ || __dirname;
+      return JSON.parse(fs.readFileSync(path.join(runtimeDir, "features.json"), "utf8"));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function isFeatureEnabled(config, featureId) {
+    return !!(config && Array.isArray(config.enabledFeatures) && config.enabledFeatures.includes(featureId));
+  }
+
+  function getText(url) {
+    return new Promise((resolve, reject) => {
+      const request = https.get(url, { timeout: 20000 }, (response) => {
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          response.resume();
+          reject(new Error(`HTTP ${response.statusCode}`));
+          return;
+        }
+        let body = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => { body += chunk; });
+        response.on("end", () => resolve(body));
+      });
+      request.on("timeout", () => request.destroy(new Error("request timeout")));
+      request.on("error", reject);
+    });
+  }
+
+  async function getOfficialLatestVersion() {
+    const text = await getText("https://desktop.figma.com/win/releases.xml");
+    const versions = [];
+    const pattern = /Figma\s+(\d+\.\d+\.\d+)/g;
+    let match;
+    while ((match = pattern.exec(text))) versions.push(match[1]);
+    if (!versions.length) throw new Error("Cannot parse official latest version.");
+    return versions.sort((a, b) => compareVersions(b, a))[0];
+  }
+
+  async function checkOfficialUpdateOnStartup() {
+    if (global.__FIGMA_ZH_OFFICIAL_UPDATE_CHECKED__) return;
+    global.__FIGMA_ZH_OFFICIAL_UPDATE_CHECKED__ = true;
+    const config = readFeatureConfig();
+    if (!isFeatureEnabled(config, "auto-check-official-latest")) return;
+    const patcherPath = config && config.patcherPath;
+    const runtimeDir = config && config.runtimeDir;
+    if (!patcherPath || !runtimeDir || !fs.existsSync(patcherPath)) return;
+    let latestVersion;
+    try {
+      latestVersion = await getOfficialLatestVersion();
+    } catch (_) {
+      return;
+    }
+    const currentVersion = app.getVersion();
+    if (compareVersions(currentVersion, latestVersion) >= 0) return;
+    const result = await dialog.showMessageBox({
+      type: "question",
+      buttons: ["更新", "稍后"],
+      defaultId: 0,
+      cancelId: 1,
+      title: "发现 Figma 新版本",
+      message: `检测到官方最新版 Figma ${latestVersion}`,
+      detail: `当前版本是 ${currentVersion}。\n\n点击“更新”会关闭 Figma，下载并安装官方最新版，更新完成后会自动安装汉化补丁。`
+    });
+    if (result.response !== 0) return;
+    try {
+      const child = spawn(patcherPath, ["-UpdateFigma", "-RuntimeDir", runtimeDir, "-ForceClose"], {
+        detached: true,
+        stdio: "ignore"
+      });
+      child.unref();
+    } catch (error) {
+      dialog.showMessageBox({
+        type: "error",
+        title: "更新启动失败",
+        message: "无法启动补丁更新程序",
+        detail: error && error.message ? error.message : String(error)
+      }).catch(() => {});
+    }
+  }
+
   if (!global.__FIGMA_ZH_MENU_LOCALIZER__) {
     global.__FIGMA_ZH_MENU_LOCALIZER__ = true;
     const buildFromTemplate = Menu.buildFromTemplate.bind(Menu);
@@ -146,6 +246,7 @@
     hookDialogMethod("showMessageBox");
     hookDialogMethod("showMessageBoxSync");
     app.whenReady().then(scheduleLocalize).catch(() => {});
+    app.whenReady().then(() => setTimeout(checkOfficialUpdateOnStartup, 1500)).catch(() => {});
     app.on("browser-window-created", scheduleLocalize);
     app.on("browser-window-focus", scheduleLocalize);
     setInterval(localizeMenu, 5000).unref();

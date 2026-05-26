@@ -24,6 +24,7 @@ $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V3"
 $PatcherVersion = "0.3.4"
 $PayloadFile = "i.js"
 $MainPayloadFile = "m.js"
+$FeatureConfigFile = "features.json"
 $BackupFile = "app.asar.figma-zh-official-preload-original"
 $LicenseCommentTarget = "/*! Bundled license information:"
 $OfficialReleasesXmlUrl = "https://desktop.figma.com/win/releases.xml"
@@ -394,7 +395,7 @@ function Build-MainHook {
   $marker = ConvertTo-JsString $PatchMarker
   $payload = ConvertTo-JsString $payloadPath
   $mainPayload = ConvertTo-JsString $mainPayloadPath
-  return ";(()=>{const M=$marker;try{const E=require(""electron""),F=require(""fs""),P=$payload,Q=$mainPayload;try{F.existsSync(Q)&&eval(F.readFileSync(Q,""utf8""))}catch(e){}let C;function p(){return C||(C=F.readFileSync(P,""utf8""))}function j(w){if(!w||w._fz)return;w._fz=1;const r=()=>{try{let u=w.getURL();/^https:\/\/([^\/]+\.)?figma\.com/i.test(u)&&w.executeJavaScript(p(),true).catch(()=>{})}catch(e){}};w.on(""dom-ready"",r);w.on(""did-finish-load"",r)}E.app.on(""web-contents-created"",(_,w)=>j(w));E.webContents.getAllWebContents().forEach(j)}catch(e){}})();"
+  return ";(()=>{const M=$marker;try{const E=require(""electron""),F=require(""fs""),R=require(""path""),P=$payload,Q=$mainPayload;try{global.__FIGMA_ZH_RUNTIME_DIR__=R.dirname(Q);F.existsSync(Q)&&eval(F.readFileSync(Q,""utf8""))}catch(e){}let C;function p(){return C||(C=F.readFileSync(P,""utf8""))}function j(w){if(!w||w._fz)return;w._fz=1;const r=()=>{try{let u=w.getURL();/^https:\/\/([^\/]+\.)?figma\.com/i.test(u)&&w.executeJavaScript(p(),true).catch(()=>{})}catch(e){}};w.on(""dom-ready"",r);w.on(""did-finish-load"",r)}E.app.on(""web-contents-created"",(_,w)=>j(w));E.webContents.getAllWebContents().forEach(j)}catch(e){}})();"
 }
 
 function Write-RuntimeFiles {
@@ -402,6 +403,67 @@ function Write-RuntimeFiles {
   New-Item -ItemType Directory -Force -Path $RuntimeDir | Out-Null
   [System.IO.File]::WriteAllText((Join-Path $RuntimeDir $PayloadFile), (Build-Payload), [System.Text.Encoding]::UTF8)
   [System.IO.File]::WriteAllText((Join-Path $RuntimeDir $MainPayloadFile), (Build-MainPayload), [System.Text.Encoding]::UTF8)
+}
+
+function Get-PatcherExecutablePath {
+  $currentProcessPath = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+  if ($currentProcessPath -and (Split-Path -Leaf $currentProcessPath) -ieq "FigmaCnPatcher.exe") {
+    return $currentProcessPath
+  }
+  $candidate = Join-Path (Get-BaseDir) "FigmaCnPatcher.exe"
+  if (Test-Path -LiteralPath $candidate) { return (Resolve-Path -LiteralPath $candidate).Path }
+  return $currentProcessPath
+}
+
+function Get-FeatureConfigPath {
+  param([string]$RuntimeDir)
+  return (Join-Path $RuntimeDir $FeatureConfigFile)
+}
+
+function Read-FeatureConfig {
+  param([string]$RuntimeDir)
+  $path = Get-FeatureConfigPath $RuntimeDir
+  if (Test-Path -LiteralPath $path) {
+    try { return [System.IO.File]::ReadAllText($path, [System.Text.Encoding]::UTF8) | ConvertFrom-Json } catch {}
+  }
+  return [pscustomobject]@{
+    enabledFeatures = @()
+    patcherPath = Get-PatcherExecutablePath
+    runtimeDir = $RuntimeDir
+  }
+}
+
+function Write-FeatureConfig {
+  param([string]$RuntimeDir, [string[]]$EnabledFeatures)
+  New-Item -ItemType Directory -Force -Path $RuntimeDir | Out-Null
+  $config = [pscustomobject]@{
+    enabledFeatures = @($EnabledFeatures | Sort-Object -Unique)
+    patcherPath = Get-PatcherExecutablePath
+    runtimeDir = $RuntimeDir
+  }
+  [System.IO.File]::WriteAllText((Get-FeatureConfigPath $RuntimeDir), ($config | ConvertTo-Json -Depth 6), [System.Text.Encoding]::UTF8)
+  return $config
+}
+
+function Test-FeatureInstalled {
+  param([string]$RuntimeDir, [string]$FeatureId)
+  $config = Read-FeatureConfig $RuntimeDir
+  return @($config.enabledFeatures) -contains $FeatureId
+}
+
+function Install-Feature {
+  param([string]$FeatureId, [string]$SelectedAppDir, [string]$SelectedRuntimeDir)
+  $config = Read-FeatureConfig $SelectedRuntimeDir
+  $features = @($config.enabledFeatures)
+  if ($features -notcontains $FeatureId) { $features += $FeatureId }
+  Write-FeatureConfig $SelectedRuntimeDir $features | Out-Null
+  Write-RuntimeFiles $SelectedRuntimeDir
+  $target = Resolve-Target $SelectedAppDir
+  $status = Get-PatchStatus $target $SelectedRuntimeDir
+  if (-not $status.Patched) {
+    return Install-Patch $SelectedAppDir $SelectedRuntimeDir -Force
+  }
+  return $status
 }
 
 function Get-PatchStatus {
@@ -421,6 +483,7 @@ function Get-PatchStatus {
     HasBackup = Test-Path -LiteralPath $Target.BackupPath
     HasRuntimePayload = Test-Path -LiteralPath (Join-Path $RuntimeDir $PayloadFile)
     HasRuntimeMainPayload = Test-Path -LiteralPath (Join-Path $RuntimeDir $MainPayloadFile)
+    HasFeatureConfig = Test-Path -LiteralPath (Join-Path $RuntimeDir $FeatureConfigFile)
     MainSha256 = Get-Sha256Hex $main.Bytes
   }
 }
@@ -674,6 +737,11 @@ function Invoke-SelfTest {
     if ($installStatus.PayloadVersion -ne (Get-PayloadVersion)) { throw "Self-test payload version mismatch." }
     $repeatInstallStatus = Install-Patch $fakeAppDir $fakeRuntime -SkipProcessCheck
     if (-not $repeatInstallStatus.AlreadyPatched) { throw "Self-test repeat install did not report already patched." }
+    $featureStatus = Install-Feature "auto-check-official-latest" $fakeAppDir $fakeRuntime
+    if (-not $featureStatus.Patched) { throw "Self-test feature install did not preserve patched status." }
+    if (-not (Test-FeatureInstalled $fakeRuntime "auto-check-official-latest")) { throw "Self-test feature config did not mark feature installed." }
+    $featureConfigPath = Get-FeatureConfigPath $fakeRuntime
+    if (-not (Test-Path -LiteralPath $featureConfigPath)) { throw "Self-test feature config was not written." }
     $uninstallStatus = Uninstall-Patch $fakeAppDir $fakeRuntime -SkipProcessCheck
     if ($uninstallStatus.Patched) { throw "Self-test uninstall did not restore the original app.asar." }
     Write-Host "Self-test passed."
@@ -1101,40 +1169,25 @@ function Show-Gui {
     }
   }
 
-  $autoCheckOfficialLatestAction = {
-    Set-ProgressState 12 "正在检查官方最新版本..."
-    $current = Find-CurrentFigmaAppDir
-    $txtApp.Text = $current
-    $status = Get-CompleteStatus $current $txtRuntime.Text -CheckOfficial
-    if ($status.IsOfficialLatest) { return $status }
-    $choice = [System.Windows.Forms.MessageBox]::Show(
-      "检测到官方最新版 Figma $($status.OfficialLatestVersion)，当前电脑是 $($status.FigmaVersion)。`r`n`r`n点击 是 会下载官方更新包并自动更新，更新完成后会自动安装汉化补丁。",
-      "发现官方新版",
-      "YesNo",
-      "Question"
-    )
-    if ($choice -ne "Yes") { return $status }
-    Set-ProgressState 35 "正在下载并安装官方新版..."
-    $updated = Update-FigmaOfficial $txtRuntime.Text -Force
-    $txtApp.Text = $updated.AppDir
-    Set-ProgressState 92 "正在安装汉化补丁..."
-    return Get-CompleteStatus $updated.AppDir $txtRuntime.Text -CheckOfficial
-  }
-
   $featureDefinitions = @(
     [pscustomobject]@{
       Id = "auto-check-official-latest"
       Title = "自动检查客户端是否为最新版本"
-      Description = "每次打开补丁客户端时自动检查 Figma 官方最新版；发现新版会弹窗询问是否更新，更新完成后自动安装汉化补丁。"
-      ProgressText = "正在自动检查官方最新版..."
-      FailurePrefix = "自动检查失败"
-      Action = $autoCheckOfficialLatestAction
+      Description = "安装后每次打开 Figma 客户端会自动检查官方最新版；发现新版会在 Figma 客户端弹窗询问是否更新，更新完成后自动安装汉化补丁。"
+      ProgressText = "正在安装自动检查功能..."
+      FailurePrefix = "功能安装失败"
+      Action = {
+        Set-ProgressState 35 "正在写入功能配置..."
+        $current = if ($txtApp.Text -and (Test-FigmaAppDir $txtApp.Text)) { $txtApp.Text } else { Find-CurrentFigmaAppDir }
+        $txtApp.Text = $current
+        Set-ProgressState 65 "正在确保客户端补丁已安装..."
+        Install-Feature "auto-check-official-latest" $current $txtRuntime.Text
+        return Get-CompleteStatus $current $txtRuntime.Text
+      }
+      IsInstalled = { Test-FeatureInstalled $txtRuntime.Text "auto-check-official-latest" }
       SuccessMessage = {
         param($result)
-        if ($result -and ($result.PSObject.Properties.Name -contains "OfficialLatestVersion")) {
-          return "自动检查完成。`r`n`r`n当前版本：$($result.FigmaVersion)`r`n官方最新版：$($result.OfficialLatestVersion)`r`n补丁状态：$(if ($result.Patched) { "已安装" } else { "未安装" })"
-        }
-        return $null
+        return "功能安装完成。`r`n`r`n之后每次打开 Figma 客户端时，会自动检查是否为官方最新版本。`r`n补丁状态：$(if ($result.Patched) { "已安装" } else { "未安装" })"
       }
     }
   )
@@ -1174,7 +1227,13 @@ function Show-Gui {
     $featureList.Anchor = "Top,Left,Right"
     $featureList.CheckOnClick = $true
     $featureList.DisplayMember = "Title"
-    foreach ($feature in $featureDefinitions) { [void]$featureList.Items.Add($feature, $false) }
+    $featureList.DrawMode = "OwnerDrawFixed"
+    $installedFeatureIds = @{}
+    foreach ($feature in $featureDefinitions) {
+      $installed = [bool](& $feature.IsInstalled)
+      if ($installed) { $installedFeatureIds[$feature.Id] = $true }
+      [void]$featureList.Items.Add($feature, $installed)
+    }
 
     $descriptionBox = New-Object System.Windows.Forms.TextBox
     $descriptionBox.Left = 18
@@ -1214,15 +1273,37 @@ function Show-Gui {
 
     $featureList.Add_SelectedIndexChanged({
       if ($featureList.SelectedItem) {
-        $descriptionBox.Text = $featureList.SelectedItem.Description
+        $suffix = if ($installedFeatureIds.ContainsKey($featureList.SelectedItem.Id)) { "`r`n`r`n状态：已安装" } else { "" }
+        $descriptionBox.Text = "$($featureList.SelectedItem.Description)$suffix"
       }
+    })
+    $featureList.Add_ItemCheck({
+      param($sender, $eventArgs)
+      $feature = $featureList.Items[$eventArgs.Index]
+      if ($installedFeatureIds.ContainsKey($feature.Id)) {
+        $eventArgs.NewValue = [System.Windows.Forms.CheckState]::Checked
+      }
+    })
+    $featureList.Add_DrawItem({
+      param($sender, $eventArgs)
+      if ($eventArgs.Index -lt 0) { return }
+      $feature = $featureList.Items[$eventArgs.Index]
+      $eventArgs.DrawBackground()
+      $textColor = if ($installedFeatureIds.ContainsKey($feature.Id)) {
+        [System.Drawing.Color]::FromArgb(150, 150, 150)
+      } else {
+        $featureList.ForeColor
+      }
+      $flags = [System.Windows.Forms.TextFormatFlags]::Left -bor [System.Windows.Forms.TextFormatFlags]::VerticalCenter
+      [System.Windows.Forms.TextRenderer]::DrawText($eventArgs.Graphics, $feature.Title, $eventArgs.Font, $eventArgs.Bounds, $textColor, $flags)
+      $eventArgs.DrawFocusRectangle()
     })
 
     $btnClose.Add_Click({ $dialog.Close() })
     $btnRunFeatures.Add_Click({
-      $selectedFeatures = @($featureList.CheckedItems)
+      $selectedFeatures = @($featureList.CheckedItems | Where-Object { -not $installedFeatureIds.ContainsKey($_.Id) })
       if ($selectedFeatures.Count -eq 0) {
-        Show-InfoMessage "请先勾选要安装或执行的功能。" "功能安装"
+        Show-InfoMessage "请先勾选未安装的功能。" "功能安装"
         return
       }
       $dialog.Close()
@@ -1256,12 +1337,6 @@ function Show-Gui {
     if ($dialog.ShowDialog($form) -eq "OK") {
       $txtRuntime.Text = $dialog.SelectedPath
     }
-  })
-
-  $form.Add_Shown({
-    if ($script:StartupLatestCheckDone) { return }
-    $script:StartupLatestCheckDone = $true
-    & $runAction $autoCheckOfficialLatestAction $null "自动检查失败" "正在自动检查官方最新版..."
   })
 
   $btnStatus.Add_Click({
