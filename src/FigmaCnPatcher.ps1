@@ -231,8 +231,7 @@ function Get-OfficialLatestFigmaFeedRelease {
   foreach ($item in $items) {
     if ([string]$item.title -match 'Figma\s+(\d+\.\d+\.\d+)') {
       $version = $Matches[1]
-      $link = [string]$item.link
-      $releases += New-FigmaReleaseInfo $version ([string]$item.title) $(if ($link) { $link } else { $OfficialInstallerUrl }) $OfficialReleasesXmlUrl
+      $releases += New-FigmaReleaseInfo $version ([string]$item.title) $OfficialInstallerUrl $OfficialReleasesXmlUrl
     }
   }
   if ($releases.Count -eq 0) { throw "Cannot parse official Figma version from releases feed." }
@@ -426,20 +425,22 @@ function Disable-BuiltInUpdaterInMain {
     throw "Cannot locate built-in updater guard function body"
   }
 
-  $segmentLength = $nextFunction - $functionStart
   $prefix = $source.Substring($functionStart, $openBrace - $functionStart + 1)
   $replacementText = "$prefix" + "return!1/*$UpdaterDisableMarker*/}"
   $replacementBytes = [System.Text.Encoding]::UTF8.GetBytes($replacementText)
-  if ($replacementBytes.Length -gt $segmentLength) {
+  $functionStartByte = [System.Text.Encoding]::UTF8.GetByteCount($source.Substring(0, $functionStart))
+  $nextFunctionByte = [System.Text.Encoding]::UTF8.GetByteCount($source.Substring(0, $nextFunction))
+  $segmentByteLength = $nextFunctionByte - $functionStartByte
+  if ($replacementBytes.Length -gt $segmentByteLength) {
     throw "Built-in updater guard patch is too large"
   }
 
   $nextBytes = New-Object byte[] $MainBytes.Length
   [Array]::Copy($MainBytes, $nextBytes, $MainBytes.Length)
-  $replacement = New-Object byte[] $segmentLength
+  $replacement = New-Object byte[] $segmentByteLength
   for ($i = 0; $i -lt $replacement.Length; $i++) { $replacement[$i] = 32 }
   [Array]::Copy($replacementBytes, 0, $replacement, 0, $replacementBytes.Length)
-  [Array]::Copy($replacement, 0, $nextBytes, $functionStart, $replacement.Length)
+  [Array]::Copy($replacement, 0, $nextBytes, $functionStartByte, $replacement.Length)
   return [pscustomobject]@{ Bytes = $nextBytes; Changed = $true }
 }
 
@@ -513,7 +514,7 @@ function Install-Feature {
   Write-RuntimeFiles $SelectedRuntimeDir
   $target = Resolve-Target $SelectedAppDir
   $status = Get-PatchStatus $target $SelectedRuntimeDir
-  if (-not $status.Patched) {
+  if (-not $status.Patched -or -not $status.HasBuiltInUpdaterDisabled) {
     return Install-Patch $SelectedAppDir $SelectedRuntimeDir -Force
   }
   return $status
@@ -816,7 +817,7 @@ function Repair-FigmaShortcuts {
 
 function New-FakeAsar {
   param([string]$AsarPath)
-  $mainText = 'console.log("figma");function fakeUpdaterGuard(){console.log("Updater not enabled. Reason: test");return true}function nextFakeUpdaterBlock(){return true}' + "`n" + $LicenseCommentTarget + " test license block with enough room for the hook " + ("x" * 1200)
+  $mainText = 'console.log("汉化补丁");function fakeUpdaterGuard(){console.log("Updater not enabled. Reason: test");return true}function nextFakeUpdaterBlock(){return true}' + "`n" + $LicenseCommentTarget + " test license block with enough room for the hook " + ("x" * 1200)
   $mainBytes = [System.Text.Encoding]::UTF8.GetBytes($mainText)
   $hash = Get-Sha256Hex $mainBytes
   $headerText = (@{
@@ -900,6 +901,25 @@ function Invoke-SelfTest {
     $featureStatus = Install-Feature "auto-check-official-latest" $fakeAppDir $fakeRuntime
     if (-not $featureStatus.Patched) { throw "Self-test feature install did not preserve patched status." }
     if (-not (Test-FeatureInstalled $fakeRuntime "auto-check-official-latest")) { throw "Self-test feature config did not mark feature installed." }
+    $featureUpgradeAppDir = Join-Path $temp "app-2.0.0"
+    New-Item -ItemType Directory -Force -Path (Join-Path $featureUpgradeAppDir "resources") | Out-Null
+    New-Item -ItemType File -Force -Path (Join-Path $featureUpgradeAppDir "Figma.exe") | Out-Null
+    $featureUpgradeAsarPath = Join-Path $featureUpgradeAppDir "resources\app.asar"
+    $featureUpgradeBackupPath = Join-Path $featureUpgradeAppDir "resources\$BackupFile"
+    New-FakeAsar $featureUpgradeAsarPath
+    Copy-Item -LiteralPath $featureUpgradeAsarPath -Destination $featureUpgradeBackupPath -Force
+    $featureUpgradeAsar = Read-Asar $featureUpgradeAsarPath
+    $featureUpgradeMain = Get-AsarFileSlice $featureUpgradeAsar "main.js"
+    $featureUpgradeBytes = $featureUpgradeMain.Bytes
+    $featureUpgradeNeedle = [System.Text.Encoding]::UTF8.GetBytes($LicenseCommentTarget)
+    $featureUpgradeIndex = Get-BytesIndex $featureUpgradeBytes $featureUpgradeNeedle
+    if ($featureUpgradeIndex -lt 0) { throw "Self-test feature upgrade cannot find injection target." }
+    $featureUpgradeHookBytes = [System.Text.Encoding]::UTF8.GetBytes((Build-MainHook $fakeRuntime))
+    [Array]::Copy($featureUpgradeHookBytes, 0, $featureUpgradeBytes, $featureUpgradeIndex, $featureUpgradeHookBytes.Length)
+    [Array]::Copy($featureUpgradeBytes, 0, $featureUpgradeAsar.Bytes, $featureUpgradeMain.Start, $featureUpgradeBytes.Length)
+    [System.IO.File]::WriteAllBytes($featureUpgradeAsarPath, $featureUpgradeAsar.Bytes)
+    $featureUpgradeStatus = Install-Feature "auto-check-official-latest" $featureUpgradeAppDir $fakeRuntime
+    if (-not $featureUpgradeStatus.HasBuiltInUpdaterDisabled) { throw "Self-test feature install did not upgrade updater guard." }
     $featureConfigPath = Get-FeatureConfigPath $fakeRuntime
     if (-not (Test-Path -LiteralPath $featureConfigPath)) { throw "Self-test feature config was not written." }
     $runtimeMainSource = [System.IO.File]::ReadAllText((Join-Path $fakeRuntime "m.js"), [System.Text.Encoding]::UTF8)
@@ -925,6 +945,7 @@ function Format-StatusText {
     "Figma 路径：$($Status.AppDir)"
     "Figma 版本：$($Status.FigmaVersion)"
     "补丁状态：$(if ($Status.Patched) { "已安装" } else { "未安装" })"
+    "内置更新拦截：$(if ($Status.HasBuiltInUpdaterDisabled) { "已启用" } else { "未启用" })"
     "备份状态：$(if ($Status.HasBackup) { "已存在" } else { "未找到" })"
     "运行时文件：$(if ($Status.HasRuntimePayload) { "已生成" } else { "未生成" })"
   ) -join "`r`n"
@@ -936,6 +957,7 @@ function Set-StatusLabels {
   $script:ValuePayload.Text = "v$($Status.PayloadVersion)"
   $script:ValueFigmaVersion.Text = $Status.FigmaVersion
   $script:ValuePatchState.Text = if ($Status.Patched) { "已安装" } else { "未安装" }
+  if ($script:ValueUpdaterGuardState) { $script:ValueUpdaterGuardState.Text = if ($Status.HasBuiltInUpdaterDisabled) { "已启用" } else { "未启用" } }
   $script:ValueBackupState.Text = if ($Status.HasBackup) { "已存在" } else { "未找到" }
   $script:ValueRuntimeState.Text = if ($Status.HasRuntimePayload) { "已生成" } else { "未生成" }
   if ($script:ValueCurrentFigma) { $script:ValueCurrentFigma.Text = "当前版本：$($Status.FigmaVersion)" }
@@ -973,8 +995,8 @@ function Show-Gui {
   $form.Text = "Figma 客户端汉化补丁 v$PatcherVersion"
   $form.StartPosition = "CenterScreen"
   $form.Width = 900
-  $form.Height = 625
-  $form.MinimumSize = New-Object System.Drawing.Size(860, 605)
+  $form.Height = 650
+  $form.MinimumSize = New-Object System.Drawing.Size(860, 630)
   $form.BackColor = [System.Drawing.Color]::FromArgb(246, 248, 251)
   $form.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 9)
   try {
@@ -1244,7 +1266,7 @@ function Show-Gui {
   $statusGroup.Left = 18
   $statusGroup.Top = 438
   $statusGroup.Width = 846
-  $statusGroup.Height = 96
+  $statusGroup.Height = 118
   $statusGroup.Anchor = "Top,Left,Right"
 
   function New-StatusLabel {
@@ -1279,6 +1301,8 @@ function Show-Gui {
   $script:ValueBackupState.Left = 510
   $script:ValueRuntimeState = New-StatusValue 66
   $script:ValueRuntimeState.Left = 510
+  $script:ValueUpdaterGuardState = New-StatusValue 88
+  $script:ValueUpdaterGuardState.Left = 510
 
   $statusGroup.Controls.AddRange(@(
     (New-StatusLabel "补丁程序版本：" 22),
@@ -1292,7 +1316,9 @@ function Show-Gui {
     (New-StatusLabel "备份状态：" 44 390),
     $script:ValueBackupState,
     (New-StatusLabel "运行时文件：" 66 390),
-    $script:ValueRuntimeState
+    $script:ValueRuntimeState,
+    (New-StatusLabel "内置更新拦截：" 88 390),
+    $script:ValueUpdaterGuardState
   ))
 
   function Set-ProgressState {
