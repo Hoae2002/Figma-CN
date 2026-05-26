@@ -30,6 +30,7 @@ $LicenseCommentTarget = "/*! Bundled license information:"
 $OfficialReleasesXmlUrl = "https://desktop.figma.com/win/releases.xml"
 $OfficialInstallerUrl = "https://desktop.figma.com/win/FigmaSetup.exe"
 $EmbeddedPayloadFiles = @{}
+$Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
 function Get-BaseDir {
   $scriptDir = if ($PSScriptRoot) {
@@ -441,8 +442,16 @@ function Write-FeatureConfig {
     patcherPath = Get-PatcherExecutablePath
     runtimeDir = $RuntimeDir
   }
-  [System.IO.File]::WriteAllText((Get-FeatureConfigPath $RuntimeDir), ($config | ConvertTo-Json -Depth 6), [System.Text.Encoding]::UTF8)
+  [System.IO.File]::WriteAllText((Get-FeatureConfigPath $RuntimeDir), ($config | ConvertTo-Json -Depth 6), $Utf8NoBom)
   return $config
+}
+
+function Repair-FeatureConfigEncoding {
+  param([string]$RuntimeDir)
+  $path = Get-FeatureConfigPath $RuntimeDir
+  if (-not (Test-Path -LiteralPath $path)) { return }
+  $config = Read-FeatureConfig $RuntimeDir
+  [System.IO.File]::WriteAllText($path, ($config | ConvertTo-Json -Depth 6), $Utf8NoBom)
 }
 
 function Test-FeatureInstalled {
@@ -578,6 +587,7 @@ function Install-Patch {
     }
   }
   Write-RuntimeFiles $SelectedRuntimeDir
+  Repair-FeatureConfigEncoding $SelectedRuntimeDir
   $result = Patch-Asar $target $SelectedRuntimeDir
   Write-Log "Install result: $($result | ConvertTo-Json -Compress)"
   $status = Get-PatchStatus $target $SelectedRuntimeDir

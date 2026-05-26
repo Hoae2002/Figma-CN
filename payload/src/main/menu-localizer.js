@@ -148,10 +148,15 @@
     return 0;
   }
 
+  function getRuntimeDir() {
+    return global.__FIGMA_ZH_RUNTIME_DIR__ || __dirname;
+  }
+
   function readFeatureConfig() {
     try {
-      const runtimeDir = global.__FIGMA_ZH_RUNTIME_DIR__ || __dirname;
-      return JSON.parse(fs.readFileSync(path.join(runtimeDir, "features.json"), "utf8"));
+      const runtimeDir = getRuntimeDir();
+      const text = fs.readFileSync(path.join(runtimeDir, "features.json"), "utf8").replace(/^\uFEFF/, "");
+      return JSON.parse(text);
     } catch (_) {
       return null;
     }
@@ -179,12 +184,70 @@
     });
   }
 
-  async function getOfficialLatestVersion() {
+  function getPartialText(url, maxBytes) {
+    return new Promise((resolve, reject) => {
+      let finished = false;
+      const chunks = [];
+      let total = 0;
+      const done = (error, value) => {
+        if (finished) return;
+        finished = true;
+        if (error) reject(error);
+        else resolve(value);
+      };
+      const request = https.get(url, {
+        timeout: 30000,
+        headers: { Range: `bytes=0-${maxBytes - 1}` }
+      }, (response) => {
+        if (![200, 206].includes(response.statusCode)) {
+          response.resume();
+          done(new Error(`HTTP ${response.statusCode}`));
+          return;
+        }
+        response.on("data", (chunk) => {
+          chunks.push(chunk);
+          total += chunk.length;
+          if (total >= maxBytes) {
+            done(null, Buffer.concat(chunks, Math.min(total, maxBytes)).toString("latin1"));
+            request.destroy();
+          }
+        });
+        response.on("end", () => {
+          done(null, Buffer.concat(chunks, total).toString("latin1"));
+        });
+      });
+      request.on("timeout", () => request.destroy(new Error("request timeout")));
+      request.on("error", (error) => {
+        if (!finished) reject(error);
+      });
+    });
+  }
+
+  async function getOfficialInstallerVersion() {
+    const text = await getPartialText("https://desktop.figma.com/win/FigmaSetup.exe", 2 * 1024 * 1024);
+    const match = /Figma-(\d+\.\d+\.\d+)-full\.nupkg/.exec(text);
+    if (!match) throw new Error("Cannot parse official installer version.");
+    return match[1];
+  }
+
+  async function getOfficialFeedVersion() {
     const text = await getText("https://desktop.figma.com/win/releases.xml");
     const versions = [];
     const pattern = /Figma\s+(\d+\.\d+\.\d+)/g;
     let match;
     while ((match = pattern.exec(text))) versions.push(match[1]);
+    if (!versions.length) throw new Error("Cannot parse official feed version.");
+    return versions.sort((a, b) => compareVersions(b, a))[0];
+  }
+
+  async function getOfficialLatestVersion() {
+    const versions = [];
+    try {
+      versions.push(await getOfficialInstallerVersion());
+    } catch (_) {}
+    try {
+      versions.push(await getOfficialFeedVersion());
+    } catch (_) {}
     if (!versions.length) throw new Error("Cannot parse official latest version.");
     return versions.sort((a, b) => compareVersions(b, a))[0];
   }
