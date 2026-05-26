@@ -764,6 +764,9 @@ function Invoke-SelfTest {
     if (-not (Test-FeatureInstalled $fakeRuntime "auto-check-official-latest")) { throw "Self-test feature config did not mark feature installed." }
     $featureConfigPath = Get-FeatureConfigPath $fakeRuntime
     if (-not (Test-Path -LiteralPath $featureConfigPath)) { throw "Self-test feature config was not written." }
+    $runtimeMainSource = [System.IO.File]::ReadAllText((Join-Path $fakeRuntime "m.js"), [System.Text.Encoding]::UTF8)
+    if ($runtimeMainSource.Contains("__FIGMA_ZH_OFFICIAL_UPDATE_CHECKED__")) { throw "Self-test runtime still uses one-shot update check." }
+    if (-not $runtimeMainSource.Contains('"second-instance"')) { throw "Self-test runtime does not check updates on second instance." }
     $uninstallStatus = Uninstall-Patch $fakeAppDir $fakeRuntime -SkipProcessCheck
     if ($uninstallStatus.Patched) { throw "Self-test uninstall did not restore the original app.asar." }
     Write-Host "Self-test passed."

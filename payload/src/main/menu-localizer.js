@@ -252,45 +252,56 @@
     return versions.sort((a, b) => compareVersions(b, a))[0];
   }
 
+  function scheduleOfficialUpdateCheck(delayMs) {
+    setTimeout(checkOfficialUpdateOnStartup, delayMs).unref();
+  }
+
   async function checkOfficialUpdateOnStartup() {
-    if (global.__FIGMA_ZH_OFFICIAL_UPDATE_CHECKED__) return;
-    global.__FIGMA_ZH_OFFICIAL_UPDATE_CHECKED__ = true;
+    const now = Date.now();
+    if (global.__FIGMA_ZH_OFFICIAL_UPDATE_CHECKING__) return;
+    if (global.__FIGMA_ZH_OFFICIAL_UPDATE_LAST_CHECK__ && now - global.__FIGMA_ZH_OFFICIAL_UPDATE_LAST_CHECK__ < 5000) return;
+    global.__FIGMA_ZH_OFFICIAL_UPDATE_CHECKING__ = true;
+    global.__FIGMA_ZH_OFFICIAL_UPDATE_LAST_CHECK__ = now;
     const config = readFeatureConfig();
-    if (!isFeatureEnabled(config, "auto-check-official-latest")) return;
-    const patcherPath = config && config.patcherPath;
-    const runtimeDir = config && config.runtimeDir;
-    if (!patcherPath || !runtimeDir || !fs.existsSync(patcherPath)) return;
-    let latestVersion;
     try {
-      latestVersion = await getOfficialLatestVersion();
-    } catch (_) {
-      return;
-    }
-    const currentVersion = app.getVersion();
-    if (compareVersions(currentVersion, latestVersion) >= 0) return;
-    const result = await dialog.showMessageBox({
-      type: "question",
-      buttons: ["更新", "稍后"],
-      defaultId: 0,
-      cancelId: 1,
-      title: "发现 Figma 新版本",
-      message: `检测到官方最新版 Figma ${latestVersion}`,
-      detail: `当前版本是 ${currentVersion}。\n\n点击“更新”会关闭 Figma，下载并安装官方最新版，更新完成后会自动安装汉化补丁。`
-    });
-    if (result.response !== 0) return;
-    try {
-      const child = spawn(patcherPath, ["-UpdateFigma", "-RuntimeDir", runtimeDir, "-ForceClose"], {
-        detached: true,
-        stdio: "ignore"
+      if (!isFeatureEnabled(config, "auto-check-official-latest")) return;
+      const patcherPath = config && config.patcherPath;
+      const runtimeDir = config && config.runtimeDir;
+      if (!patcherPath || !runtimeDir || !fs.existsSync(patcherPath)) return;
+      let latestVersion;
+      try {
+        latestVersion = await getOfficialLatestVersion();
+      } catch (_) {
+        return;
+      }
+      const currentVersion = app.getVersion();
+      if (compareVersions(currentVersion, latestVersion) >= 0) return;
+      const result = await dialog.showMessageBox({
+        type: "question",
+        buttons: ["更新", "稍后"],
+        defaultId: 0,
+        cancelId: 1,
+        title: "发现 Figma 新版本",
+        message: `检测到官方最新版 Figma ${latestVersion}`,
+        detail: `当前版本是 ${currentVersion}。\n\n点击“更新”会关闭 Figma，下载并安装官方最新版，更新完成后会自动安装汉化补丁。`
       });
-      child.unref();
-    } catch (error) {
-      dialog.showMessageBox({
-        type: "error",
-        title: "更新启动失败",
-        message: "无法启动补丁更新程序",
-        detail: error && error.message ? error.message : String(error)
-      }).catch(() => {});
+      if (result.response !== 0) return;
+      try {
+        const child = spawn(patcherPath, ["-UpdateFigma", "-RuntimeDir", runtimeDir, "-ForceClose"], {
+          detached: true,
+          stdio: "ignore"
+        });
+        child.unref();
+      } catch (error) {
+        dialog.showMessageBox({
+          type: "error",
+          title: "更新启动失败",
+          message: "无法启动补丁更新程序",
+          detail: error && error.message ? error.message : String(error)
+        }).catch(() => {});
+      }
+    } finally {
+      global.__FIGMA_ZH_OFFICIAL_UPDATE_CHECKING__ = false;
     }
   }
 
@@ -309,8 +320,10 @@
     hookDialogMethod("showMessageBox");
     hookDialogMethod("showMessageBoxSync");
     app.whenReady().then(scheduleLocalize).catch(() => {});
-    app.whenReady().then(() => setTimeout(checkOfficialUpdateOnStartup, 1500)).catch(() => {});
+    app.whenReady().then(() => scheduleOfficialUpdateCheck(1500)).catch(() => {});
+    app.on("second-instance", () => scheduleOfficialUpdateCheck(800));
     app.on("browser-window-created", scheduleLocalize);
+    app.on("browser-window-created", () => scheduleOfficialUpdateCheck(1500));
     app.on("browser-window-focus", scheduleLocalize);
     setInterval(localizeMenu, 5000).unref();
   }
