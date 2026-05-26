@@ -175,21 +175,94 @@ function Compare-VersionString {
   return 0
 }
 
-function Get-OfficialLatestFigmaRelease {
-  param([string]$CurrentVersion = "0.0.0")
+function New-FigmaReleaseInfo {
+  param([string]$Version, [string]$Name, [string]$InstallerUrl, [string]$ReleaseUrl)
+  return [pscustomobject]@{
+    Version = $Version
+    Name = $Name
+    InstallerUrl = $InstallerUrl
+    ReleaseUrl = $ReleaseUrl
+  }
+}
+
+function Get-FigmaInstallerVersionFromText {
+  param([string]$Text)
+  if ($Text -match 'Figma-(\d+\.\d+\.\d+)-full\.nupkg') { return $Matches[1] }
+  return $null
+}
+
+function Get-OfficialLatestFigmaInstallerRelease {
+  $request = [System.Net.HttpWebRequest][System.Net.WebRequest]::Create($OfficialInstallerUrl)
+  $request.Method = "GET"
+  $request.Timeout = 30000
+  $request.ReadWriteTimeout = 30000
+  $request.AddRange(0, 2097151)
+  $response = $request.GetResponse()
+  try {
+    $stream = $response.GetResponseStream()
+    $memory = New-Object System.IO.MemoryStream
+    try {
+      $stream.CopyTo($memory)
+      $text = [System.Text.Encoding]::GetEncoding(28591).GetString($memory.ToArray())
+    } finally {
+      $memory.Dispose()
+      $stream.Dispose()
+    }
+  } finally {
+    $response.Dispose()
+  }
+  $version = Get-FigmaInstallerVersionFromText $text
+  if (-not $version) { throw "Cannot parse official Figma version from installer metadata." }
+  return New-FigmaReleaseInfo $version "Figma $version" $OfficialInstallerUrl $OfficialInstallerUrl
+}
+
+function Get-OfficialLatestFigmaFeedRelease {
   $response = Invoke-WebRequest -Uri $OfficialReleasesXmlUrl -UseBasicParsing -TimeoutSec 20
   [xml]$xml = $response.Content
-  $item = @($xml.rss.channel.item | Select-Object -First 1)[0]
-  if (-not $item -or -not $item.title) { throw "Official Figma releases feed did not include a version." }
-  if ([string]$item.title -notmatch 'Figma\s+(\d+\.\d+\.\d+)') { throw "Cannot parse official Figma version from releases feed." }
-  $version = $Matches[1]
-  $link = [string]$item.link
-  return [pscustomobject]@{
-    Version = $version
-    Name = [string]$item.title
-    InstallerUrl = if ($link) { $link } else { $OfficialInstallerUrl }
-    ReleaseUrl = $OfficialReleasesXmlUrl
+  $items = @($xml.rss.channel.item)
+  if (-not $items -or $items.Count -eq 0) { throw "Official Figma releases feed did not include a version." }
+
+  $releases = @()
+  foreach ($item in $items) {
+    if ([string]$item.title -match 'Figma\s+(\d+\.\d+\.\d+)') {
+      $version = $Matches[1]
+      $link = [string]$item.link
+      $releases += New-FigmaReleaseInfo $version ([string]$item.title) $(if ($link) { $link } else { $OfficialInstallerUrl }) $OfficialReleasesXmlUrl
+    }
   }
+  if ($releases.Count -eq 0) { throw "Cannot parse official Figma version from releases feed." }
+  return Select-LatestFigmaRelease $releases
+}
+
+function Select-LatestFigmaRelease {
+  param([object[]]$Releases)
+  $latest = $null
+  foreach ($release in $Releases) {
+    if (-not $latest -or (Compare-VersionString $release.Version $latest.Version) -gt 0) {
+      $latest = $release
+    }
+  }
+  return $latest
+}
+
+function Get-OfficialLatestFigmaRelease {
+  param([string]$CurrentVersion = "0.0.0")
+  $releases = @()
+  $errors = @()
+  try {
+    $releases += Get-OfficialLatestFigmaInstallerRelease
+  } catch {
+    $errors += $_.Exception.Message
+  }
+  try {
+    $releases += Get-OfficialLatestFigmaFeedRelease
+  } catch {
+    $errors += $_.Exception.Message
+  }
+  if ($releases.Count -eq 0) {
+    throw "Cannot determine official Figma latest version. $($errors -join ' ')"
+  }
+  return Select-LatestFigmaRelease $releases
 }
 
 function Resolve-Target {
@@ -587,12 +660,18 @@ function Invoke-SelfTest {
     if ((Compare-VersionString "126.4.10" "126.3.12") -le 0) { throw "Self-test version compare failed." }
     if ((Compare-VersionString "126.3.12" "126.4.10") -ge 0) { throw "Self-test version compare failed." }
     if ((Compare-VersionString "126.3.12" "126.3.12") -ne 0) { throw "Self-test version compare failed." }
+    if ((Get-FigmaInstallerVersionFromText "PK Figma-126.4.11-full.nupkg") -ne "126.4.11") { throw "Self-test installer version parse failed." }
+    $selectedRelease = Select-LatestFigmaRelease @(
+      (New-FigmaReleaseInfo "126.3.12" "Figma 126.3.12" "msi" "feed"),
+      (New-FigmaReleaseInfo "126.4.11" "Figma 126.4.11" "setup" "installer")
+    )
+    if ($selectedRelease.Version -ne "126.4.11") { throw "Self-test official latest selection failed." }
     $installStatus = Install-Patch $fakeAppDir $fakeRuntime -SkipProcessCheck
     if (-not $installStatus.Patched) { throw "Self-test install did not mark the app as patched." }
     if (-not $installStatus.HasBackup) { throw "Self-test did not create a backup." }
     if (-not $installStatus.HasRuntimePayload) { throw "Self-test did not write the runtime payload." }
     if (-not $installStatus.HasRuntimeMainPayload) { throw "Self-test did not write the main runtime payload." }
-    if ($installStatus.PayloadVersion -ne "0.8.17") { throw "Self-test payload version mismatch." }
+    if ($installStatus.PayloadVersion -ne (Get-PayloadVersion)) { throw "Self-test payload version mismatch." }
     $repeatInstallStatus = Install-Patch $fakeAppDir $fakeRuntime -SkipProcessCheck
     if (-not $repeatInstallStatus.AlreadyPatched) { throw "Self-test repeat install did not report already patched." }
     $uninstallStatus = Uninstall-Patch $fakeAppDir $fakeRuntime -SkipProcessCheck
