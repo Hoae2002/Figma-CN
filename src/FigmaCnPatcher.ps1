@@ -23,6 +23,7 @@ if ($args -contains "-ShowProgress" -or $args -contains "/ShowProgress") { $Show
 if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClose = $true }
 
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V4"
+$UpdaterDisableMarker = "FIGMA_ZH_DISABLE_BUILTIN_UPDATER"
 $PatcherVersion = "0.3.4"
 $PayloadFile = "i.js"
 $MainPayloadFile = "m.js"
@@ -401,6 +402,47 @@ function Build-MainHook {
   return ";(()=>{const M=$marker;try{const E=require(""electron""),F=require(""fs""),R=require(""path""),P=$payload,Q=$mainPayload;try{global.__FIGMA_ZH_RUNTIME_DIR__=R.dirname(Q);F.existsSync(Q)&&eval(F.readFileSync(Q,""utf8""))}catch(e){}let C;function p(){return C||(C=F.readFileSync(P,""utf8""))}function j(w){if(!w||w._fz)return;w._fz=1;const r=()=>{try{let u=w.getURL();/^https:\/\/([^\/]+\.)?figma\.com/i.test(u)&&w.executeJavaScript(p(),true).catch(()=>{})}catch(e){}};w.on(""dom-ready"",r);w.on(""did-finish-load"",r)}E.app.on(""web-contents-created"",(_,w)=>j(w));E.webContents.getAllWebContents().forEach(j)}catch(e){}})();"
 }
 
+function Disable-BuiltInUpdaterInMain {
+  param([byte[]]$MainBytes)
+  $source = [System.Text.Encoding]::UTF8.GetString($MainBytes)
+  if ($source.Contains($UpdaterDisableMarker)) {
+    return [pscustomobject]@{ Bytes = $MainBytes; Changed = $false }
+  }
+
+  $anchor = "Updater not enabled. Reason:"
+  $anchorIndex = $source.IndexOf($anchor, [StringComparison]::Ordinal)
+  if ($anchorIndex -lt 0) {
+    throw "Cannot find built-in updater guard target"
+  }
+
+  $functionStart = $source.LastIndexOf("function ", $anchorIndex, [StringComparison]::Ordinal)
+  $nextFunction = $source.IndexOf("function ", $anchorIndex + $anchor.Length, [StringComparison]::Ordinal)
+  if ($functionStart -lt 0 -or $nextFunction -lt 0 -or $nextFunction -le $functionStart) {
+    throw "Cannot locate built-in updater guard function bounds"
+  }
+
+  $openBrace = $source.IndexOf("{", $functionStart, [StringComparison]::Ordinal)
+  if ($openBrace -lt 0 -or $openBrace -ge $nextFunction) {
+    throw "Cannot locate built-in updater guard function body"
+  }
+
+  $segmentLength = $nextFunction - $functionStart
+  $prefix = $source.Substring($functionStart, $openBrace - $functionStart + 1)
+  $replacementText = "$prefix" + "return!1/*$UpdaterDisableMarker*/}"
+  $replacementBytes = [System.Text.Encoding]::UTF8.GetBytes($replacementText)
+  if ($replacementBytes.Length -gt $segmentLength) {
+    throw "Built-in updater guard patch is too large"
+  }
+
+  $nextBytes = New-Object byte[] $MainBytes.Length
+  [Array]::Copy($MainBytes, $nextBytes, $MainBytes.Length)
+  $replacement = New-Object byte[] $segmentLength
+  for ($i = 0; $i -lt $replacement.Length; $i++) { $replacement[$i] = 32 }
+  [Array]::Copy($replacementBytes, 0, $replacement, 0, $replacementBytes.Length)
+  [Array]::Copy($replacement, 0, $nextBytes, $functionStart, $replacement.Length)
+  return [pscustomobject]@{ Bytes = $nextBytes; Changed = $true }
+}
+
 function Write-RuntimeFiles {
   param([string]$RuntimeDir)
   New-Item -ItemType Directory -Force -Path $RuntimeDir | Out-Null
@@ -495,6 +537,7 @@ function Get-PatchStatus {
     HasRuntimePayload = Test-Path -LiteralPath (Join-Path $RuntimeDir $PayloadFile)
     HasRuntimeMainPayload = Test-Path -LiteralPath (Join-Path $RuntimeDir $MainPayloadFile)
     HasFeatureConfig = Test-Path -LiteralPath (Join-Path $RuntimeDir $FeatureConfigFile)
+    HasBuiltInUpdaterDisabled = $source.Contains($UpdaterDisableMarker)
     MainSha256 = Get-Sha256Hex $main.Bytes
   }
 }
@@ -515,30 +558,42 @@ function Patch-Asar {
   param($Target, [string]$RuntimeDir)
   $asar = Read-Asar $Target.AsarPath
   $main = Get-AsarFileSlice $asar "main.js"
-  $source = [System.Text.Encoding]::UTF8.GetString($main.Bytes)
-  if ($source.Contains($PatchMarker)) {
+  $nextBytes = $main.Bytes
+  $changed = $false
+  $source = [System.Text.Encoding]::UTF8.GetString($nextBytes)
+  $alreadyPatched = $source.Contains($PatchMarker)
+
+  $updaterPatch = Disable-BuiltInUpdaterInMain $nextBytes
+  $nextBytes = $updaterPatch.Bytes
+  if ($updaterPatch.Changed) { $changed = $true }
+
+  if (-not $alreadyPatched) {
+    $needle = [System.Text.Encoding]::UTF8.GetBytes($LicenseCommentTarget)
+    $targetIndex = Get-BytesIndex $nextBytes $needle
+    if ($targetIndex -lt 0) {
+      throw "Cannot find bundled license comment injection target"
+    }
+
+    $hook = Build-MainHook $RuntimeDir
+    $hookBytes = [System.Text.Encoding]::UTF8.GetBytes($hook)
+    $chunkSize = $nextBytes.Length - $targetIndex
+    if ($hookBytes.Length -gt $chunkSize) {
+      throw "Main hook is too large for in-place patch: $($hookBytes.Length) bytes"
+    }
+
+    $hookedBytes = New-Object byte[] $nextBytes.Length
+    [Array]::Copy($nextBytes, $hookedBytes, $nextBytes.Length)
+    $replacement = New-Object byte[] $chunkSize
+    for ($i = 0; $i -lt $replacement.Length; $i++) { $replacement[$i] = 32 }
+    [Array]::Copy($hookBytes, 0, $replacement, 0, $hookBytes.Length)
+    [Array]::Copy($replacement, 0, $hookedBytes, $targetIndex, $replacement.Length)
+    $nextBytes = $hookedBytes
+    $changed = $true
+  }
+
+  if (-not $changed) {
     return [pscustomobject]@{ Changed = $false; AlreadyPatched = $true }
   }
-
-  $needle = [System.Text.Encoding]::UTF8.GetBytes($LicenseCommentTarget)
-  $targetIndex = Get-BytesIndex $main.Bytes $needle
-  if ($targetIndex -lt 0) {
-    throw "Cannot find bundled license comment injection target"
-  }
-
-  $hook = Build-MainHook $RuntimeDir
-  $hookBytes = [System.Text.Encoding]::UTF8.GetBytes($hook)
-  $chunkSize = $main.Bytes.Length - $targetIndex
-  if ($hookBytes.Length -gt $chunkSize) {
-    throw "Main hook is too large for in-place patch: $($hookBytes.Length) bytes"
-  }
-
-  $nextBytes = New-Object byte[] $main.Bytes.Length
-  [Array]::Copy($main.Bytes, $nextBytes, $main.Bytes.Length)
-  $replacement = New-Object byte[] $chunkSize
-  for ($i = 0; $i -lt $replacement.Length; $i++) { $replacement[$i] = 32 }
-  [Array]::Copy($hookBytes, 0, $replacement, 0, $hookBytes.Length)
-  [Array]::Copy($replacement, 0, $nextBytes, $targetIndex, $replacement.Length)
 
   $oldHash = $null
   if ($main.Entry.integrity -and $main.Entry.integrity.hash) {
@@ -557,7 +612,7 @@ function Patch-Asar {
   [Array]::Copy($nextHeaderBytes, 0, $asar.Bytes, $asar.HeaderStart, $nextHeaderBytes.Length)
   [Array]::Copy($nextBytes, 0, $asar.Bytes, $main.Start, $nextBytes.Length)
   [System.IO.File]::WriteAllBytes($Target.AsarPath, $asar.Bytes)
-  return [pscustomobject]@{ Changed = $true; Hash = $nextHash }
+  return [pscustomobject]@{ Changed = $true; Hash = $nextHash; AlreadyPatched = $alreadyPatched }
 }
 
 function Assert-FigmaClosed {
@@ -761,7 +816,7 @@ function Repair-FigmaShortcuts {
 
 function New-FakeAsar {
   param([string]$AsarPath)
-  $mainText = 'console.log("figma");' + "`n" + $LicenseCommentTarget + " test license block with enough room for the hook " + ("x" * 1200)
+  $mainText = 'console.log("figma");function fakeUpdaterGuard(){console.log("Updater not enabled. Reason: test");return true}function nextFakeUpdaterBlock(){return true}' + "`n" + $LicenseCommentTarget + " test license block with enough room for the hook " + ("x" * 1200)
   $mainBytes = [System.Text.Encoding]::UTF8.GetBytes($mainText)
   $hash = Get-Sha256Hex $mainBytes
   $headerText = (@{
@@ -825,6 +880,7 @@ function Invoke-SelfTest {
     if (-not $installStatus.HasBackup) { throw "Self-test did not create a backup." }
     if (-not $installStatus.HasRuntimePayload) { throw "Self-test did not write the runtime payload." }
     if (-not $installStatus.HasRuntimeMainPayload) { throw "Self-test did not write the main runtime payload." }
+    if (-not $installStatus.HasBuiltInUpdaterDisabled) { throw "Self-test did not disable the built-in updater." }
     if ($installStatus.PayloadVersion -ne (Get-PayloadVersion)) { throw "Self-test payload version mismatch." }
     $repeatInstallStatus = Install-Patch $fakeAppDir $fakeRuntime -SkipProcessCheck
     if (-not $repeatInstallStatus.AlreadyPatched) { throw "Self-test repeat install did not report already patched." }
@@ -840,6 +896,7 @@ function Invoke-SelfTest {
     $upgradedMain = Get-AsarFileSlice $upgradedAsar "main.js"
     $upgradedSource = [System.Text.Encoding]::UTF8.GetString($upgradedMain.Bytes)
     if (-not $upgradedSource.Contains("global.__FIGMA_ZH_RUNTIME_DIR__=R.dirname(Q);")) { throw "Self-test old hook upgrade did not write runtime dir support." }
+    if (-not $upgradedSource.Contains($UpdaterDisableMarker)) { throw "Self-test old hook upgrade did not preserve built-in updater disable." }
     $featureStatus = Install-Feature "auto-check-official-latest" $fakeAppDir $fakeRuntime
     if (-not $featureStatus.Patched) { throw "Self-test feature install did not preserve patched status." }
     if (-not (Test-FeatureInstalled $fakeRuntime "auto-check-official-latest")) { throw "Self-test feature config did not mark feature installed." }
