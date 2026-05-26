@@ -886,14 +886,6 @@ function Show-Gui {
   $script:ValueCurrentPatch.Width = 150
   $script:ValueCurrentPatch.Height = 22
 
-  $btnRefreshLatest = New-Object System.Windows.Forms.Button
-  $btnRefreshLatest.Text = "刷新"
-  $btnRefreshLatest.Left = 746
-  $btnRefreshLatest.Top = 26
-  $btnRefreshLatest.Width = 82
-  $btnRefreshLatest.Height = 30
-  $btnRefreshLatest.Anchor = "Top,Right"
-
   $script:ValueCurrentPath = New-Object System.Windows.Forms.Label
   $script:ValueCurrentPath.Text = "客户端目录：未检测"
   $script:ValueCurrentPath.Left = 18
@@ -902,7 +894,7 @@ function Show-Gui {
   $script:ValueCurrentPath.Height = 22
   $script:ValueCurrentPath.AutoEllipsis = $true
 
-  $currentGroup.Controls.AddRange(@($script:ValueCurrentFigma, $script:ValueOfficialLatest, $script:ValueCurrentPatch, $btnRefreshLatest, $script:ValueCurrentPath))
+  $currentGroup.Controls.AddRange(@($script:ValueCurrentFigma, $script:ValueOfficialLatest, $script:ValueCurrentPatch, $script:ValueCurrentPath))
 
   $labelApp = New-Object System.Windows.Forms.Label
   $labelApp.Text = "Figma客户端目录"
@@ -971,15 +963,15 @@ function Show-Gui {
   $btnUninstall.Width = 130
   $btnUninstall.Height = 34
 
-  $btnCheckUpdate = New-Object System.Windows.Forms.Button
-  $btnCheckUpdate.Text = "检查/更新官方最新版"
-  $btnCheckUpdate.Left = 486
-  $btnCheckUpdate.Top = 350
-  $btnCheckUpdate.Width = 180
-  $btnCheckUpdate.Height = 34
+  $btnFeatureManager = New-Object System.Windows.Forms.Button
+  $btnFeatureManager.Text = "功能安装"
+  $btnFeatureManager.Left = 486
+  $btnFeatureManager.Top = 350
+  $btnFeatureManager.Width = 180
+  $btnFeatureManager.Height = 34
 
-  foreach ($button in @($btnBrowse, $btnBrowseRuntime, $btnStatus, $btnInstall, $btnUninstall, $btnCheckUpdate, $btnRefreshLatest)) {
-    if ($button -ne $btnCheckUpdate) {
+  foreach ($button in @($btnBrowse, $btnBrowseRuntime, $btnStatus, $btnInstall, $btnUninstall, $btnFeatureManager)) {
+    if ($button -ne $btnFeatureManager) {
       Set-ButtonStyle $button `
         ([System.Drawing.Color]::FromArgb(244, 247, 251)) `
         ([System.Drawing.Color]::FromArgb(28, 35, 45)) `
@@ -988,7 +980,7 @@ function Show-Gui {
       Set-ButtonStyle $button `
         ([System.Drawing.Color]::FromArgb(18, 119, 242)) `
         ([System.Drawing.Color]::White) `
-        ([System.Drawing.Color]::FromArgb(12, 92, 190))
+        ([System.Drawing.Color]::Transparent)
     }
   }
 
@@ -1109,6 +1101,144 @@ function Show-Gui {
     }
   }
 
+  $autoCheckOfficialLatestAction = {
+    Set-ProgressState 12 "正在检查官方最新版本..."
+    $current = Find-CurrentFigmaAppDir
+    $txtApp.Text = $current
+    $status = Get-CompleteStatus $current $txtRuntime.Text -CheckOfficial
+    if ($status.IsOfficialLatest) { return $status }
+    $choice = [System.Windows.Forms.MessageBox]::Show(
+      "检测到官方最新版 Figma $($status.OfficialLatestVersion)，当前电脑是 $($status.FigmaVersion)。`r`n`r`n点击 是 会下载官方更新包并自动更新，更新完成后会自动安装汉化补丁。",
+      "发现官方新版",
+      "YesNo",
+      "Question"
+    )
+    if ($choice -ne "Yes") { return $status }
+    Set-ProgressState 35 "正在下载并安装官方新版..."
+    $updated = Update-FigmaOfficial $txtRuntime.Text -Force
+    $txtApp.Text = $updated.AppDir
+    Set-ProgressState 92 "正在安装汉化补丁..."
+    return Get-CompleteStatus $updated.AppDir $txtRuntime.Text -CheckOfficial
+  }
+
+  $featureDefinitions = @(
+    [pscustomobject]@{
+      Id = "auto-check-official-latest"
+      Title = "自动检查客户端是否为最新版本"
+      Description = "每次打开补丁客户端时自动检查 Figma 官方最新版；发现新版会弹窗询问是否更新，更新完成后自动安装汉化补丁。"
+      ProgressText = "正在自动检查官方最新版..."
+      FailurePrefix = "自动检查失败"
+      Action = $autoCheckOfficialLatestAction
+      SuccessMessage = {
+        param($result)
+        if ($result -and ($result.PSObject.Properties.Name -contains "OfficialLatestVersion")) {
+          return "自动检查完成。`r`n`r`n当前版本：$($result.FigmaVersion)`r`n官方最新版：$($result.OfficialLatestVersion)`r`n补丁状态：$(if ($result.Patched) { "已安装" } else { "未安装" })"
+        }
+        return $null
+      }
+    }
+  )
+
+  function Show-FeatureInstallDialog {
+    $dialog = New-Object System.Windows.Forms.Form
+    $dialog.Text = "功能安装"
+    $dialog.StartPosition = "CenterParent"
+    $dialog.Width = 560
+    $dialog.Height = 420
+    $dialog.MinimumSize = New-Object System.Drawing.Size(520, 360)
+    $dialog.BackColor = [System.Drawing.Color]::FromArgb(246, 248, 251)
+    $dialog.Font = $form.Font
+    $dialog.ShowInTaskbar = $false
+
+    $titleLabel = New-Object System.Windows.Forms.Label
+    $titleLabel.Text = "选择要安装或执行的功能"
+    $titleLabel.Left = 18
+    $titleLabel.Top = 18
+    $titleLabel.Width = 500
+    $titleLabel.Height = 24
+    $titleLabel.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 11, [System.Drawing.FontStyle]::Bold)
+
+    $hintLabel = New-Object System.Windows.Forms.Label
+    $hintLabel.Text = "后续新增功能会出现在这里，勾选后点击安装即可。"
+    $hintLabel.Left = 18
+    $hintLabel.Top = 46
+    $hintLabel.Width = 500
+    $hintLabel.Height = 22
+    $hintLabel.ForeColor = [System.Drawing.Color]::FromArgb(74, 85, 104)
+
+    $featureList = New-Object System.Windows.Forms.CheckedListBox
+    $featureList.Left = 18
+    $featureList.Top = 82
+    $featureList.Width = 506
+    $featureList.Height = 170
+    $featureList.Anchor = "Top,Left,Right"
+    $featureList.CheckOnClick = $true
+    $featureList.DisplayMember = "Title"
+    foreach ($feature in $featureDefinitions) { [void]$featureList.Items.Add($feature, $false) }
+
+    $descriptionBox = New-Object System.Windows.Forms.TextBox
+    $descriptionBox.Left = 18
+    $descriptionBox.Top = 266
+    $descriptionBox.Width = 506
+    $descriptionBox.Height = 54
+    $descriptionBox.Anchor = "Top,Left,Right"
+    $descriptionBox.Multiline = $true
+    $descriptionBox.ReadOnly = $true
+    $descriptionBox.BorderStyle = "FixedSingle"
+    $descriptionBox.BackColor = [System.Drawing.Color]::White
+
+    $btnRunFeatures = New-Object System.Windows.Forms.Button
+    $btnRunFeatures.Text = "安装所选功能"
+    $btnRunFeatures.Left = 314
+    $btnRunFeatures.Top = 336
+    $btnRunFeatures.Width = 130
+    $btnRunFeatures.Height = 34
+    $btnRunFeatures.Anchor = "Bottom,Right"
+
+    $btnClose = New-Object System.Windows.Forms.Button
+    $btnClose.Text = "关闭"
+    $btnClose.Left = 456
+    $btnClose.Top = 336
+    $btnClose.Width = 68
+    $btnClose.Height = 34
+    $btnClose.Anchor = "Bottom,Right"
+
+    Set-ButtonStyle $btnRunFeatures `
+      ([System.Drawing.Color]::FromArgb(18, 119, 242)) `
+      ([System.Drawing.Color]::White) `
+      ([System.Drawing.Color]::Transparent)
+    Set-ButtonStyle $btnClose `
+      ([System.Drawing.Color]::FromArgb(244, 247, 251)) `
+      ([System.Drawing.Color]::FromArgb(28, 35, 45)) `
+      ([System.Drawing.Color]::FromArgb(140, 154, 174))
+
+    $featureList.Add_SelectedIndexChanged({
+      if ($featureList.SelectedItem) {
+        $descriptionBox.Text = $featureList.SelectedItem.Description
+      }
+    })
+
+    $btnClose.Add_Click({ $dialog.Close() })
+    $btnRunFeatures.Add_Click({
+      $selectedFeatures = @($featureList.CheckedItems)
+      if ($selectedFeatures.Count -eq 0) {
+        Show-InfoMessage "请先勾选要安装或执行的功能。" "功能安装"
+        return
+      }
+      $dialog.Close()
+      foreach ($feature in $selectedFeatures) {
+        & $runAction $feature.Action {
+          param($result)
+          $message = & $feature.SuccessMessage $result
+          if ($message) { Show-InfoMessage $message "功能安装" }
+        } $feature.FailurePrefix $feature.ProgressText
+      }
+    })
+
+    $dialog.Controls.AddRange(@($titleLabel, $hintLabel, $featureList, $descriptionBox, $btnRunFeatures, $btnClose))
+    [void]$dialog.ShowDialog($form)
+  }
+
   $btnBrowse.Add_Click({
     $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
     $dialog.Description = "选择 Figma app-* 目录"
@@ -1128,27 +1258,10 @@ function Show-Gui {
     }
   })
 
-  $btnRefreshLatest.Add_Click({
-    try {
-      $form.UseWaitCursor = $true
-      Set-ProgressState 20 "正在刷新官方最新版本..."
-      $release = Get-OfficialLatestFigmaRelease
-      $script:ValueOfficialLatest.Text = "官方最新版：$($release.Version)"
-      try {
-        $current = if ($txtApp.Text -and (Test-FigmaAppDir $txtApp.Text)) { $txtApp.Text } else { Find-CurrentFigmaAppDir }
-        $txtApp.Text = $current
-        Set-StatusLabels (Get-CompleteStatus $current $txtRuntime.Text -CheckOfficial)
-      } catch {
-        $script:ValueCurrentFigma.Text = "未检测到 Figma"
-        $script:ValueCurrentPatch.Text = "补丁状态：未检测"
-        $script:ValueCurrentPath.Text = "客户端目录：未找到完整的 Figma 客户端"
-      }
-    } catch {
-      Show-ErrorMessage "刷新失败：`r`n`r`n$($_.Exception.Message)"
-    } finally {
-      $form.UseWaitCursor = $false
-      Hide-ProgressState
-    }
+  $form.Add_Shown({
+    if ($script:StartupLatestCheckDone) { return }
+    $script:StartupLatestCheckDone = $true
+    & $runAction $autoCheckOfficialLatestAction $null "自动检查失败" "正在自动检查官方最新版..."
   })
 
   $btnStatus.Add_Click({
@@ -1161,32 +1274,7 @@ function Show-Gui {
       Show-InfoMessage ("检测完成。`r`n`r`nFigma 路径：$($result.AppDir)`r`nFigma 版本：$($result.FigmaVersion)`r`n词库版本：v$($result.PayloadVersion)`r`n补丁状态：$(if ($result.Patched) { "已安装" } else { "未安装" })")
     } "检测失败" "正在检测当前版本..."
   })
-  $btnCheckUpdate.Add_Click({
-    & $runAction {
-      Set-ProgressState 12 "正在检查官方最新版本..."
-      $current = Find-CurrentFigmaAppDir
-      $txtApp.Text = $current
-      $status = Get-CompleteStatus $current $txtRuntime.Text -CheckOfficial
-      if ($status.IsOfficialLatest) { return $status }
-      $choice = [System.Windows.Forms.MessageBox]::Show(
-        "检测到官方最新版 Figma $($status.OfficialLatestVersion)，当前电脑是 $($status.FigmaVersion)。`r`n`r`n点击 是 会下载官方更新包并自动更新，更新完成后会自动安装汉化补丁。",
-        "发现官方新版",
-        "YesNo",
-        "Question"
-      )
-      if ($choice -ne "Yes") { return $status }
-      Set-ProgressState 35 "正在下载并安装官方新版..."
-      $updated = Update-FigmaOfficial $txtRuntime.Text -Force
-      $txtApp.Text = $updated.AppDir
-      Set-ProgressState 92 "正在安装汉化补丁..."
-      return Get-CompleteStatus $updated.AppDir $txtRuntime.Text -CheckOfficial
-    } {
-      param($result)
-      if ($result.PSObject.Properties.Name -contains "OfficialLatestVersion") {
-        Show-InfoMessage ("检测完成。`r`n`r`n当前版本：$($result.FigmaVersion)`r`n官方最新版：$($result.OfficialLatestVersion)`r`n补丁状态：$(if ($result.Patched) { "已安装" } else { "未安装" })")
-      }
-    } "检查或更新失败" "正在检查或更新官方版本..."
-  })
+  $btnFeatureManager.Add_Click({ Show-FeatureInstallDialog })
   $btnInstall.Add_Click({
     & $runAction {
       Set-ProgressState 30 "正在安装汉化补丁..."
@@ -1214,7 +1302,7 @@ function Show-Gui {
   $form.Controls.AddRange(@(
     $header, $currentGroup,
     $labelApp, $appInput.Panel, $btnBrowse, $labelRuntime, $runtimeInput.Panel, $btnBrowseRuntime, $labelNotice,
-    $btnStatus, $btnInstall, $btnUninstall, $btnCheckUpdate, $progressLabel, $progressBar, $statusGroup
+    $btnStatus, $btnInstall, $btnUninstall, $btnFeatureManager, $progressLabel, $progressBar, $statusGroup
   ))
 
   try {
