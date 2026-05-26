@@ -20,7 +20,7 @@ if ($args -contains "-CheckLatest" -or $args -contains "/CheckLatest") { $CheckL
 if ($args -contains "-UpdateFigma" -or $args -contains "/UpdateFigma") { $UpdateFigma = $true }
 if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClose = $true }
 
-$PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V3"
+$PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V4"
 $PatcherVersion = "0.3.4"
 $PayloadFile = "i.js"
 $MainPayloadFile = "m.js"
@@ -737,6 +737,18 @@ function Invoke-SelfTest {
     if ($installStatus.PayloadVersion -ne (Get-PayloadVersion)) { throw "Self-test payload version mismatch." }
     $repeatInstallStatus = Install-Patch $fakeAppDir $fakeRuntime -SkipProcessCheck
     if (-not $repeatInstallStatus.AlreadyPatched) { throw "Self-test repeat install did not report already patched." }
+    $asar = Read-Asar (Join-Path $fakeAppDir "resources\app.asar")
+    $main = Get-AsarFileSlice $asar "main.js"
+    $mainSource = [System.Text.Encoding]::UTF8.GetString($main.Bytes)
+    $oldHook = $mainSource.Replace($PatchMarker, "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V3").Replace("global.__FIGMA_ZH_RUNTIME_DIR__=R.dirname(Q);", "")
+    [Array]::Copy([System.Text.Encoding]::UTF8.GetBytes($oldHook), 0, $asar.Bytes, $main.Start, $oldHook.Length)
+    [System.IO.File]::WriteAllBytes((Join-Path $fakeAppDir "resources\app.asar"), $asar.Bytes)
+    $upgradeStatus = Install-Patch $fakeAppDir $fakeRuntime -SkipProcessCheck
+    if (-not $upgradeStatus.Patched) { throw "Self-test old hook upgrade did not mark the app as patched." }
+    $upgradedAsar = Read-Asar (Join-Path $fakeAppDir "resources\app.asar")
+    $upgradedMain = Get-AsarFileSlice $upgradedAsar "main.js"
+    $upgradedSource = [System.Text.Encoding]::UTF8.GetString($upgradedMain.Bytes)
+    if (-not $upgradedSource.Contains("global.__FIGMA_ZH_RUNTIME_DIR__=R.dirname(Q);")) { throw "Self-test old hook upgrade did not write runtime dir support." }
     $featureStatus = Install-Feature "auto-check-official-latest" $fakeAppDir $fakeRuntime
     if (-not $featureStatus.Patched) { throw "Self-test feature install did not preserve patched status." }
     if (-not (Test-FeatureInstalled $fakeRuntime "auto-check-official-latest")) { throw "Self-test feature config did not mark feature installed." }
