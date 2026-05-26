@@ -5,6 +5,7 @@
   [switch]$Status,
   [switch]$CheckLatest,
   [switch]$UpdateFigma,
+  [switch]$ShowProgress,
   [string]$AppDir = "",
   [string]$RuntimeDir = "C:\FZ",
   [switch]$ForceClose
@@ -18,6 +19,7 @@ if ($args -contains "-Uninstall" -or $args -contains "/Uninstall") { $Uninstall 
 if ($args -contains "-Status" -or $args -contains "/Status") { $Status = $true }
 if ($args -contains "-CheckLatest" -or $args -contains "/CheckLatest") { $CheckLatest = $true }
 if ($args -contains "-UpdateFigma" -or $args -contains "/UpdateFigma") { $UpdateFigma = $true }
+if ($args -contains "-ShowProgress" -or $args -contains "/ShowProgress") { $ShowProgress = $true }
 if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClose = $true }
 
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V4"
@@ -609,25 +611,34 @@ function Uninstall-Patch {
 }
 
 function Update-FigmaOfficial {
-  param([string]$SelectedRuntimeDir, [switch]$Force)
+  param([string]$SelectedRuntimeDir, [switch]$Force, [scriptblock]$Progress)
+  if ($Progress) { & $Progress 5 "正在检测当前 Figma 版本..." }
   $currentTarget = Resolve-Target ""
+  if ($Progress) { & $Progress 15 "正在检查官方最新版..." }
   $release = Get-OfficialLatestFigmaRelease $currentTarget.FigmaVersion
   if ((Compare-VersionString $currentTarget.FigmaVersion $release.Version) -ge 0) {
+    if ($Progress) { & $Progress 70 "当前已经是官方最新版，正在安装汉化补丁..." }
     Repair-FigmaShortcuts $currentTarget.AppDir
-    return Install-Patch $currentTarget.AppDir $SelectedRuntimeDir -Force:$Force
+    $status = Install-Patch $currentTarget.AppDir $SelectedRuntimeDir -Force:$Force
+    if ($Progress) { & $Progress 100 "补丁安装完成。" }
+    return $status
   }
 
+  if ($Progress) { & $Progress 25 "正在关闭 Figma 客户端..." }
   Assert-FigmaClosed -Force:$Force
   $installerExt = [System.IO.Path]::GetExtension(([Uri]$release.InstallerUrl).AbsolutePath)
   if (-not $installerExt) { $installerExt = ".exe" }
   $installer = Join-Path ([System.IO.Path]::GetTempPath()) "FigmaSetup-official-latest$installerExt"
   try {
+    if ($Progress) { & $Progress 35 "正在下载 Figma $($release.Version) 官方安装包..." }
     Invoke-WebRequest -Uri $release.InstallerUrl -OutFile $installer -UseBasicParsing -TimeoutSec 900
+    if ($Progress) { & $Progress 55 "正在运行官方安装程序..." }
     if ($installerExt -ieq ".msi") {
       $process = Start-Process -FilePath "msiexec.exe" -ArgumentList @("/i", $installer, "/qn", "/norestart") -PassThru
     } else {
       $process = Start-Process -FilePath $installer -ArgumentList "/S" -PassThru
     }
+    if ($Progress) { & $Progress 65 "正在等待官方安装完成..." }
     if (-not $process.WaitForExit(600000)) {
       Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
       throw "Figma official updater did not finish within 10 minutes."
@@ -639,13 +650,83 @@ function Update-FigmaOfficial {
     Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue
   }
 
+  if ($Progress) { & $Progress 78 "正在检测更新后的客户端版本..." }
   Start-Sleep -Seconds 3
   $target = Resolve-Target ""
   if ((Compare-VersionString $target.FigmaVersion $release.Version) -lt 0) {
     throw "Figma update did not reach official version $($release.Version). Current version: $($target.FigmaVersion)."
   }
+  if ($Progress) { & $Progress 88 "正在修复快捷方式并安装汉化补丁..." }
   Repair-FigmaShortcuts $target.AppDir
-  return Install-Patch $target.AppDir $SelectedRuntimeDir -Force:$Force
+  $status = Install-Patch $target.AppDir $SelectedRuntimeDir -Force:$Force
+  if ($Progress) { & $Progress 100 "Figma 更新完成，汉化补丁已安装。" }
+  return $status
+}
+
+function Invoke-UpdateFigmaOfficialWithProgress {
+  param([string]$SelectedRuntimeDir, [switch]$Force)
+  Add-Type -AssemblyName System.Windows.Forms
+  Add-Type -AssemblyName System.Drawing
+
+  $form = New-Object System.Windows.Forms.Form
+  $form.Text = "Figma 客户端更新"
+  $form.StartPosition = "CenterScreen"
+  $form.Width = 520
+  $form.Height = 180
+  $form.FormBorderStyle = "FixedDialog"
+  $form.MaximizeBox = $false
+  $form.MinimizeBox = $false
+  $form.BackColor = [System.Drawing.Color]::FromArgb(246, 248, 251)
+  $form.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 9)
+
+  $label = New-Object System.Windows.Forms.Label
+  $label.Left = 22
+  $label.Top = 24
+  $label.Width = 460
+  $label.Height = 42
+  $label.Text = "准备更新..."
+
+  $progressBar = New-Object System.Windows.Forms.ProgressBar
+  $progressBar.Left = 22
+  $progressBar.Top = 74
+  $progressBar.Width = 460
+  $progressBar.Height = 18
+  $progressBar.Minimum = 0
+  $progressBar.Maximum = 100
+
+  $button = New-Object System.Windows.Forms.Button
+  $button.Text = "关闭"
+  $button.Left = 402
+  $button.Top = 108
+  $button.Width = 80
+  $button.Height = 28
+  $button.Enabled = $false
+  $button.Add_Click({ $form.Close() })
+
+  $form.Controls.AddRange(@($label, $progressBar, $button))
+  $form.Add_Shown({
+    try {
+      $progress = {
+        param([int]$Percent, [string]$Message)
+        $progressBar.Value = [Math]::Max(0, [Math]::Min(100, $Percent))
+        $label.Text = $Message
+        $form.Refresh()
+        [System.Windows.Forms.Application]::DoEvents()
+      }
+      $result = Update-FigmaOfficial $SelectedRuntimeDir -Force:$Force -Progress $progress
+      $label.Text = "更新完成。Figma $($result.FigmaVersion)，补丁状态：$(if ($result.Patched) { "已安装" } else { "未安装" })。"
+      $progressBar.Value = 100
+    } catch {
+      $label.Text = "更新失败：$($_.Exception.Message)"
+      $progressBar.Value = 0
+      [System.Windows.Forms.MessageBox]::Show($label.Text, "Figma 客户端更新", "OK", "Error") | Out-Null
+    } finally {
+      $button.Enabled = $true
+      $form.Refresh()
+    }
+  })
+
+  [void]$form.ShowDialog()
 }
 
 function Repair-FigmaShortcuts {
@@ -767,6 +848,9 @@ function Invoke-SelfTest {
     $runtimeMainSource = [System.IO.File]::ReadAllText((Join-Path $fakeRuntime "m.js"), [System.Text.Encoding]::UTF8)
     if ($runtimeMainSource.Contains("__FIGMA_ZH_OFFICIAL_UPDATE_CHECKED__")) { throw "Self-test runtime still uses one-shot update check." }
     if (-not $runtimeMainSource.Contains('"second-instance"')) { throw "Self-test runtime does not check updates on second instance." }
+    if (-not $runtimeMainSource.Contains("autoUpdater")) { throw "Self-test runtime does not guard built-in updater." }
+    if (-not $runtimeMainSource.Contains("shouldSuppressBuiltInUpdateCheck")) { throw "Self-test runtime does not include downgrade suppression." }
+    if (-not $runtimeMainSource.Contains('"-ShowProgress"')) { throw "Self-test runtime update launch does not request progress UI." }
     $uninstallStatus = Uninstall-Patch $fakeAppDir $fakeRuntime -SkipProcessCheck
     if ($uninstallStatus.Patched) { throw "Self-test uninstall did not restore the original app.asar." }
     Write-Host "Self-test passed."
@@ -1429,7 +1513,11 @@ if ($Install -or $Uninstall -or $Status -or $CheckLatest -or $UpdateFigma) {
   } elseif ($Uninstall) {
     Uninstall-Patch $AppDir $RuntimeDir -Force:$ForceClose | ConvertTo-Json -Depth 8
   } elseif ($UpdateFigma) {
-    Update-FigmaOfficial $RuntimeDir -Force:$ForceClose | ConvertTo-Json -Depth 8
+    if ($ShowProgress) {
+      Invoke-UpdateFigmaOfficialWithProgress $RuntimeDir -Force:$ForceClose
+    } else {
+      Update-FigmaOfficial $RuntimeDir -Force:$ForceClose | ConvertTo-Json -Depth 8
+    }
   } elseif ($CheckLatest) {
     Get-CompleteStatus $AppDir $RuntimeDir -CheckOfficial | ConvertTo-Json -Depth 8
   } else {

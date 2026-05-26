@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const { app, dialog, Menu } = require("electron");
+  const { app, autoUpdater, dialog, Menu } = require("electron");
   const fs = require("fs");
   const https = require("https");
   const path = require("path");
@@ -240,16 +240,52 @@
     return versions.sort((a, b) => compareVersions(b, a))[0];
   }
 
-  async function getOfficialLatestVersion() {
+  async function getOfficialVersionInfo() {
     const versions = [];
+    let installerVersion = null;
+    let feedVersion = null;
     try {
-      versions.push(await getOfficialInstallerVersion());
+      installerVersion = await getOfficialInstallerVersion();
+      versions.push(installerVersion);
     } catch (_) {}
     try {
-      versions.push(await getOfficialFeedVersion());
+      feedVersion = await getOfficialFeedVersion();
+      versions.push(feedVersion);
     } catch (_) {}
     if (!versions.length) throw new Error("Cannot parse official latest version.");
-    return versions.sort((a, b) => compareVersions(b, a))[0];
+    return {
+      installerVersion,
+      feedVersion,
+      latestVersion: versions.sort((a, b) => compareVersions(b, a))[0]
+    };
+  }
+
+  async function getOfficialLatestVersion() {
+    return (await getOfficialVersionInfo()).latestVersion;
+  }
+
+  async function shouldSuppressBuiltInUpdateCheck() {
+    const info = await getOfficialVersionInfo();
+    const currentVersion = app.getVersion();
+    if (!info.installerVersion) return false;
+    if (info.feedVersion && compareVersions(info.feedVersion, info.installerVersion) > 0) return false;
+    return compareVersions(currentVersion, info.installerVersion) >= 0;
+  }
+
+  function hookBuiltInUpdateChecks() {
+    if (!autoUpdater || global.__FIGMA_ZH_AUTO_UPDATER_GUARD__) return;
+    global.__FIGMA_ZH_AUTO_UPDATER_GUARD__ = true;
+    for (const methodName of ["checkForUpdates", "checkForUpdatesAndNotify"]) {
+      if (typeof autoUpdater[methodName] !== "function") continue;
+      const original = autoUpdater[methodName].bind(autoUpdater);
+      autoUpdater[methodName] = function (...args) {
+        shouldSuppressBuiltInUpdateCheck()
+          .then((suppress) => {
+            if (!suppress) original(...args);
+          })
+          .catch(() => original(...args));
+      };
+    }
   }
 
   function scheduleOfficialUpdateCheck(delayMs) {
@@ -287,7 +323,7 @@
       });
       if (result.response !== 0) return;
       try {
-        const child = spawn(patcherPath, ["-UpdateFigma", "-RuntimeDir", runtimeDir, "-ForceClose"], {
+        const child = spawn(patcherPath, ["-UpdateFigma", "-ShowProgress", "-RuntimeDir", runtimeDir, "-ForceClose"], {
           detached: true,
           stdio: "ignore"
         });
@@ -319,6 +355,7 @@
     };
     hookDialogMethod("showMessageBox");
     hookDialogMethod("showMessageBoxSync");
+    hookBuiltInUpdateChecks();
     app.whenReady().then(scheduleLocalize).catch(() => {});
     app.whenReady().then(() => scheduleOfficialUpdateCheck(1500)).catch(() => {});
     app.on("second-instance", () => scheduleOfficialUpdateCheck(800));
