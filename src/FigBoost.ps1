@@ -453,10 +453,10 @@ function Write-RuntimeFiles {
 
 function Get-PatcherExecutablePath {
   $currentProcessPath = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
-  if ($currentProcessPath -and (Split-Path -Leaf $currentProcessPath) -ieq "FigmaCnPatcher.exe") {
+  if ($currentProcessPath -and (Split-Path -Leaf $currentProcessPath) -ieq "FigBoost.exe") {
     return $currentProcessPath
   }
-  $candidate = Join-Path (Get-BaseDir) "FigmaCnPatcher.exe"
+  $candidate = Join-Path (Get-BaseDir) "FigBoost.exe"
   if (Test-Path -LiteralPath $candidate) { return (Resolve-Path -LiteralPath $candidate).Path }
   return $currentProcessPath
 }
@@ -840,7 +840,7 @@ function New-FakeAsar {
 }
 
 function Invoke-SelfTest {
-  $temp = Join-Path ([System.IO.Path]::GetTempPath()) ("figma-cn-patcher-test-" + [Guid]::NewGuid().ToString("N"))
+  $temp = Join-Path ([System.IO.Path]::GetTempPath()) ("figboost-test-" + [Guid]::NewGuid().ToString("N"))
   $originalLocalAppData = $env:LOCALAPPDATA
   New-Item -ItemType Directory -Force -Path (Join-Path $temp "app-1.2.3\resources") | Out-Null
   $fakeAppDir = Join-Path $temp "app-1.2.3"
@@ -977,13 +977,13 @@ function Set-StatusLabels {
 }
 
 function Show-InfoMessage {
-  param([string]$Text, [string]$Title = "Figma 客户端汉化补丁")
+  param([string]$Text, [string]$Title = "FigBoost")
   [System.Windows.Forms.MessageBox]::Show($Text, $Title, "OK", "Information") | Out-Null
 }
 
 function Show-ErrorMessage {
   param([string]$Text)
-  [System.Windows.Forms.MessageBox]::Show($Text, "Figma 客户端汉化补丁", "OK", "Error") | Out-Null
+  [System.Windows.Forms.MessageBox]::Show($Text, "FigBoost", "OK", "Error") | Out-Null
 }
 
 function Show-Gui {
@@ -992,7 +992,7 @@ function Show-Gui {
   [System.Windows.Forms.Application]::EnableVisualStyles()
 
   $form = New-Object System.Windows.Forms.Form
-  $form.Text = "Figma 客户端汉化补丁 v$PatcherVersion"
+  $form.Text = "FigBoost v$PatcherVersion"
   $form.StartPosition = "CenterScreen"
   $form.Width = 900
   $form.Height = 650
@@ -1094,7 +1094,7 @@ function Show-Gui {
   $header.BackColor = [System.Drawing.Color]::FromArgb(29, 36, 48)
 
   $title = New-Object System.Windows.Forms.Label
-  $title.Text = "Figma 客户端汉化补丁"
+  $title.Text = "FigBoost"
   $title.Left = 22
   $title.Top = 14
   $title.Width = 300

@@ -1,4 +1,4 @@
-# Figma 客户端汉化补丁
+# FigBoost
 
 Windows 图形界面补丁器，用于给官方原生 Figma Desktop 客户端注入汉化脚本。
 
@@ -13,10 +13,10 @@ Windows 图形界面补丁器，用于给官方原生 Figma Desktop 客户端注
 运行：
 
 ```powershell
-.\FigmaCnPatcher.exe
+.\FigBoost.exe
 ```
 
-下载仓库后直接双击根目录里的 `FigmaCnPatcher.exe` 即可使用，不需要进入 `dist` 目录。
+下载仓库后直接双击根目录里的 `FigBoost.exe` 即可使用，不需要进入 `dist` 目录。
 
 界面里的主要操作：
 
@@ -42,7 +42,7 @@ Windows 图形界面补丁器，用于给官方原生 Figma Desktop 客户端注
 运行内置回归测试：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\src\FigmaCnPatcher.ps1 -SelfTest
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\src\FigBoost.ps1 -SelfTest
 ```
 
 重新打包 exe：

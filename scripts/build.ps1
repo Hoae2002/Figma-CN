@@ -1,14 +1,14 @@
 ﻿param(
-  [string]$OutputPath = "$PSScriptRoot\..\FigmaCnPatcher.exe",
+  [string]$OutputPath = "$PSScriptRoot\..\FigBoost.exe",
   [string]$Version = "0.3.4"
 )
 
 $ErrorActionPreference = "Stop"
 $root = Resolve-Path (Join-Path $PSScriptRoot "..")
-$source = Join-Path $root "src\FigmaCnPatcher.ps1"
+$source = Join-Path $root "src\FigBoost.ps1"
 $output = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputPath)
-$generatedSource = Join-Path ([System.IO.Path]::GetTempPath()) ("FigmaCnPatcher.embedded." + [Guid]::NewGuid().ToString("N") + ".ps1")
-$iconFile = Join-Path $root "assets\figma-cn-patcher.ico"
+$generatedSource = Join-Path ([System.IO.Path]::GetTempPath()) ("FigBoost.embedded." + [Guid]::NewGuid().ToString("N") + ".ps1")
+$iconFile = Join-Path $root "assets\figboost.ico"
 
 Import-Module ps2exe -ErrorAction Stop
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $output) | Out-Null
@@ -37,9 +37,9 @@ try {
   Invoke-ps2exe `
     -inputFile $generatedSource `
     -outputFile $output `
-    -title "Figma 客户端汉化补丁" `
-    -description "Figma Desktop Chinese patcher" `
-    -product "FigmaCnPatcher" `
+    -title "FigBoost" `
+    -description "FigBoost Figma Desktop Chinese patcher" `
+    -product "FigBoost" `
     -company "tnanren-ux" `
     -version "$Version.0" `
     -iconFile $iconFile `
