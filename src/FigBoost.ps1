@@ -509,6 +509,16 @@ function Get-PreferredAppDir {
   return ""
 }
 
+function Resolve-ManagedFigmaAppDir {
+  param([string]$RuntimeDir, [string]$SelectedAppDir = "")
+  $preferred = Get-PreferredAppDir $RuntimeDir
+  if ($preferred) { return $preferred }
+  if ($SelectedAppDir -and (Test-FigmaAppDir $SelectedAppDir)) {
+    return (Resolve-Path -LiteralPath $SelectedAppDir).Path
+  }
+  return Find-CurrentFigmaAppDir
+}
+
 function Set-PreferredAppDir {
   param([string]$RuntimeDir, [string]$AppDir)
   if (-not $AppDir) { throw "请先选择 Figma app-* 目录。" }
@@ -588,17 +598,19 @@ function Test-FeatureInstalled {
 }
 
 function Install-Feature {
-  param([string]$FeatureId, [string]$SelectedAppDir, [string]$SelectedRuntimeDir)
+  param([string]$FeatureId, [string]$SelectedAppDir, [string]$SelectedRuntimeDir, [string[]]$ShortcutRoots = $null)
+  $appDir = Resolve-ManagedFigmaAppDir $SelectedRuntimeDir $SelectedAppDir
   $config = Read-FeatureConfig $SelectedRuntimeDir
   $features = @($config.enabledFeatures)
   if ($features -notcontains $FeatureId) { $features += $FeatureId }
   Write-FeatureConfig $SelectedRuntimeDir $features | Out-Null
   Write-RuntimeFiles $SelectedRuntimeDir
-  $target = Resolve-Target $SelectedAppDir
+  $target = Resolve-Target $appDir
   $status = Get-PatchStatus $target $SelectedRuntimeDir
   if (-not $status.Patched -or -not $status.HasBuiltInUpdaterDisabled) {
-    return Install-Patch $SelectedAppDir $SelectedRuntimeDir -Force
+    return Install-Patch $appDir $SelectedRuntimeDir -Force -ShortcutRoots $ShortcutRoots
   }
+  Repair-FigmaShortcuts $appDir $ShortcutRoots
   return $status
 }
 
@@ -640,7 +652,7 @@ function Get-PatchStatus {
 
 function Get-CompleteStatus {
   param([string]$SelectedAppDir, [string]$SelectedRuntimeDir, [switch]$CheckOfficial)
-  $target = Resolve-Target $SelectedAppDir
+  $target = Resolve-Target (Resolve-ManagedFigmaAppDir $SelectedRuntimeDir $SelectedAppDir)
   $status = Get-PatchStatus $target $SelectedRuntimeDir
   if ($CheckOfficial) {
     $release = Get-OfficialLatestFigmaRelease $status.FigmaVersion
@@ -723,9 +735,10 @@ function Assert-FigmaClosed {
 }
 
 function Install-Patch {
-  param([string]$SelectedAppDir, [string]$SelectedRuntimeDir, [switch]$Force, [switch]$SkipProcessCheck)
+  param([string]$SelectedAppDir, [string]$SelectedRuntimeDir, [switch]$Force, [switch]$SkipProcessCheck, [string[]]$ShortcutRoots = $null)
   if (-not $SkipProcessCheck) { Assert-FigmaClosed -Force:$Force }
-  $target = Resolve-Target $SelectedAppDir
+  $appDir = Resolve-ManagedFigmaAppDir $SelectedRuntimeDir $SelectedAppDir
+  $target = Resolve-Target $appDir
   if (-not (Test-Path -LiteralPath $target.BackupPath)) {
     Copy-Item -LiteralPath $target.AsarPath -Destination $target.BackupPath -Force
     Write-Log "Backup created: $($target.BackupPath)"
@@ -745,14 +758,14 @@ function Install-Patch {
   Write-Log "Install result: $($result | ConvertTo-Json -Compress)"
   $status = Get-PatchStatus $target $SelectedRuntimeDir
   $status | Add-Member -NotePropertyName AlreadyPatched -NotePropertyValue ([bool]$result.AlreadyPatched) -Force
-  Repair-FigmaShortcuts $target.AppDir
+  Repair-FigmaShortcuts $target.AppDir $ShortcutRoots
   return $status
 }
 
 function Uninstall-Patch {
   param([string]$SelectedAppDir, [string]$SelectedRuntimeDir, [switch]$Force, [switch]$SkipProcessCheck)
   if (-not $SkipProcessCheck) { Assert-FigmaClosed -Force:$Force }
-  $target = Resolve-Target $SelectedAppDir
+  $target = Resolve-Target (Resolve-ManagedFigmaAppDir $SelectedRuntimeDir $SelectedAppDir)
   if (-not (Test-Path -LiteralPath $target.BackupPath)) {
     throw "Backup not found: $($target.BackupPath)"
   }
@@ -764,7 +777,7 @@ function Uninstall-Patch {
 function Update-FigmaOfficial {
   param([string]$SelectedRuntimeDir, [switch]$Force, [scriptblock]$Progress)
   if ($Progress) { & $Progress 5 "正在检测当前 Figma 版本..." }
-  $currentTarget = Resolve-Target ""
+  $currentTarget = Resolve-Target (Resolve-ManagedFigmaAppDir $SelectedRuntimeDir)
   if ($Progress) { & $Progress 15 "正在检查官方最新版..." }
   $release = Get-OfficialLatestFigmaRelease $currentTarget.FigmaVersion
   if ((Compare-VersionString $currentTarget.FigmaVersion $release.Version) -ge 0) {
@@ -803,7 +816,7 @@ function Update-FigmaOfficial {
 
   if ($Progress) { & $Progress 78 "正在检测更新后的客户端版本..." }
   Start-Sleep -Seconds 3
-  $target = Resolve-Target ""
+  $target = Resolve-Target (Resolve-ManagedFigmaAppDir $SelectedRuntimeDir)
   if ((Compare-VersionString $target.FigmaVersion $release.Version) -lt 0) {
     throw "Figma update did not reach official version $($release.Version). Current version: $($target.FigmaVersion)."
   }
@@ -948,7 +961,9 @@ function Invoke-SelfTest {
   $fakeAsar = Join-Path $fakeAppDir "resources\app.asar"
   $fakeRuntime = Join-Path $temp "runtime"
   $fakePreferredAppDir = Join-Path $temp "app-3.0.0"
+  $shortcutRoot = Join-Path $temp "desktop"
   try {
+    New-Item -ItemType Directory -Force -Path $shortcutRoot | Out-Null
     New-Item -ItemType File -Force -Path (Join-Path $fakeAppDir "Figma.exe") | Out-Null
     New-FakeAsar $fakeAsar
     New-Item -ItemType Directory -Force -Path (Join-Path $fakePreferredAppDir "resources") | Out-Null
@@ -982,14 +997,14 @@ function Invoke-SelfTest {
       (New-FigmaReleaseInfo "126.4.11" "Figma 126.4.11" "setup" "installer")
     )
     if ($selectedRelease.Version -ne "126.4.11") { throw "Self-test official latest selection failed." }
-    $installStatus = Install-Patch $fakeAppDir $fakeRuntime -SkipProcessCheck
+    $installStatus = Install-Patch $fakeAppDir $fakeRuntime -SkipProcessCheck -ShortcutRoots @($shortcutRoot)
     if (-not $installStatus.Patched) { throw "Self-test install did not mark the app as patched." }
     if (-not $installStatus.HasBackup) { throw "Self-test did not create a backup." }
     if (-not $installStatus.HasRuntimePayload) { throw "Self-test did not write the runtime payload." }
     if (-not $installStatus.HasRuntimeMainPayload) { throw "Self-test did not write the main runtime payload." }
     if (-not $installStatus.HasBuiltInUpdaterDisabled) { throw "Self-test did not disable the built-in updater." }
     if ($installStatus.PayloadVersion -ne (Get-PayloadVersion)) { throw "Self-test payload version mismatch." }
-    $repeatInstallStatus = Install-Patch $fakeAppDir $fakeRuntime -SkipProcessCheck
+    $repeatInstallStatus = Install-Patch $fakeAppDir $fakeRuntime -SkipProcessCheck -ShortcutRoots @($shortcutRoot)
     if (-not $repeatInstallStatus.AlreadyPatched) { throw "Self-test repeat install did not report already patched." }
     $asar = Read-Asar (Join-Path $fakeAppDir "resources\app.asar")
     $main = Get-AsarFileSlice $asar "main.js"
@@ -997,27 +1012,27 @@ function Invoke-SelfTest {
     $oldHook = $mainSource.Replace($PatchMarker, "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V3").Replace("global.__FIGMA_ZH_RUNTIME_DIR__=R.dirname(Q);", "")
     [Array]::Copy([System.Text.Encoding]::UTF8.GetBytes($oldHook), 0, $asar.Bytes, $main.Start, $oldHook.Length)
     [System.IO.File]::WriteAllBytes((Join-Path $fakeAppDir "resources\app.asar"), $asar.Bytes)
-    $upgradeStatus = Install-Patch $fakeAppDir $fakeRuntime -SkipProcessCheck
+    $upgradeStatus = Install-Patch $fakeAppDir $fakeRuntime -SkipProcessCheck -ShortcutRoots @($shortcutRoot)
     if (-not $upgradeStatus.Patched) { throw "Self-test old hook upgrade did not mark the app as patched." }
     $upgradedAsar = Read-Asar (Join-Path $fakeAppDir "resources\app.asar")
     $upgradedMain = Get-AsarFileSlice $upgradedAsar "main.js"
     $upgradedSource = [System.Text.Encoding]::UTF8.GetString($upgradedMain.Bytes)
     if (-not $upgradedSource.Contains("global.__FIGMA_ZH_RUNTIME_DIR__=R.dirname(Q);")) { throw "Self-test old hook upgrade did not write runtime dir support." }
     if (-not $upgradedSource.Contains($UpdaterDisableMarker)) { throw "Self-test old hook upgrade did not preserve built-in updater disable." }
-    $featureStatus = Install-Feature "auto-check-official-latest" $fakeAppDir $fakeRuntime
+    $featureStatus = Install-Feature "auto-check-official-latest" $fakeAppDir $fakeRuntime @($shortcutRoot)
     if (-not $featureStatus.Patched) { throw "Self-test feature install did not preserve patched status." }
     if (-not (Test-FeatureInstalled $fakeRuntime "auto-check-official-latest")) { throw "Self-test feature config did not mark feature installed." }
     $savedPreferredAppDir = Set-PreferredAppDir $fakeRuntime $fakePreferredAppDir
     if ($savedPreferredAppDir -ne $fakePreferredAppDir) { throw "Self-test preferred app dir was not resolved as expected." }
     if ((Get-PreferredAppDir $fakeRuntime) -ne $fakePreferredAppDir) { throw "Self-test preferred app dir was not saved." }
-    Install-Feature "auto-check-official-latest" $fakeAppDir $fakeRuntime | Out-Null
+    Install-Feature "auto-check-official-latest" $fakeAppDir $fakeRuntime @($shortcutRoot) | Out-Null
     if ((Get-PreferredAppDir $fakeRuntime) -ne $fakePreferredAppDir) { throw "Self-test feature config did not preserve preferred app dir." }
     Uninstall-Feature "auto-check-official-latest" $fakeRuntime
     if (Test-FeatureInstalled $fakeRuntime "auto-check-official-latest") { throw "Self-test feature uninstall did not clear feature config." }
     if ((Get-PreferredAppDir $fakeRuntime) -ne $fakePreferredAppDir) { throw "Self-test feature uninstall did not preserve preferred app dir." }
     Uninstall-Feature "auto-check-official-latest" $fakeRuntime
     if (Test-FeatureInstalled $fakeRuntime "auto-check-official-latest") { throw "Self-test repeat feature uninstall changed feature config." }
-    Install-Feature "auto-check-official-latest" $fakeAppDir $fakeRuntime | Out-Null
+    Install-Feature "auto-check-official-latest" $fakeAppDir $fakeRuntime @($shortcutRoot) | Out-Null
     Remove-Item -LiteralPath (Join-Path $fakePreferredAppDir "Figma.exe") -Force
     if (Get-PreferredAppDir $fakeRuntime) { throw "Self-test preferred app dir did not ignore invalid directories." }
     New-Item -ItemType File -Force -Path (Join-Path $fakePreferredAppDir "Figma.exe") | Out-Null
@@ -1040,7 +1055,6 @@ function Invoke-SelfTest {
     $existingTargetResult = Move-FigmaAppDir $fakeAppDir $fakePreferredAppDir $fakeRuntime
     if ($existingTargetResult.Migrated) { throw "Self-test migration copied over an existing valid target." }
     if ((Get-PreferredAppDir $fakeRuntime) -ne $fakePreferredAppDir) { throw "Self-test existing target did not update preferred app dir." }
-    $shortcutRoot = Join-Path $temp "desktop"
     New-Item -ItemType Directory -Force -Path $shortcutRoot | Out-Null
     $launcherPath = Join-Path $temp "Figma.exe"
     New-Item -ItemType File -Force -Path $launcherPath | Out-Null
@@ -1062,6 +1076,22 @@ function Invoke-SelfTest {
     $fallbackShortcut = $shell.CreateShortcut($shortcutPath)
     if ($fallbackShortcut.TargetPath -ne (Join-Path $fakeAppDir "Figma.exe")) { throw "Self-test shortcut repair did not fall back to app executable." }
     if ($fallbackShortcut.WorkingDirectory -ne $fakeAppDir) { throw "Self-test shortcut repair did not use app working directory." }
+    Set-PreferredAppDir $fakeRuntime $fakePreferredAppDir | Out-Null
+    $shortcut.TargetPath = Join-Path $fakeAppDir "Figma.exe"
+    $shortcut.WorkingDirectory = $fakeAppDir
+    $shortcut.IconLocation = "$($shortcut.TargetPath),0"
+    $shortcut.Save()
+    if ((Resolve-ManagedFigmaAppDir $fakeRuntime $fakeAppDir) -ne $fakePreferredAppDir) { throw "Self-test managed path did not prefer saved app dir." }
+    Install-Patch $fakePreferredAppDir $fakeRuntime -SkipProcessCheck -ShortcutRoots @($shortcutRoot) | Out-Null
+    Install-Feature "auto-check-official-latest" $fakeAppDir $fakeRuntime @($shortcutRoot) | Out-Null
+    $preferredShortcut = $shell.CreateShortcut($shortcutPath)
+    if ($preferredShortcut.TargetPath -ne (Join-Path $fakePreferredAppDir "Figma.exe")) { throw "Self-test feature install did not repair shortcut to preferred app dir." }
+    if ($preferredShortcut.WorkingDirectory -ne $fakePreferredAppDir) { throw "Self-test feature install shortcut working directory is wrong." }
+    Uninstall-Feature "auto-check-official-latest" $fakeRuntime
+    Repair-FigmaShortcuts (Resolve-ManagedFigmaAppDir $fakeRuntime $fakeAppDir) @($shortcutRoot)
+    if (-not (Test-Path -LiteralPath $shortcutPath)) { throw "Self-test feature uninstall shortcut repair deleted shortcut." }
+    $uninstalledFeatureShortcut = $shell.CreateShortcut($shortcutPath)
+    if ($uninstalledFeatureShortcut.TargetPath -ne (Join-Path $fakePreferredAppDir "Figma.exe")) { throw "Self-test feature uninstall changed shortcut away from preferred app dir." }
     if ((Get-FeatureInstallEmptySelectionMessage 1) -ne "所选功能已经安装，不需要重复安装。") { throw "Self-test installed feature prompt is incorrect." }
     if ((Get-FeatureInstallEmptySelectionMessage 0) -ne "请先勾选要安装的附加功能。") { throw "Self-test empty feature prompt is incorrect." }
     $featureUpgradeAppDir = Join-Path $temp "app-2.0.0"
@@ -1082,7 +1112,8 @@ function Invoke-SelfTest {
     [Array]::Copy($featureUpgradeHookBytes, 0, $featureUpgradeBytes, $featureUpgradeIndex, $featureUpgradeHookBytes.Length)
     [Array]::Copy($featureUpgradeBytes, 0, $featureUpgradeAsar.Bytes, $featureUpgradeMain.Start, $featureUpgradeBytes.Length)
     [System.IO.File]::WriteAllBytes($featureUpgradeAsarPath, $featureUpgradeAsar.Bytes)
-    $featureUpgradeStatus = Install-Feature "auto-check-official-latest" $featureUpgradeAppDir $fakeRuntime
+    Set-PreferredAppDir $fakeRuntime $featureUpgradeAppDir | Out-Null
+    $featureUpgradeStatus = Install-Feature "auto-check-official-latest" $featureUpgradeAppDir $fakeRuntime @($shortcutRoot)
     if (-not $featureUpgradeStatus.HasBuiltInUpdaterDisabled) { throw "Self-test feature install did not upgrade updater guard." }
     $featureConfigPath = Get-FeatureConfigPath $fakeRuntime
     if (-not (Test-Path -LiteralPath $featureConfigPath)) { throw "Self-test feature config was not written." }
@@ -1552,7 +1583,7 @@ function Show-Gui {
       FailurePrefix = "附加功能安装失败"
       Action = {
         Set-ProgressState 35 "正在写入功能配置..."
-        $current = if ($txtApp.Text -and (Test-FigmaAppDir $txtApp.Text)) { $txtApp.Text } else { Find-CurrentFigmaAppDir }
+        $current = Resolve-ManagedFigmaAppDir $txtRuntime.Text $txtApp.Text
         $txtApp.Text = $current
         Set-ProgressState 65 "正在确保客户端补丁已安装..."
         Install-Feature "auto-check-official-latest" $current $txtRuntime.Text
@@ -1568,7 +1599,8 @@ function Show-Gui {
       UninstallAction = {
         Set-ProgressState 35 "正在关闭附加功能..."
         Uninstall-Feature "auto-check-official-latest" $txtRuntime.Text
-        $current = if ($txtApp.Text -and (Test-FigmaAppDir $txtApp.Text)) { $txtApp.Text } else { Get-PreferredAppDir $txtRuntime.Text }
+        $current = Resolve-ManagedFigmaAppDir $txtRuntime.Text $txtApp.Text
+        Repair-FigmaShortcuts $current
         if ($current) { return Get-CompleteStatus $current $txtRuntime.Text }
         return $null
       }
@@ -1789,7 +1821,7 @@ function Show-Gui {
 
   $btnStatus.Add_Click({
     & $runAction {
-      $current = if ($txtApp.Text -and (Test-FigmaAppDir $txtApp.Text)) { (Resolve-Path -LiteralPath $txtApp.Text).Path } else { Find-CurrentFigmaAppDir }
+      $current = Resolve-ManagedFigmaAppDir $txtRuntime.Text $txtApp.Text
       $txtApp.Text = $current
       Get-CompleteStatus $current $txtRuntime.Text
     } {
@@ -1861,7 +1893,7 @@ if ($Install -or $Uninstall -or $Status -or $CheckLatest -or $UpdateFigma) {
   } elseif ($CheckLatest) {
     Get-CompleteStatus $AppDir $RuntimeDir -CheckOfficial | ConvertTo-Json -Depth 8
   } else {
-    $target = Resolve-Target $AppDir
+    $target = Resolve-Target (Resolve-ManagedFigmaAppDir $RuntimeDir $AppDir)
     Get-PatchStatus $target $RuntimeDir | ConvertTo-Json -Depth 8
   }
   return
