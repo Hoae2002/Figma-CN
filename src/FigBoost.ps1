@@ -22,7 +22,7 @@ if ($args -contains "-UpdateFigma" -or $args -contains "/UpdateFigma") { $Update
 if ($args -contains "-ShowProgress" -or $args -contains "/ShowProgress") { $ShowProgress = $true }
 if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClose = $true }
 
-$PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V5"
+$PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V6"
 $UpdaterDisableMarker = "FIGMA_ZH_DISABLE_BUILTIN_UPDATER"
 $PatcherVersion = "0.3.4"
 $PayloadFile = "i.js"
@@ -398,7 +398,7 @@ function Build-MainHook {
   $marker = ConvertTo-JsString $PatchMarker
   $payload = ConvertTo-JsString $payloadPath
   $mainPayload = ConvertTo-JsString $mainPayloadPath
-  return ";(()=>{const M=$marker;try{const E=require(""electron""),F=require(""fs""),R=require(""path""),P=$payload,Q=$mainPayload;try{global.__FIGMA_ZH_RUNTIME_DIR__=R.dirname(Q);F.existsSync(Q)&&eval(F.readFileSync(Q,""utf8""))}catch(e){}let C;function p(){return C||(C=F.readFileSync(P,""utf8""))}function b(){try{if(!global.__FIGBOOST_FEATURE_ENABLED__||!global.__FIGBOOST_FEATURE_ENABLED__(""auto-check-official-latest""))return"""";return ""(()=>{try{const{ipcRenderer}=require('electron');if(ipcRenderer&&!window.__FIGBOOST_CHECK_OFFICIAL_UPDATE__)Object.defineProperty(window,'__FIGBOOST_CHECK_OFFICIAL_UPDATE__',{value:()=>ipcRenderer.invoke('figboost:check-official-update')})}catch(e){}})();""}catch(e){return""""}}function j(w){if(!w||w._fz)return;w._fz=1;const r=()=>{try{let u=w.getURL();/^https:\/\/([^\/]+\.)?figma\.com/i.test(u)&&w.executeJavaScript(b()+p(),true).catch(()=>{})}catch(e){}};w.on(""dom-ready"",r);w.on(""did-finish-load"",r)}E.app.on(""web-contents-created"",(_,w)=>j(w));E.webContents.getAllWebContents().forEach(j)}catch(e){}})();"
+  return ";(()=>{const M=$marker;try{const E=require(""electron""),F=require(""fs""),R=require(""path""),P=$payload,Q=$mainPayload;try{global.__FIGMA_ZH_RUNTIME_DIR__=R.dirname(Q);F.existsSync(Q)&&eval(F.readFileSync(Q,""utf8""))}catch(e){}let C;function p(){return C||(C=F.readFileSync(P,""utf8""))}function b(){try{if(!global.__FIGBOOST_FEATURE_ENABLED__||!global.__FIGBOOST_FEATURE_ENABLED__(""auto-check-official-latest""))return"""";return ""(()=>{try{window.__FIGBOOST_UPDATE_BUTTON_ENABLED__=true;const{ipcRenderer}=require('electron');if(ipcRenderer&&!window.__FIGBOOST_CHECK_OFFICIAL_UPDATE__)Object.defineProperty(window,'__FIGBOOST_CHECK_OFFICIAL_UPDATE__',{value:()=>ipcRenderer.invoke('figboost:check-official-update')})}catch(e){window.__FIGBOOST_UPDATE_BUTTON_ENABLED__=true}})();""}catch(e){return""""}}function d(w){try{w.executeJavaScript(""window.dispatchEvent(new CustomEvent('figboost:update-check-finished'))"",true).catch(()=>{})}catch(e){}}function h(w,e,u){try{if(!/^figboost:\/\/check-official-update/i.test(u||""""))return!1;e&&e.preventDefault&&e.preventDefault();let f=global.__FIGBOOST_CHECK_OFFICIAL_UPDATE__;if(typeof f===""function"")Promise.resolve(f()).finally(()=>d(w));else d(w);return!0}catch(x){d(w);return!0}}function j(w){if(!w||w._fz)return;w._fz=1;w.on(""will-navigate"",(e,u)=>h(w,e,u));if(w.setWindowOpenHandler)w.setWindowOpenHandler(({url})=>h(w,null,url)?{action:""deny""}:{action:""allow""});const r=()=>{try{let u=w.getURL();/^https:\/\/([^\/]+\.)?figma\.com/i.test(u)&&w.executeJavaScript(b()+p(),true).catch(()=>{})}catch(e){}};w.on(""dom-ready"",r);w.on(""did-finish-load"",r)}E.app.on(""web-contents-created"",(_,w)=>j(w));E.webContents.getAllWebContents().forEach(j)}catch(e){}})();"
 }
 
 function Disable-BuiltInUpdaterInMain {
@@ -1077,7 +1077,8 @@ function Invoke-SelfTest {
     $featureUpgradeNeedle = [System.Text.Encoding]::UTF8.GetBytes($LicenseCommentTarget)
     $featureUpgradeIndex = Get-BytesIndex $featureUpgradeBytes $featureUpgradeNeedle
     if ($featureUpgradeIndex -lt 0) { throw "Self-test feature upgrade cannot find injection target." }
-    $featureUpgradeHookBytes = [System.Text.Encoding]::UTF8.GetBytes((Build-MainHook $fakeRuntime))
+    $featureUpgradeHook = Build-MainHook $fakeRuntime
+    $featureUpgradeHookBytes = [System.Text.Encoding]::UTF8.GetBytes($featureUpgradeHook)
     [Array]::Copy($featureUpgradeHookBytes, 0, $featureUpgradeBytes, $featureUpgradeIndex, $featureUpgradeHookBytes.Length)
     [Array]::Copy($featureUpgradeBytes, 0, $featureUpgradeAsar.Bytes, $featureUpgradeMain.Start, $featureUpgradeBytes.Length)
     [System.IO.File]::WriteAllBytes($featureUpgradeAsarPath, $featureUpgradeAsar.Bytes)
@@ -1091,11 +1092,14 @@ function Invoke-SelfTest {
     if ($runtimeMainSource.Contains("scheduleOfficial" + "UpdateCheck")) { throw "Self-test runtime still schedules automatic update checks." }
     if ($runtimeMainSource.Contains('"second-instance"')) { throw "Self-test runtime still checks updates on second instance." }
     if (-not $runtimeMainSource.Contains("figboost:check-official-update")) { throw "Self-test runtime does not register manual update IPC." }
+    if (-not $featureUpgradeHook.Contains("figboost:\/\/check-official-update")) { throw "Self-test hook does not handle manual update fallback navigation." }
+    if (-not $featureUpgradeHook.Contains("__FIGBOOST_UPDATE_BUTTON_ENABLED__")) { throw "Self-test hook does not enable update button injection." }
     if (-not $runtimeMainSource.Contains("autoUpdater")) { throw "Self-test runtime does not guard built-in updater." }
     if (-not $runtimeMainSource.Contains("shouldSuppressBuiltInUpdateCheck")) { throw "Self-test runtime does not include downgrade suppression." }
     if (-not $runtimeMainSource.Contains('"-ShowProgress"')) { throw "Self-test runtime update launch does not request progress UI." }
     if (-not $runtimeContentSource.Contains("检查更新")) { throw "Self-test content payload does not include update button text." }
     if (-not $runtimeContentSource.Contains("__FIGBOOST_CHECK_OFFICIAL_UPDATE__")) { throw "Self-test content payload does not call the update bridge." }
+    if (-not $runtimeContentSource.Contains("figboost://check-official-update")) { throw "Self-test content payload does not include update fallback navigation." }
     $uninstallStatus = Uninstall-Patch $fakeAppDir $fakeRuntime -SkipProcessCheck
     if ($uninstallStatus.Patched) { throw "Self-test uninstall did not restore the original app.asar." }
     Write-Host "Self-test passed."

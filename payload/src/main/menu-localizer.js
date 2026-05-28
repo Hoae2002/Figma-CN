@@ -372,6 +372,7 @@
   function registerManualOfficialUpdateCheck() {
     if (!ipcMain || global.__FIGBOOST_UPDATE_IPC_REGISTERED__) return;
     global.__FIGBOOST_UPDATE_IPC_REGISTERED__ = true;
+    global.__FIGBOOST_CHECK_OFFICIAL_UPDATE__ = checkOfficialUpdateManually;
     ipcMain.handle("figboost:check-official-update", () => checkOfficialUpdateManually());
   }
 

@@ -47,6 +47,10 @@
       : null;
   }
 
+  function isFigBoostUpdateButtonEnabled() {
+    return Boolean(window.__FIGBOOST_UPDATE_BUTTON_ENABLED__ || getFigBoostUpdateBridge() || window.__FIGMA_ZH_TEST_UPDATE_BUTTON__);
+  }
+
   function findTopBarHost() {
     const selectors = [
       "[class*='top_bar']",
@@ -81,8 +85,7 @@
   }
 
   function installUpdateButton() {
-    const bridge = getFigBoostUpdateBridge();
-    if (!bridge || document.getElementById("figboost-update-button")) return;
+    if (!isFigBoostUpdateButtonEnabled() || document.getElementById("figboost-update-button")) return;
     if (!document.body || !installUpdateButtonStyle()) return;
 
     const host = findTopBarHost();
@@ -97,11 +100,24 @@
     button.title = "检查 Figma 官方新版";
     button.addEventListener("click", async () => {
       if (button.disabled) return;
+      const bridge = getFigBoostUpdateBridge();
       const oldText = button.textContent;
       button.disabled = true;
       button.textContent = "检查中...";
       try {
-        await bridge();
+        if (bridge) {
+          await bridge();
+        } else {
+          await new Promise((resolve) => {
+            const done = () => {
+              window.removeEventListener("figboost:update-check-finished", done);
+              resolve();
+            };
+            window.addEventListener("figboost:update-check-finished", done, { once: true });
+            window.location.href = `figboost://check-official-update?ts=${Date.now()}`;
+            setTimeout(done, 45000);
+          });
+        }
       } catch (error) {
         window.alert(`检查更新失败：${error && error.message ? error.message : String(error)}`);
       } finally {
