@@ -470,25 +470,107 @@ function Read-FeatureConfig {
   param([string]$RuntimeDir)
   $path = Get-FeatureConfigPath $RuntimeDir
   if (Test-Path -LiteralPath $path) {
-    try { return [System.IO.File]::ReadAllText($path, [System.Text.Encoding]::UTF8) | ConvertFrom-Json } catch {}
+    try {
+      $config = [System.IO.File]::ReadAllText($path, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+      if ($config.PSObject.Properties.Name -notcontains "enabledFeatures") { $config | Add-Member -NotePropertyName enabledFeatures -NotePropertyValue @() }
+      if ($config.PSObject.Properties.Name -notcontains "preferredAppDir") { $config | Add-Member -NotePropertyName preferredAppDir -NotePropertyValue "" }
+      return $config
+    } catch {}
   }
   return [pscustomobject]@{
     enabledFeatures = @()
     patcherPath = Get-PatcherExecutablePath
     runtimeDir = $RuntimeDir
+    preferredAppDir = ""
   }
 }
 
 function Write-FeatureConfig {
   param([string]$RuntimeDir, [string[]]$EnabledFeatures)
   New-Item -ItemType Directory -Force -Path $RuntimeDir | Out-Null
+  $current = Read-FeatureConfig $RuntimeDir
   $config = [pscustomobject]@{
     enabledFeatures = @($EnabledFeatures | Sort-Object -Unique)
     patcherPath = Get-PatcherExecutablePath
     runtimeDir = $RuntimeDir
+    preferredAppDir = [string]$current.preferredAppDir
   }
   [System.IO.File]::WriteAllText((Get-FeatureConfigPath $RuntimeDir), ($config | ConvertTo-Json -Depth 6), $Utf8NoBom)
   return $config
+}
+
+function Get-PreferredAppDir {
+  param([string]$RuntimeDir)
+  $config = Read-FeatureConfig $RuntimeDir
+  $preferred = [string]$config.preferredAppDir
+  if ($preferred -and (Test-FigmaAppDir $preferred)) {
+    return (Resolve-Path -LiteralPath $preferred).Path
+  }
+  return ""
+}
+
+function Set-PreferredAppDir {
+  param([string]$RuntimeDir, [string]$AppDir)
+  if (-not $AppDir) { throw "请先选择 Figma app-* 目录。" }
+  if (-not (Test-Path -LiteralPath $AppDir)) { throw "客户端目录不存在：$AppDir" }
+  $resolvedAppDir = (Resolve-Path -LiteralPath $AppDir).Path
+  if (-not (Test-FigmaAppDir $resolvedAppDir)) {
+    throw "无效的 Figma app-* 目录：$resolvedAppDir"
+  }
+  New-Item -ItemType Directory -Force -Path $RuntimeDir | Out-Null
+  $config = Read-FeatureConfig $RuntimeDir
+  $next = [pscustomobject]@{
+    enabledFeatures = @($config.enabledFeatures | Sort-Object -Unique)
+    patcherPath = Get-PatcherExecutablePath
+    runtimeDir = $RuntimeDir
+    preferredAppDir = $resolvedAppDir
+  }
+  [System.IO.File]::WriteAllText((Get-FeatureConfigPath $RuntimeDir), ($next | ConvertTo-Json -Depth 6), $Utf8NoBom)
+  return $resolvedAppDir
+}
+
+function Test-DirectoryEmpty {
+  param([string]$Path)
+  if (-not (Test-Path -LiteralPath $Path)) { return $true }
+  $item = Get-Item -LiteralPath $Path
+  if (-not $item.PSIsContainer) { return $false }
+  $child = Get-ChildItem -LiteralPath $Path -Force -ErrorAction Stop | Select-Object -First 1
+  return (-not $child)
+}
+
+function Move-FigmaAppDir {
+  param([string]$SourceAppDir, [string]$DestinationDir, [string]$RuntimeDir)
+  if (-not $SourceAppDir) { throw "未找到可迁移的 Figma 客户端目录。" }
+  if (-not $DestinationDir) { throw "请先输入目标客户端目录。" }
+  $source = (Resolve-Path -LiteralPath $SourceAppDir).Path
+  if (-not (Test-FigmaAppDir $source)) {
+    throw "源目录不是有效的 Figma app-* 目录：$source"
+  }
+
+  $destination = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($DestinationDir)
+  $comparison = [StringComparison]::OrdinalIgnoreCase
+  if ($destination.Equals($source, $comparison)) {
+    $selected = Set-PreferredAppDir $RuntimeDir $source
+    return [pscustomobject]@{ AppDir = $selected; Migrated = $false; SourceAppDir = $source }
+  }
+  if ($destination.StartsWith($source.TrimEnd('\') + "\", $comparison)) {
+    throw "目标目录不能位于源客户端目录内部：$destination"
+  }
+  if ((Test-Path -LiteralPath $destination) -and (Test-FigmaAppDir $destination)) {
+    $selected = Set-PreferredAppDir $RuntimeDir $destination
+    return [pscustomobject]@{ AppDir = $selected; Migrated = $false; SourceAppDir = $source }
+  }
+  if (-not (Test-DirectoryEmpty $destination)) {
+    throw "目标目录不是空目录，也不是完整的 Figma 客户端目录：$destination"
+  }
+
+  New-Item -ItemType Directory -Force -Path $destination | Out-Null
+  Get-ChildItem -LiteralPath $source -Force | Copy-Item -Destination $destination -Recurse -Force
+  if (-not (Test-FigmaAppDir $destination)) {
+    throw "复制完成后目标目录仍不是有效的 Figma 客户端目录：$destination"
+  }
+  $selected = Set-PreferredAppDir $RuntimeDir $destination
+  return [pscustomobject]@{ AppDir = $selected; Migrated = $true; SourceAppDir = $source }
 }
 
 function Repair-FeatureConfigEncoding {
@@ -518,6 +600,19 @@ function Install-Feature {
     return Install-Patch $SelectedAppDir $SelectedRuntimeDir -Force
   }
   return $status
+}
+
+function Uninstall-Feature {
+  param([string]$FeatureId, [string]$SelectedRuntimeDir)
+  $config = Read-FeatureConfig $SelectedRuntimeDir
+  $features = @($config.enabledFeatures | Where-Object { $_ -ne $FeatureId })
+  Write-FeatureConfig $SelectedRuntimeDir $features | Out-Null
+}
+
+function Get-FeatureInstallEmptySelectionMessage {
+  param([int]$CheckedFeatureCount)
+  if ($CheckedFeatureCount -gt 0) { return "所选功能已经安装，不需要重复安装。" }
+  return "请先勾选要安装的附加功能。"
 }
 
 function Get-PatchStatus {
@@ -786,16 +881,22 @@ function Invoke-UpdateFigmaOfficialWithProgress {
 }
 
 function Repair-FigmaShortcuts {
-  param([string]$AppDir)
+  param([string]$AppDir, [string[]]$ShortcutRoots = $null)
   if (-not (Test-FigmaAppDir $AppDir)) { return }
   $figmaRoot = Split-Path -Parent $AppDir
-  $target = Join-Path $AppDir "Figma.exe"
   $launcher = Join-Path $figmaRoot "Figma.exe"
-  $iconSource = if (Test-Path -LiteralPath $launcher) { $launcher } else { $target }
-  $shortcutRoots = @(
-    [Environment]::GetFolderPath("Desktop"),
-    [Environment]::GetFolderPath("CommonDesktopDirectory")
-  ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
+  $appExe = Join-Path $AppDir "Figma.exe"
+  $target = if (Test-Path -LiteralPath $launcher) { $launcher } else { $appExe }
+  $workingDirectory = Split-Path -Parent $target
+  $shortcutRoots = if ($ShortcutRoots) {
+    @($ShortcutRoots)
+  } else {
+    @(
+      [Environment]::GetFolderPath("Desktop"),
+      [Environment]::GetFolderPath("CommonDesktopDirectory")
+    )
+  }
+  $shortcutRoots = @($shortcutRoots | Where-Object { $_ -and (Test-Path -LiteralPath $_) })
 
   try {
     $shell = New-Object -ComObject WScript.Shell
@@ -806,8 +907,8 @@ function Repair-FigmaShortcuts {
         $shortcut = $shell.CreateShortcut($link.FullName)
         if ($shortcut.TargetPath -and (Split-Path -Leaf $shortcut.TargetPath) -ieq "Figma.exe") {
           $shortcut.TargetPath = $target
-          $shortcut.WorkingDirectory = $AppDir
-          $shortcut.IconLocation = "$iconSource,0"
+          $shortcut.WorkingDirectory = $workingDirectory
+          $shortcut.IconLocation = "$target,0"
           $shortcut.Save()
         }
       }
@@ -846,8 +947,13 @@ function Invoke-SelfTest {
   $fakeAppDir = Join-Path $temp "app-1.2.3"
   $fakeAsar = Join-Path $fakeAppDir "resources\app.asar"
   $fakeRuntime = Join-Path $temp "runtime"
+  $fakePreferredAppDir = Join-Path $temp "app-3.0.0"
   try {
+    New-Item -ItemType File -Force -Path (Join-Path $fakeAppDir "Figma.exe") | Out-Null
     New-FakeAsar $fakeAsar
+    New-Item -ItemType Directory -Force -Path (Join-Path $fakePreferredAppDir "resources") | Out-Null
+    New-Item -ItemType File -Force -Path (Join-Path $fakePreferredAppDir "Figma.exe") | Out-Null
+    New-FakeAsar (Join-Path $fakePreferredAppDir "resources\app.asar")
     $fakeLocalAppData = Join-Path $temp "localappdata"
     $fakeFigmaRoot = Join-Path $fakeLocalAppData "Figma"
     $validOlderAppDir = Join-Path $fakeFigmaRoot "app-10.1.0"
@@ -901,6 +1007,63 @@ function Invoke-SelfTest {
     $featureStatus = Install-Feature "auto-check-official-latest" $fakeAppDir $fakeRuntime
     if (-not $featureStatus.Patched) { throw "Self-test feature install did not preserve patched status." }
     if (-not (Test-FeatureInstalled $fakeRuntime "auto-check-official-latest")) { throw "Self-test feature config did not mark feature installed." }
+    $savedPreferredAppDir = Set-PreferredAppDir $fakeRuntime $fakePreferredAppDir
+    if ($savedPreferredAppDir -ne $fakePreferredAppDir) { throw "Self-test preferred app dir was not resolved as expected." }
+    if ((Get-PreferredAppDir $fakeRuntime) -ne $fakePreferredAppDir) { throw "Self-test preferred app dir was not saved." }
+    Install-Feature "auto-check-official-latest" $fakeAppDir $fakeRuntime | Out-Null
+    if ((Get-PreferredAppDir $fakeRuntime) -ne $fakePreferredAppDir) { throw "Self-test feature config did not preserve preferred app dir." }
+    Uninstall-Feature "auto-check-official-latest" $fakeRuntime
+    if (Test-FeatureInstalled $fakeRuntime "auto-check-official-latest") { throw "Self-test feature uninstall did not clear feature config." }
+    if ((Get-PreferredAppDir $fakeRuntime) -ne $fakePreferredAppDir) { throw "Self-test feature uninstall did not preserve preferred app dir." }
+    Uninstall-Feature "auto-check-official-latest" $fakeRuntime
+    if (Test-FeatureInstalled $fakeRuntime "auto-check-official-latest") { throw "Self-test repeat feature uninstall changed feature config." }
+    Install-Feature "auto-check-official-latest" $fakeAppDir $fakeRuntime | Out-Null
+    Remove-Item -LiteralPath (Join-Path $fakePreferredAppDir "Figma.exe") -Force
+    if (Get-PreferredAppDir $fakeRuntime) { throw "Self-test preferred app dir did not ignore invalid directories." }
+    New-Item -ItemType File -Force -Path (Join-Path $fakePreferredAppDir "Figma.exe") | Out-Null
+    $migrationTarget = Join-Path $temp "moved-figma"
+    $migrationResult = Move-FigmaAppDir $fakeAppDir $migrationTarget $fakeRuntime
+    if (-not $migrationResult.Migrated) { throw "Self-test migration did not report a copied client." }
+    if (-not (Test-FigmaAppDir $migrationTarget)) { throw "Self-test migration did not create a valid target client." }
+    if ((Get-PreferredAppDir $fakeRuntime) -ne $migrationTarget) { throw "Self-test migration did not save preferred app dir." }
+    $invalidMigrationTarget = Join-Path $temp "invalid-target"
+    New-Item -ItemType Directory -Force -Path $invalidMigrationTarget | Out-Null
+    New-Item -ItemType File -Force -Path (Join-Path $invalidMigrationTarget "keep.txt") | Out-Null
+    $invalidMigrationFailed = $false
+    try {
+      Move-FigmaAppDir $fakeAppDir $invalidMigrationTarget $fakeRuntime | Out-Null
+    } catch {
+      $invalidMigrationFailed = $true
+    }
+    if (-not $invalidMigrationFailed) { throw "Self-test migration allowed a non-empty invalid target." }
+    if (-not (Test-Path -LiteralPath (Join-Path $invalidMigrationTarget "keep.txt"))) { throw "Self-test migration overwrote invalid target contents." }
+    $existingTargetResult = Move-FigmaAppDir $fakeAppDir $fakePreferredAppDir $fakeRuntime
+    if ($existingTargetResult.Migrated) { throw "Self-test migration copied over an existing valid target." }
+    if ((Get-PreferredAppDir $fakeRuntime) -ne $fakePreferredAppDir) { throw "Self-test existing target did not update preferred app dir." }
+    $shortcutRoot = Join-Path $temp "desktop"
+    New-Item -ItemType Directory -Force -Path $shortcutRoot | Out-Null
+    $launcherPath = Join-Path $temp "Figma.exe"
+    New-Item -ItemType File -Force -Path $launcherPath | Out-Null
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcutPath = Join-Path $shortcutRoot "Figma.lnk"
+    $shortcut = $shell.CreateShortcut($shortcutPath)
+    $shortcut.TargetPath = Join-Path $fakeAppDir "Figma.exe"
+    $shortcut.WorkingDirectory = $fakeAppDir
+    $shortcut.IconLocation = "$($shortcut.TargetPath),0"
+    $shortcut.Save()
+    Repair-FigmaShortcuts $fakeAppDir @($shortcutRoot)
+    if (-not (Test-Path -LiteralPath $shortcutPath)) { throw "Self-test shortcut repair deleted shortcut." }
+    $repairedShortcut = $shell.CreateShortcut($shortcutPath)
+    if ($repairedShortcut.TargetPath -ne $launcherPath) { throw "Self-test shortcut repair did not prefer root launcher." }
+    if ($repairedShortcut.WorkingDirectory -ne $temp) { throw "Self-test shortcut repair did not use launcher working directory." }
+    Remove-Item -LiteralPath $launcherPath -Force
+    Repair-FigmaShortcuts $fakeAppDir @($shortcutRoot)
+    if (-not (Test-Path -LiteralPath $shortcutPath)) { throw "Self-test fallback shortcut repair deleted shortcut." }
+    $fallbackShortcut = $shell.CreateShortcut($shortcutPath)
+    if ($fallbackShortcut.TargetPath -ne (Join-Path $fakeAppDir "Figma.exe")) { throw "Self-test shortcut repair did not fall back to app executable." }
+    if ($fallbackShortcut.WorkingDirectory -ne $fakeAppDir) { throw "Self-test shortcut repair did not use app working directory." }
+    if ((Get-FeatureInstallEmptySelectionMessage 1) -ne "所选功能已经安装，不需要重复安装。") { throw "Self-test installed feature prompt is incorrect." }
+    if ((Get-FeatureInstallEmptySelectionMessage 0) -ne "请先勾选要安装的附加功能。") { throw "Self-test empty feature prompt is incorrect." }
     $featureUpgradeAppDir = Join-Path $temp "app-2.0.0"
     New-Item -ItemType Directory -Force -Path (Join-Path $featureUpgradeAppDir "resources") | Out-Null
     New-Item -ItemType File -Force -Path (Join-Path $featureUpgradeAppDir "Figma.exe") | Out-Null
@@ -1103,7 +1266,7 @@ function Show-Gui {
   $title.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 13, [System.Drawing.FontStyle]::Bold)
 
   $subtitle = New-Object System.Windows.Forms.Label
-  $subtitle.Text = "基于官方原生客户端，支持检查官方最新版并自动更新后安装补丁"
+  $subtitle.Text = "给官方 Figma Desktop 安装中文界面补丁"
   $subtitle.Left = 22
   $subtitle.Top = 42
   $subtitle.Width = 620
@@ -1153,7 +1316,7 @@ function Show-Gui {
   $currentGroup.Controls.AddRange(@($script:ValueCurrentFigma, $script:ValueOfficialLatest, $script:ValueCurrentPatch, $script:ValueCurrentPath))
 
   $labelApp = New-Object System.Windows.Forms.Label
-  $labelApp.Text = "Figma客户端目录"
+  $labelApp.Text = "Figma 客户端 app-* 目录"
   $labelApp.Left = 18
   $labelApp.Top = 190
   $labelApp.Width = 160
@@ -1161,7 +1324,7 @@ function Show-Gui {
 
   $appInput = New-InputBox 18 212 730
   $txtApp = $appInput.TextBox
-  try { $txtApp.Text = Find-CurrentFigmaAppDir } catch { $txtApp.Text = "" }
+  $txtApp.Text = ""
 
   $btnBrowse = New-Object System.Windows.Forms.Button
   $btnBrowse.Text = "浏览"
@@ -1171,8 +1334,18 @@ function Show-Gui {
   $btnBrowse.Height = 34
   $btnBrowse.Anchor = "Top,Right"
 
+  $btnApplyAppPath = New-Object System.Windows.Forms.Button
+  $btnApplyAppPath.Text = "保存客户端路径"
+  $btnApplyAppPath.Left = 630
+  $btnApplyAppPath.Top = 212
+  $btnApplyAppPath.Width = 118
+  $btnApplyAppPath.Height = 34
+  $btnApplyAppPath.Anchor = "Top,Right"
+  $appInput.Panel.Width = 596
+  $txtApp.Width = 564
+
   $labelRuntime = New-Object System.Windows.Forms.Label
-  $labelRuntime.Text = "运行时目录"
+  $labelRuntime.Text = "补丁文件保存目录"
   $labelRuntime.Left = 18
   $labelRuntime.Top = 252
   $labelRuntime.Width = 160
@@ -1191,7 +1364,7 @@ function Show-Gui {
   $btnBrowseRuntime.Anchor = "Top,Right"
 
   $labelNotice = New-Object System.Windows.Forms.Label
-  $labelNotice.Text = "提示：安装或卸载时会自动强制关闭 Figma，请先保存未同步的工作。"
+  $labelNotice.Text = "安装或卸载汉化补丁会先关闭 Figma。请先保存未同步的工作。"
   $labelNotice.Left = 18
   $labelNotice.Top = 316
   $labelNotice.Width = 700
@@ -1199,34 +1372,34 @@ function Show-Gui {
   $labelNotice.ForeColor = [System.Drawing.Color]::FromArgb(150, 70, 0)
 
   $btnStatus = New-Object System.Windows.Forms.Button
-  $btnStatus.Text = "自动检查路径和版本"
+  $btnStatus.Text = "检测当前 Figma"
   $btnStatus.Left = 18
   $btnStatus.Top = 350
   $btnStatus.Width = 170
   $btnStatus.Height = 34
 
   $btnInstall = New-Object System.Windows.Forms.Button
-  $btnInstall.Text = "安装补丁"
+  $btnInstall.Text = "安装汉化补丁"
   $btnInstall.Left = 202
   $btnInstall.Top = 350
   $btnInstall.Width = 130
   $btnInstall.Height = 34
 
   $btnUninstall = New-Object System.Windows.Forms.Button
-  $btnUninstall.Text = "卸载补丁"
+  $btnUninstall.Text = "卸载汉化补丁"
   $btnUninstall.Left = 344
   $btnUninstall.Top = 350
   $btnUninstall.Width = 130
   $btnUninstall.Height = 34
 
   $btnFeatureManager = New-Object System.Windows.Forms.Button
-  $btnFeatureManager.Text = "功能安装"
+  $btnFeatureManager.Text = "管理附加功能"
   $btnFeatureManager.Left = 486
   $btnFeatureManager.Top = 350
   $btnFeatureManager.Width = 180
   $btnFeatureManager.Height = 34
 
-  foreach ($button in @($btnBrowse, $btnBrowseRuntime, $btnStatus, $btnInstall, $btnUninstall, $btnFeatureManager)) {
+  foreach ($button in @($btnBrowse, $btnApplyAppPath, $btnBrowseRuntime, $btnStatus, $btnInstall, $btnUninstall, $btnFeatureManager)) {
     if ($button -ne $btnFeatureManager) {
       Set-ButtonStyle $button `
         ([System.Drawing.Color]::FromArgb(244, 247, 251)) `
@@ -1350,8 +1523,8 @@ function Show-Gui {
       Set-ProgressState 100 "操作完成"
       if ($result) {
         Set-StatusLabels $result
-        if ($OnSuccess) { & $OnSuccess $result }
       }
+      if ($OnSuccess) { & $OnSuccess $result }
     } catch {
       Set-ProgressState 0 "操作失败"
       Show-ErrorMessage "$FailurePrefix：`r`n`r`n$($_.Exception.Message)"
@@ -1364,10 +1537,10 @@ function Show-Gui {
   $featureDefinitions = @(
     [pscustomobject]@{
       Id = "auto-check-official-latest"
-      Title = "自动检查客户端是否为最新版本"
-      Description = "安装后每次打开 Figma 客户端会自动检查官方最新版；发现新版会在 Figma 客户端弹窗询问是否更新，更新完成后自动安装汉化补丁。"
+      Title = "启动时检查 Figma 官方新版"
+      Description = "打开 Figma 时检查官方新版；发现新版后询问是否更新；更新后重新安装汉化补丁。"
       ProgressText = "正在安装自动检查功能..."
-      FailurePrefix = "功能安装失败"
+      FailurePrefix = "附加功能安装失败"
       Action = {
         Set-ProgressState 35 "正在写入功能配置..."
         $current = if ($txtApp.Text -and (Test-FigmaAppDir $txtApp.Text)) { $txtApp.Text } else { Find-CurrentFigmaAppDir }
@@ -1379,14 +1552,28 @@ function Show-Gui {
       IsInstalled = { Test-FeatureInstalled $txtRuntime.Text "auto-check-official-latest" }
       SuccessMessage = {
         param($result)
-        return "功能安装完成。`r`n`r`n之后每次打开 Figma 客户端时，会自动检查是否为官方最新版本。`r`n补丁状态：$(if ($result.Patched) { "已安装" } else { "未安装" })"
+        return "附加功能已安装。`r`n`r`n之后打开 Figma 时，会检查是否有官方新版；发现新版后会先询问再更新。`r`n补丁状态：$(if ($result.Patched) { "已安装" } else { "未安装" })"
+      }
+      UninstallProgressText = "正在卸载附加功能..."
+      UninstallFailurePrefix = "附加功能卸载失败"
+      UninstallAction = {
+        Set-ProgressState 35 "正在关闭附加功能..."
+        Uninstall-Feature "auto-check-official-latest" $txtRuntime.Text
+        $current = if ($txtApp.Text -and (Test-FigmaAppDir $txtApp.Text)) { $txtApp.Text } else { Get-PreferredAppDir $txtRuntime.Text }
+        if ($current) { return Get-CompleteStatus $current $txtRuntime.Text }
+        return $null
+      }
+      UninstallSuccessMessage = {
+        param($result)
+        $patchState = if ($result) { "`r`n补丁状态：$(if ($result.Patched) { "已安装" } else { "未安装" })" } else { "" }
+        return "附加功能已卸载。`r`n`r`n之后打开 Figma 时不再检查官方新版；汉化补丁不受影响。$patchState"
       }
     }
   )
 
   function Show-FeatureInstallDialog {
     $dialog = New-Object System.Windows.Forms.Form
-    $dialog.Text = "功能安装"
+    $dialog.Text = "附加功能"
     $dialog.StartPosition = "CenterParent"
     $dialog.Width = 560
     $dialog.Height = 420
@@ -1396,7 +1583,7 @@ function Show-Gui {
     $dialog.ShowInTaskbar = $false
 
     $titleLabel = New-Object System.Windows.Forms.Label
-    $titleLabel.Text = "选择要安装或执行的功能"
+    $titleLabel.Text = "管理附加功能"
     $titleLabel.Left = 18
     $titleLabel.Top = 18
     $titleLabel.Width = 500
@@ -1404,7 +1591,7 @@ function Show-Gui {
     $titleLabel.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 11, [System.Drawing.FontStyle]::Bold)
 
     $hintLabel = New-Object System.Windows.Forms.Label
-    $hintLabel.Text = "后续新增功能会出现在这里，勾选后点击安装即可。"
+    $hintLabel.Text = "这里管理 FigBoost 的可选小功能。安装或卸载功能不会卸载汉化补丁。"
     $hintLabel.Left = 18
     $hintLabel.Top = 46
     $hintLabel.Width = 500
@@ -1420,11 +1607,12 @@ function Show-Gui {
     $featureList.CheckOnClick = $true
     $featureList.DisplayMember = "Title"
     $featureList.DrawMode = "OwnerDrawFixed"
+    $featureList.ItemHeight = 24
     $installedFeatureIds = @{}
     foreach ($feature in $featureDefinitions) {
       $installed = [bool](& $feature.IsInstalled)
       if ($installed) { $installedFeatureIds[$feature.Id] = $true }
-      [void]$featureList.Items.Add($feature, $installed)
+      [void]$featureList.Items.Add($feature, $false)
     }
 
     $descriptionBox = New-Object System.Windows.Forms.TextBox
@@ -1446,6 +1634,14 @@ function Show-Gui {
     $btnRunFeatures.Height = 34
     $btnRunFeatures.Anchor = "Bottom,Right"
 
+    $btnUninstallFeatures = New-Object System.Windows.Forms.Button
+    $btnUninstallFeatures.Text = "卸载所选功能"
+    $btnUninstallFeatures.Left = 172
+    $btnUninstallFeatures.Top = 336
+    $btnUninstallFeatures.Width = 130
+    $btnUninstallFeatures.Height = 34
+    $btnUninstallFeatures.Anchor = "Bottom,Right"
+
     $btnClose = New-Object System.Windows.Forms.Button
     $btnClose.Text = "关闭"
     $btnClose.Left = 456
@@ -1458,44 +1654,51 @@ function Show-Gui {
       ([System.Drawing.Color]::FromArgb(18, 119, 242)) `
       ([System.Drawing.Color]::White) `
       ([System.Drawing.Color]::Transparent)
+    Set-ButtonStyle $btnUninstallFeatures `
+      ([System.Drawing.Color]::FromArgb(255, 255, 255)) `
+      ([System.Drawing.Color]::FromArgb(180, 40, 40)) `
+      ([System.Drawing.Color]::FromArgb(210, 150, 150))
     Set-ButtonStyle $btnClose `
       ([System.Drawing.Color]::FromArgb(244, 247, 251)) `
       ([System.Drawing.Color]::FromArgb(28, 35, 45)) `
       ([System.Drawing.Color]::FromArgb(140, 154, 174))
 
-    $featureList.Add_SelectedIndexChanged({
+    $updateDescription = {
       if ($featureList.SelectedItem) {
-        $suffix = if ($installedFeatureIds.ContainsKey($featureList.SelectedItem.Id)) { "`r`n`r`n状态：已安装" } else { "" }
-        $descriptionBox.Text = "$($featureList.SelectedItem.Description)$suffix"
+        $status = if ($installedFeatureIds.ContainsKey($featureList.SelectedItem.Id)) { "已安装" } else { "未安装" }
+        $descriptionBox.Text = "$($featureList.SelectedItem.Description)`r`n`r`n状态：$status"
       }
-    })
-    $featureList.Add_ItemCheck({
-      param($sender, $eventArgs)
-      $feature = $featureList.Items[$eventArgs.Index]
-      if ($installedFeatureIds.ContainsKey($feature.Id)) {
-        $eventArgs.NewValue = [System.Windows.Forms.CheckState]::Checked
-      }
+    }
+
+    $featureList.Add_SelectedIndexChanged({
+      & $updateDescription
     })
     $featureList.Add_DrawItem({
       param($sender, $eventArgs)
       if ($eventArgs.Index -lt 0) { return }
       $feature = $featureList.Items[$eventArgs.Index]
-      $eventArgs.DrawBackground()
-      $textColor = if ($installedFeatureIds.ContainsKey($feature.Id)) {
-        [System.Drawing.Color]::FromArgb(150, 150, 150)
-      } else {
-        $featureList.ForeColor
+      $isInstalled = $installedFeatureIds.ContainsKey($feature.Id)
+      $eventArgs.Graphics.FillRectangle([System.Drawing.Brushes]::White, $eventArgs.Bounds)
+      if (($eventArgs.State -band [System.Windows.Forms.DrawItemState]::Selected) -ne 0) {
+        $pen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(18, 119, 242))
+        $eventArgs.Graphics.DrawRectangle($pen, $eventArgs.Bounds.Left, $eventArgs.Bounds.Top, $eventArgs.Bounds.Width - 1, $eventArgs.Bounds.Height - 1)
+        $pen.Dispose()
       }
-      $flags = [System.Windows.Forms.TextFormatFlags]::Left -bor [System.Windows.Forms.TextFormatFlags]::VerticalCenter
-      [System.Windows.Forms.TextRenderer]::DrawText($eventArgs.Graphics, $feature.Title, $eventArgs.Font, $eventArgs.Bounds, $textColor, $flags)
-      $eventArgs.DrawFocusRectangle()
+      $titleBounds = New-Object System.Drawing.Rectangle($eventArgs.Bounds.Left + 18, $eventArgs.Bounds.Top, $eventArgs.Bounds.Width - 100, $eventArgs.Bounds.Height)
+      $statusBounds = New-Object System.Drawing.Rectangle($eventArgs.Bounds.Right - 88, $eventArgs.Bounds.Top, 82, $eventArgs.Bounds.Height)
+      $flags = [System.Windows.Forms.TextFormatFlags]::Left -bor [System.Windows.Forms.TextFormatFlags]::VerticalCenter -bor [System.Windows.Forms.TextFormatFlags]::EndEllipsis
+      [System.Windows.Forms.TextRenderer]::DrawText($eventArgs.Graphics, $feature.Title, $eventArgs.Font, $titleBounds, $featureList.ForeColor, $flags)
+      $statusText = if ($isInstalled) { "已安装" } else { "未安装" }
+      $statusColor = if ($isInstalled) { [System.Drawing.Color]::FromArgb(38, 120, 83) } else { [System.Drawing.Color]::FromArgb(100, 112, 128) }
+      [System.Windows.Forms.TextRenderer]::DrawText($eventArgs.Graphics, $statusText, $eventArgs.Font, $statusBounds, $statusColor, $flags)
     })
 
     $btnClose.Add_Click({ $dialog.Close() })
     $btnRunFeatures.Add_Click({
-      $selectedFeatures = @($featureList.CheckedItems | Where-Object { -not $installedFeatureIds.ContainsKey($_.Id) })
+      $checkedFeatures = @($featureList.CheckedItems)
+      $selectedFeatures = @($checkedFeatures | Where-Object { -not $installedFeatureIds.ContainsKey($_.Id) })
       if ($selectedFeatures.Count -eq 0) {
-        Show-InfoMessage "请先勾选未安装的功能。" "功能安装"
+        Show-InfoMessage (Get-FeatureInstallEmptySelectionMessage $checkedFeatures.Count) "附加功能"
         return
       }
       $dialog.Close()
@@ -1503,12 +1706,30 @@ function Show-Gui {
         & $runAction $feature.Action {
           param($result)
           $message = & $feature.SuccessMessage $result
-          if ($message) { Show-InfoMessage $message "功能安装" }
+          if ($message) { Show-InfoMessage $message "附加功能" }
         } $feature.FailurePrefix $feature.ProgressText
       }
     })
+    $btnUninstallFeatures.Add_Click({
+      $selectedFeatures = @($featureList.CheckedItems | Where-Object { $installedFeatureIds.ContainsKey($_.Id) })
+      if ($featureList.SelectedItem -and $installedFeatureIds.ContainsKey($featureList.SelectedItem.Id) -and ($selectedFeatures -notcontains $featureList.SelectedItem)) {
+        $selectedFeatures += $featureList.SelectedItem
+      }
+      if ($selectedFeatures.Count -eq 0) {
+        Show-InfoMessage "请选择已安装的功能后再卸载。`r`n`r`n卸载只关闭附加功能，不卸载汉化补丁。" "附加功能"
+        return
+      }
+      $dialog.Close()
+      foreach ($feature in $selectedFeatures) {
+        & $runAction $feature.UninstallAction {
+          param($result)
+          $message = & $feature.UninstallSuccessMessage $result
+          if ($message) { Show-InfoMessage $message "附加功能" }
+        } $feature.UninstallFailurePrefix $feature.UninstallProgressText
+      }
+    })
 
-    $dialog.Controls.AddRange(@($titleLabel, $hintLabel, $featureList, $descriptionBox, $btnRunFeatures, $btnClose))
+    $dialog.Controls.AddRange(@($titleLabel, $hintLabel, $featureList, $descriptionBox, $btnUninstallFeatures, $btnRunFeatures, $btnClose))
     [void]$dialog.ShowDialog($form)
   }
 
@@ -1523,7 +1744,7 @@ function Show-Gui {
 
   $btnBrowseRuntime.Add_Click({
     $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
-    $dialog.Description = "选择汉化补丁运行时目录"
+    $dialog.Description = "选择补丁文件保存目录"
     $dialog.ShowNewFolderButton = $true
     if ($txtRuntime.Text -and (Test-Path -LiteralPath $txtRuntime.Text)) { $dialog.SelectedPath = $txtRuntime.Text }
     if ($dialog.ShowDialog($form) -eq "OK") {
@@ -1531,9 +1752,35 @@ function Show-Gui {
     }
   })
 
+  $btnApplyAppPath.Add_Click({
+    & $runAction {
+      Set-ProgressState 35 "正在应用客户端路径..."
+      if ($txtApp.Text -and (Test-FigmaAppDir $txtApp.Text)) {
+        $selected = [pscustomobject]@{
+          AppDir = Set-PreferredAppDir $txtRuntime.Text $txtApp.Text
+          Migrated = $false
+        }
+      } else {
+        Set-ProgressState 45 "正在关闭 Figma 并复制客户端..."
+        Assert-FigmaClosed -Force
+        $sourceAppDir = Find-CurrentFigmaAppDir
+        $selected = Move-FigmaAppDir $sourceAppDir $txtApp.Text $txtRuntime.Text
+      }
+      Repair-FigmaShortcuts $selected.AppDir
+      $txtApp.Text = $selected.AppDir
+      $status = Get-CompleteStatus $selected.AppDir $txtRuntime.Text
+      $status | Add-Member -NotePropertyName Migrated -NotePropertyValue ([bool]$selected.Migrated) -Force
+      return $status
+    } {
+      param($result)
+      $title = if ($result.Migrated) { "客户端已迁移" } else { "客户端路径已应用" }
+      Show-InfoMessage ("$title。`r`n`r`nFigma 路径：$($result.AppDir)`r`nFigma 版本：$($result.FigmaVersion)")
+    } "保存客户端路径失败" "正在保存客户端路径..."
+  })
+
   $btnStatus.Add_Click({
     & $runAction {
-      $current = Find-CurrentFigmaAppDir
+      $current = if ($txtApp.Text -and (Test-FigmaAppDir $txtApp.Text)) { (Resolve-Path -LiteralPath $txtApp.Text).Path } else { Find-CurrentFigmaAppDir }
       $txtApp.Text = $current
       Get-CompleteStatus $current $txtRuntime.Text
     } {
@@ -1568,12 +1815,13 @@ function Show-Gui {
 
   $form.Controls.AddRange(@(
     $header, $currentGroup,
-    $labelApp, $appInput.Panel, $btnBrowse, $labelRuntime, $runtimeInput.Panel, $btnBrowseRuntime, $labelNotice,
+    $labelApp, $appInput.Panel, $btnApplyAppPath, $btnBrowse, $labelRuntime, $runtimeInput.Panel, $btnBrowseRuntime, $labelNotice,
     $btnStatus, $btnInstall, $btnUninstall, $btnFeatureManager, $progressLabel, $progressBar, $statusGroup
   ))
 
   try {
-    $initialAppDir = Find-CurrentFigmaAppDir
+    $preferredAppDir = Get-PreferredAppDir $txtRuntime.Text
+    $initialAppDir = if ($preferredAppDir) { $preferredAppDir } else { Find-CurrentFigmaAppDir }
     $txtApp.Text = $initialAppDir
     Set-StatusLabels (Get-CompleteStatus $initialAppDir $txtRuntime.Text)
   } catch {
