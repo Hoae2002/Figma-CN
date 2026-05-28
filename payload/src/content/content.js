@@ -41,6 +41,95 @@
     }, { once: true });
   }
 
+  function getFigBoostUpdateBridge() {
+    return typeof window.__FIGBOOST_CHECK_OFFICIAL_UPDATE__ === "function"
+      ? window.__FIGBOOST_CHECK_OFFICIAL_UPDATE__
+      : null;
+  }
+
+  function findTopBarHost() {
+    const selectors = [
+      "[class*='top_bar']",
+      "[class*='topbar']",
+      "[class*='tab_bar']",
+      "[class*='tabbar']",
+      "[role='tablist']",
+      "header"
+    ];
+    for (const selector of selectors) {
+      const element = document.querySelector(selector);
+      if (element && element.getBoundingClientRect().height >= 28) return element;
+    }
+    return null;
+  }
+
+  function installUpdateButtonStyle() {
+    if (document.getElementById("figboost-update-button-style")) return true;
+    if (!document.head) return false;
+    const style = document.createElement("style");
+    style.id = "figboost-update-button-style";
+    style.textContent = [
+      ".figboost-update-button{box-sizing:border-box;height:24px;padding:0 10px;border:1px solid rgba(24,119,242,.35);border-radius:4px;background:rgba(255,255,255,.94);color:#185abd;font:12px/22px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;white-space:nowrap;cursor:pointer;box-shadow:0 1px 2px rgba(15,23,42,.08);}",
+      ".figboost-update-button:hover{background:#f7fbff;border-color:rgba(24,119,242,.65);}",
+      ".figboost-update-button:disabled{cursor:default;opacity:.68;}",
+      ".figboost-update-button-wrap{z-index:2147483000;pointer-events:auto;}",
+      ".figboost-update-button-wrap[data-placement='host']{position:absolute;right:104px;top:50%;transform:translateY(-50%);}",
+      ".figboost-update-button-wrap[data-placement='fixed']{position:fixed;right:118px;top:8px;}"
+    ].join("");
+    document.head.appendChild(style);
+    return true;
+  }
+
+  function installUpdateButton() {
+    const bridge = getFigBoostUpdateBridge();
+    if (!bridge || document.getElementById("figboost-update-button")) return;
+    if (!document.body || !installUpdateButtonStyle()) return;
+
+    const host = findTopBarHost();
+    const wrap = document.createElement("div");
+    wrap.className = "figboost-update-button-wrap";
+    wrap.dataset.placement = host ? "host" : "fixed";
+    const button = document.createElement("button");
+    button.id = "figboost-update-button";
+    button.className = "figboost-update-button";
+    button.type = "button";
+    button.textContent = "检查更新";
+    button.title = "检查 Figma 官方新版";
+    button.addEventListener("click", async () => {
+      if (button.disabled) return;
+      const oldText = button.textContent;
+      button.disabled = true;
+      button.textContent = "检查中...";
+      try {
+        await bridge();
+      } catch (error) {
+        window.alert(`检查更新失败：${error && error.message ? error.message : String(error)}`);
+      } finally {
+        button.textContent = oldText;
+        button.disabled = false;
+      }
+    });
+    wrap.appendChild(button);
+
+    if (host) {
+      const position = window.getComputedStyle(host).position;
+      if (position === "static") host.style.position = "relative";
+      host.appendChild(wrap);
+    } else {
+      document.body.appendChild(wrap);
+    }
+  }
+
+  function scheduleUpdateButtonInstall() {
+    const run = () => installUpdateButton();
+    run();
+    document.addEventListener("DOMContentLoaded", run, { once: true });
+    const observer = new MutationObserver(run);
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+    setTimeout(run, 1000);
+    setTimeout(run, 3000);
+  }
+
   const extensionApi = typeof chrome === "undefined" ? null : chrome;
   const storage = extensionApi && extensionApi.storage && extensionApi.storage.sync;
   const dictionary = window.FIGMA_ZH_DICTIONARY || { exact: {}, phrases: [], version: "unknown" };
@@ -56,6 +145,7 @@
   });
 
   scheduleAntiFlashStyleInstall();
+  scheduleUpdateButtonInstall();
   window.__figmaZhLocalizer = localizer;
   window.__figmaZhScanUntranslated = (options) => localizer.scanUntranslated(options);
 

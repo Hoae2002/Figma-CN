@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const { app, autoUpdater, dialog, Menu } = require("electron");
+  const { app, autoUpdater, dialog, ipcMain, Menu } = require("electron");
   const fs = require("fs");
   const https = require("https");
   const path = require("path");
@@ -166,6 +166,8 @@
     return !!(config && Array.isArray(config.enabledFeatures) && config.enabledFeatures.includes(featureId));
   }
 
+  global.__FIGBOOST_FEATURE_ENABLED__ = (featureId) => isFeatureEnabled(readFeatureConfig(), featureId);
+
   function getText(url) {
     return new Promise((resolve, reject) => {
       const request = https.get(url, { timeout: 20000 }, (response) => {
@@ -288,30 +290,54 @@
     }
   }
 
-  function scheduleOfficialUpdateCheck(delayMs) {
-    setTimeout(checkOfficialUpdateOnStartup, delayMs).unref();
-  }
-
-  async function checkOfficialUpdateOnStartup() {
+  async function checkOfficialUpdateManually() {
     const now = Date.now();
-    if (global.__FIGMA_ZH_OFFICIAL_UPDATE_CHECKING__) return;
-    if (global.__FIGMA_ZH_OFFICIAL_UPDATE_LAST_CHECK__ && now - global.__FIGMA_ZH_OFFICIAL_UPDATE_LAST_CHECK__ < 5000) return;
+    if (global.__FIGMA_ZH_OFFICIAL_UPDATE_CHECKING__) {
+      await dialog.showMessageBox({
+        type: "info",
+        title: "正在检查更新",
+        message: "正在检查 Figma 官方新版，请稍候。"
+      });
+      return { checking: true };
+    }
+    if (global.__FIGMA_ZH_OFFICIAL_UPDATE_LAST_CHECK__ && now - global.__FIGMA_ZH_OFFICIAL_UPDATE_LAST_CHECK__ < 1500) return { skipped: true };
     global.__FIGMA_ZH_OFFICIAL_UPDATE_CHECKING__ = true;
     global.__FIGMA_ZH_OFFICIAL_UPDATE_LAST_CHECK__ = now;
     const config = readFeatureConfig();
     try {
-      if (!isFeatureEnabled(config, "auto-check-official-latest")) return;
+      if (!isFeatureEnabled(config, "auto-check-official-latest")) return { disabled: true };
       const patcherPath = config && config.patcherPath;
       const runtimeDir = config && config.runtimeDir;
-      if (!patcherPath || !runtimeDir || !fs.existsSync(patcherPath)) return;
+      if (!patcherPath || !runtimeDir || !fs.existsSync(patcherPath)) {
+        await dialog.showMessageBox({
+          type: "error",
+          title: "检查更新失败",
+          message: "找不到 FigBoost 更新程序",
+          detail: "请重新打开 FigBoost，确认补丁文件保存目录后再安装附加功能。"
+        });
+        return { ok: false };
+      }
       let latestVersion;
       try {
         latestVersion = await getOfficialLatestVersion();
-      } catch (_) {
-        return;
+      } catch (error) {
+        await dialog.showMessageBox({
+          type: "error",
+          title: "检查更新失败",
+          message: "无法获取 Figma 官方最新版",
+          detail: error && error.message ? error.message : String(error)
+        });
+        return { ok: false };
       }
       const currentVersion = app.getVersion();
-      if (compareVersions(currentVersion, latestVersion) >= 0) return;
+      if (compareVersions(currentVersion, latestVersion) >= 0) {
+        await dialog.showMessageBox({
+          type: "info",
+          title: "当前已是官方最新版",
+          message: `当前 Figma 版本 ${currentVersion} 已是官方最新版。`
+        });
+        return { latest: true };
+      }
       const result = await dialog.showMessageBox({
         type: "question",
         buttons: ["更新", "稍后"],
@@ -321,7 +347,7 @@
         message: `检测到官方最新版 Figma ${latestVersion}`,
         detail: `当前版本是 ${currentVersion}。\n\n点击“更新”会关闭 Figma，下载并安装官方最新版，更新完成后会自动安装汉化补丁。`
       });
-      if (result.response !== 0) return;
+      if (result.response !== 0) return { declined: true };
       try {
         const child = spawn(patcherPath, ["-UpdateFigma", "-ShowProgress", "-RuntimeDir", runtimeDir, "-ForceClose"], {
           detached: true,
@@ -335,10 +361,18 @@
           message: "无法启动补丁更新程序",
           detail: error && error.message ? error.message : String(error)
         }).catch(() => {});
+        return { ok: false };
       }
+      return { updateStarted: true };
     } finally {
       global.__FIGMA_ZH_OFFICIAL_UPDATE_CHECKING__ = false;
     }
+  }
+
+  function registerManualOfficialUpdateCheck() {
+    if (!ipcMain || global.__FIGBOOST_UPDATE_IPC_REGISTERED__) return;
+    global.__FIGBOOST_UPDATE_IPC_REGISTERED__ = true;
+    ipcMain.handle("figboost:check-official-update", () => checkOfficialUpdateManually());
   }
 
   if (!global.__FIGMA_ZH_MENU_LOCALIZER__) {
@@ -356,11 +390,9 @@
     hookDialogMethod("showMessageBox");
     hookDialogMethod("showMessageBoxSync");
     hookBuiltInUpdateChecks();
+    registerManualOfficialUpdateCheck();
     app.whenReady().then(scheduleLocalize).catch(() => {});
-    app.whenReady().then(() => scheduleOfficialUpdateCheck(1500)).catch(() => {});
-    app.on("second-instance", () => scheduleOfficialUpdateCheck(800));
     app.on("browser-window-created", scheduleLocalize);
-    app.on("browser-window-created", () => scheduleOfficialUpdateCheck(1500));
     app.on("browser-window-focus", scheduleLocalize);
     setInterval(localizeMenu, 5000).unref();
   }

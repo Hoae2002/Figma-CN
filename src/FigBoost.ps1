@@ -22,7 +22,7 @@ if ($args -contains "-UpdateFigma" -or $args -contains "/UpdateFigma") { $Update
 if ($args -contains "-ShowProgress" -or $args -contains "/ShowProgress") { $ShowProgress = $true }
 if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClose = $true }
 
-$PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V4"
+$PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V5"
 $UpdaterDisableMarker = "FIGMA_ZH_DISABLE_BUILTIN_UPDATER"
 $PatcherVersion = "0.3.4"
 $PayloadFile = "i.js"
@@ -398,7 +398,7 @@ function Build-MainHook {
   $marker = ConvertTo-JsString $PatchMarker
   $payload = ConvertTo-JsString $payloadPath
   $mainPayload = ConvertTo-JsString $mainPayloadPath
-  return ";(()=>{const M=$marker;try{const E=require(""electron""),F=require(""fs""),R=require(""path""),P=$payload,Q=$mainPayload;try{global.__FIGMA_ZH_RUNTIME_DIR__=R.dirname(Q);F.existsSync(Q)&&eval(F.readFileSync(Q,""utf8""))}catch(e){}let C;function p(){return C||(C=F.readFileSync(P,""utf8""))}function j(w){if(!w||w._fz)return;w._fz=1;const r=()=>{try{let u=w.getURL();/^https:\/\/([^\/]+\.)?figma\.com/i.test(u)&&w.executeJavaScript(p(),true).catch(()=>{})}catch(e){}};w.on(""dom-ready"",r);w.on(""did-finish-load"",r)}E.app.on(""web-contents-created"",(_,w)=>j(w));E.webContents.getAllWebContents().forEach(j)}catch(e){}})();"
+  return ";(()=>{const M=$marker;try{const E=require(""electron""),F=require(""fs""),R=require(""path""),P=$payload,Q=$mainPayload;try{global.__FIGMA_ZH_RUNTIME_DIR__=R.dirname(Q);F.existsSync(Q)&&eval(F.readFileSync(Q,""utf8""))}catch(e){}let C;function p(){return C||(C=F.readFileSync(P,""utf8""))}function b(){try{if(!global.__FIGBOOST_FEATURE_ENABLED__||!global.__FIGBOOST_FEATURE_ENABLED__(""auto-check-official-latest""))return"""";return ""(()=>{try{const{ipcRenderer}=require('electron');if(ipcRenderer&&!window.__FIGBOOST_CHECK_OFFICIAL_UPDATE__)Object.defineProperty(window,'__FIGBOOST_CHECK_OFFICIAL_UPDATE__',{value:()=>ipcRenderer.invoke('figboost:check-official-update')})}catch(e){}})();""}catch(e){return""""}}function j(w){if(!w||w._fz)return;w._fz=1;const r=()=>{try{let u=w.getURL();/^https:\/\/([^\/]+\.)?figma\.com/i.test(u)&&w.executeJavaScript(b()+p(),true).catch(()=>{})}catch(e){}};w.on(""dom-ready"",r);w.on(""did-finish-load"",r)}E.app.on(""web-contents-created"",(_,w)=>j(w));E.webContents.getAllWebContents().forEach(j)}catch(e){}})();"
 }
 
 function Disable-BuiltInUpdaterInMain {
@@ -918,7 +918,7 @@ function Repair-FigmaShortcuts {
 
 function New-FakeAsar {
   param([string]$AsarPath)
-  $mainText = 'console.log("汉化补丁");function fakeUpdaterGuard(){console.log("Updater not enabled. Reason: test");return true}function nextFakeUpdaterBlock(){return true}' + "`n" + $LicenseCommentTarget + " test license block with enough room for the hook " + ("x" * 1200)
+  $mainText = 'console.log("汉化补丁");function fakeUpdaterGuard(){console.log("Updater not enabled. Reason: test");return true}function nextFakeUpdaterBlock(){return true}' + "`n" + $LicenseCommentTarget + " test license block with enough room for the hook " + ("x" * 2200)
   $mainBytes = [System.Text.Encoding]::UTF8.GetBytes($mainText)
   $hash = Get-Sha256Hex $mainBytes
   $headerText = (@{
@@ -1086,11 +1086,16 @@ function Invoke-SelfTest {
     $featureConfigPath = Get-FeatureConfigPath $fakeRuntime
     if (-not (Test-Path -LiteralPath $featureConfigPath)) { throw "Self-test feature config was not written." }
     $runtimeMainSource = [System.IO.File]::ReadAllText((Join-Path $fakeRuntime "m.js"), [System.Text.Encoding]::UTF8)
+    $runtimeContentSource = [System.IO.File]::ReadAllText((Join-Path $fakeRuntime "i.js"), [System.Text.Encoding]::UTF8)
     if ($runtimeMainSource.Contains("__FIGMA_ZH_OFFICIAL_UPDATE_CHECKED__")) { throw "Self-test runtime still uses one-shot update check." }
-    if (-not $runtimeMainSource.Contains('"second-instance"')) { throw "Self-test runtime does not check updates on second instance." }
+    if ($runtimeMainSource.Contains("scheduleOfficial" + "UpdateCheck")) { throw "Self-test runtime still schedules automatic update checks." }
+    if ($runtimeMainSource.Contains('"second-instance"')) { throw "Self-test runtime still checks updates on second instance." }
+    if (-not $runtimeMainSource.Contains("figboost:check-official-update")) { throw "Self-test runtime does not register manual update IPC." }
     if (-not $runtimeMainSource.Contains("autoUpdater")) { throw "Self-test runtime does not guard built-in updater." }
     if (-not $runtimeMainSource.Contains("shouldSuppressBuiltInUpdateCheck")) { throw "Self-test runtime does not include downgrade suppression." }
     if (-not $runtimeMainSource.Contains('"-ShowProgress"')) { throw "Self-test runtime update launch does not request progress UI." }
+    if (-not $runtimeContentSource.Contains("检查更新")) { throw "Self-test content payload does not include update button text." }
+    if (-not $runtimeContentSource.Contains("__FIGBOOST_CHECK_OFFICIAL_UPDATE__")) { throw "Self-test content payload does not call the update bridge." }
     $uninstallStatus = Uninstall-Patch $fakeAppDir $fakeRuntime -SkipProcessCheck
     if ($uninstallStatus.Patched) { throw "Self-test uninstall did not restore the original app.asar." }
     Write-Host "Self-test passed."
@@ -1537,9 +1542,9 @@ function Show-Gui {
   $featureDefinitions = @(
     [pscustomobject]@{
       Id = "auto-check-official-latest"
-      Title = "启动时检查 Figma 官方新版"
-      Description = "打开 Figma 时检查官方新版；发现新版后询问是否更新；更新后重新安装汉化补丁。"
-      ProgressText = "正在安装自动检查功能..."
+      Title = "在 Figma 顶部显示更新按钮"
+      Description = "在 Figma 界面顶部显示《检查更新》按钮；点击后检查官方最新版，发现新版后询问是否更新。"
+      ProgressText = "正在安装更新按钮功能..."
       FailurePrefix = "附加功能安装失败"
       Action = {
         Set-ProgressState 35 "正在写入功能配置..."
@@ -1552,7 +1557,7 @@ function Show-Gui {
       IsInstalled = { Test-FeatureInstalled $txtRuntime.Text "auto-check-official-latest" }
       SuccessMessage = {
         param($result)
-        return "附加功能已安装。`r`n`r`n之后打开 Figma 时，会检查是否有官方新版；发现新版后会先询问再更新。`r`n补丁状态：$(if ($result.Patched) { "已安装" } else { "未安装" })"
+        return "附加功能已安装。`r`n`r`n之后打开 Figma 时，顶部会显示《检查更新》按钮；点击后会检查官方最新版，发现新版后会先询问再更新。`r`n补丁状态：$(if ($result.Patched) { "已安装" } else { "未安装" })"
       }
       UninstallProgressText = "正在卸载附加功能..."
       UninstallFailurePrefix = "附加功能卸载失败"
@@ -1566,7 +1571,7 @@ function Show-Gui {
       UninstallSuccessMessage = {
         param($result)
         $patchState = if ($result) { "`r`n补丁状态：$(if ($result.Patched) { "已安装" } else { "未安装" })" } else { "" }
-        return "附加功能已卸载。`r`n`r`n之后打开 Figma 时不再检查官方新版；汉化补丁不受影响。$patchState"
+        return "附加功能已卸载。`r`n`r`n之后打开 Figma 时不再显示《检查更新》按钮；汉化补丁不受影响。$patchState"
       }
     }
   )
