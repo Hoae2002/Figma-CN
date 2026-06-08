@@ -51,6 +51,16 @@
     return Boolean(window.__FIGBOOST_UPDATE_BUTTON_ENABLED__ || getFigBoostUpdateBridge() || window.__FIGMA_ZH_TEST_UPDATE_BUTTON__);
   }
 
+  const FIGBOOST_MENU_ITEMS = [
+    {
+      id: "check-official-update",
+      label: "检查更新",
+      busyLabel: "检查中...",
+      title: "检查 Figma 官方新版",
+      run: runOfficialUpdateCheck
+    }
+  ];
+
   function findTopBarHost() {
     const selectors = [
       "[class*='top_bar']",
@@ -67,65 +77,136 @@
     return null;
   }
 
-  function installUpdateButtonStyle() {
-    if (document.getElementById("figboost-update-button-style")) return true;
+  function installFigBoostMenuStyle() {
+    if (document.getElementById("figboost-menu-style")) return true;
     if (!document.head) return false;
     const style = document.createElement("style");
-    style.id = "figboost-update-button-style";
+    style.id = "figboost-menu-style";
     style.textContent = [
-      ".figboost-update-button{box-sizing:border-box;height:24px;padding:0 10px;border:1px solid rgba(24,119,242,.35);border-radius:4px;background:rgba(255,255,255,.94);color:#185abd;font:12px/22px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;white-space:nowrap;cursor:pointer;box-shadow:0 1px 2px rgba(15,23,42,.08);}",
-      ".figboost-update-button:hover{background:#f7fbff;border-color:rgba(24,119,242,.65);}",
-      ".figboost-update-button:disabled{cursor:default;opacity:.68;}",
-      ".figboost-update-button-wrap{z-index:2147483000;pointer-events:auto;}",
-      ".figboost-update-button-wrap[data-placement='host']{position:absolute;right:104px;top:50%;transform:translateY(-50%);}",
-      ".figboost-update-button-wrap[data-placement='fixed']{position:fixed;right:118px;top:8px;}"
+      ".figboost-menu-wrap{z-index:2147483000;pointer-events:auto;font:12px/16px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#222;}",
+      ".figboost-menu-wrap[data-placement='host']{position:absolute;right:104px;top:50%;transform:translateY(-50%);}",
+      ".figboost-menu-wrap[data-placement='fixed']{position:fixed;right:118px;top:7px;}",
+      ".figboost-menu-button{box-sizing:border-box;width:28px;height:28px;margin:0;padding:0;border:0;border-radius:6px;background:transparent;color:#333;display:flex;align-items:center;justify-content:center;cursor:pointer;}",
+      ".figboost-menu-button:hover,.figboost-menu-button[aria-expanded='true']{background:rgba(0,0,0,.06);}",
+      ".figboost-menu-button:active{background:rgba(0,0,0,.1);}",
+      ".figboost-menu-button:disabled{cursor:default;opacity:.55;}",
+      ".figboost-menu-button svg{width:16px;height:16px;display:block;stroke:currentColor;}",
+      ".figboost-menu-panel{box-sizing:border-box;position:absolute;top:34px;right:0;min-width:148px;padding:6px 0;border:1px solid rgba(0,0,0,.12);border-radius:6px;background:#fff;box-shadow:0 8px 24px rgba(0,0,0,.14);}",
+      ".figboost-menu-panel[hidden]{display:none;}",
+      ".figboost-menu-item{box-sizing:border-box;width:100%;min-height:28px;padding:6px 12px;border:0;background:transparent;color:#222;text-align:left;font:12px/16px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;white-space:nowrap;cursor:pointer;}",
+      ".figboost-menu-item:hover,.figboost-menu-item:focus{background:rgba(0,0,0,.06);outline:0;}",
+      ".figboost-menu-item:disabled{cursor:default;opacity:.55;background:transparent;}"
     ].join("");
     document.head.appendChild(style);
     return true;
   }
 
+  async function runOfficialUpdateCheck() {
+    const bridge = getFigBoostUpdateBridge();
+    if (bridge) {
+      await bridge();
+      return;
+    }
+
+    await new Promise((resolve) => {
+      const done = () => {
+        window.removeEventListener("figboost:update-check-finished", done);
+        resolve();
+      };
+      window.addEventListener("figboost:update-check-finished", done, { once: true });
+      window.location.href = `figboost://check-official-update?ts=${Date.now()}`;
+      setTimeout(done, 45000);
+    });
+  }
+
+  function closeFigBoostMenu(wrap) {
+    const panel = wrap.querySelector(".figboost-menu-panel");
+    const button = wrap.querySelector(".figboost-menu-button");
+    if (!panel || !button) return;
+    panel.hidden = true;
+    button.setAttribute("aria-expanded", "false");
+  }
+
+  function toggleFigBoostMenu(wrap) {
+    const panel = wrap.querySelector(".figboost-menu-panel");
+    const button = wrap.querySelector(".figboost-menu-button");
+    if (!panel || !button) return;
+    const nextHidden = !panel.hidden;
+    panel.hidden = nextHidden;
+    button.setAttribute("aria-expanded", nextHidden ? "false" : "true");
+  }
+
+  function ensureFigBoostMenuDismissHandlers() {
+    if (window.__FIGBOOST_MENU_DISMISS_HANDLERS__) return;
+    window.__FIGBOOST_MENU_DISMISS_HANDLERS__ = true;
+    document.addEventListener("pointerdown", (event) => {
+      const current = document.getElementById("figboost-menu");
+      if (current && !current.contains(event.target)) closeFigBoostMenu(current);
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      const current = document.getElementById("figboost-menu");
+      if (current) closeFigBoostMenu(current);
+    });
+  }
+
   function installUpdateButton() {
-    if (!isFigBoostUpdateButtonEnabled() || document.getElementById("figboost-update-button")) return;
-    if (!document.body || !installUpdateButtonStyle()) return;
+    if (!isFigBoostUpdateButtonEnabled() || document.getElementById("figboost-menu")) return;
+    if (!document.body || !installFigBoostMenuStyle()) return;
 
     const host = findTopBarHost();
     const wrap = document.createElement("div");
-    wrap.className = "figboost-update-button-wrap";
+    wrap.id = "figboost-menu";
+    wrap.className = "figboost-menu-wrap";
     wrap.dataset.placement = host ? "host" : "fixed";
+
     const button = document.createElement("button");
-    button.id = "figboost-update-button";
-    button.className = "figboost-update-button";
+    button.id = "figboost-menu-button";
+    button.className = "figboost-menu-button";
     button.type = "button";
-    button.textContent = "检查更新";
-    button.title = "检查 Figma 官方新版";
-    button.addEventListener("click", async () => {
-      if (button.disabled) return;
-      const bridge = getFigBoostUpdateBridge();
-      const oldText = button.textContent;
-      button.disabled = true;
-      button.textContent = "检查中...";
-      try {
-        if (bridge) {
-          await bridge();
-        } else {
-          await new Promise((resolve) => {
-            const done = () => {
-              window.removeEventListener("figboost:update-check-finished", done);
-              resolve();
-            };
-            window.addEventListener("figboost:update-check-finished", done, { once: true });
-            window.location.href = `figboost://check-official-update?ts=${Date.now()}`;
-            setTimeout(done, 45000);
-          });
-        }
-      } catch (error) {
-        window.alert(`检查更新失败：${error && error.message ? error.message : String(error)}`);
-      } finally {
-        button.textContent = oldText;
-        button.disabled = false;
-      }
+    button.title = "FigBoost";
+    button.setAttribute("aria-label", "FigBoost");
+    button.setAttribute("aria-haspopup", "menu");
+    button.setAttribute("aria-expanded", "false");
+    button.innerHTML = '<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4.5 2.5h7M4.5 8h5.8M4.5 13.5V2.5" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    button.addEventListener("click", () => {
+      toggleFigBoostMenu(wrap);
     });
+
+    const panel = document.createElement("div");
+    panel.className = "figboost-menu-panel";
+    panel.hidden = true;
+    panel.setAttribute("role", "menu");
+    panel.setAttribute("aria-label", "FigBoost");
+    for (const item of FIGBOOST_MENU_ITEMS) {
+      const menuItem = document.createElement("button");
+      menuItem.className = "figboost-menu-item";
+      menuItem.dataset.figboostMenuItem = item.id;
+      menuItem.type = "button";
+      menuItem.textContent = item.label;
+      menuItem.title = item.title;
+      menuItem.setAttribute("role", "menuitem");
+      menuItem.addEventListener("click", async () => {
+        if (menuItem.disabled) return;
+        const oldText = menuItem.textContent;
+        menuItem.disabled = true;
+        menuItem.textContent = item.busyLabel;
+        closeFigBoostMenu(wrap);
+        try {
+          await item.run();
+        } catch (error) {
+          window.alert(`${item.label}失败：${error && error.message ? error.message : String(error)}`);
+        } finally {
+          menuItem.textContent = oldText;
+          menuItem.disabled = false;
+        }
+      });
+      panel.appendChild(menuItem);
+    }
+
     wrap.appendChild(button);
+    wrap.appendChild(panel);
+    ensureFigBoostMenuDismissHandlers();
 
     if (host) {
       const position = window.getComputedStyle(host).position;

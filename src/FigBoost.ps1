@@ -1253,7 +1253,9 @@ function Invoke-SelfTest {
     if (-not $runtimeMainSource.Contains("autoUpdater")) { throw "Self-test runtime does not guard built-in updater." }
     if (-not $runtimeMainSource.Contains("shouldSuppressBuiltInUpdateCheck")) { throw "Self-test runtime does not include downgrade suppression." }
     if (-not $runtimeMainSource.Contains('"-ShowProgress"')) { throw "Self-test runtime update launch does not request progress UI." }
-    if (-not $runtimeContentSource.Contains("检查更新")) { throw "Self-test content payload does not include update button text." }
+    if (-not $runtimeContentSource.Contains("检查更新")) { throw "Self-test content payload does not include update menu item text." }
+    if (-not $runtimeContentSource.Contains("figboost-menu-button")) { throw "Self-test content payload does not include FigBoost menu button." }
+    if (-not $runtimeContentSource.Contains("figboost-menu-item")) { throw "Self-test content payload does not include FigBoost menu item." }
     if (-not $runtimeContentSource.Contains("__FIGBOOST_CHECK_OFFICIAL_UPDATE__")) { throw "Self-test content payload does not call the update bridge." }
     if (-not $runtimeContentSource.Contains("figboost://check-official-update")) { throw "Self-test content payload does not include update fallback navigation." }
     $uninstallStatus = Uninstall-Patch $fakeAppDir $fakeRuntime -SkipProcessCheck
@@ -1702,9 +1704,9 @@ function Show-Gui {
   $featureDefinitions = @(
     [pscustomobject]@{
       Id = "auto-check-official-latest"
-      Title = "在 Figma 顶部显示更新按钮"
-      Description = "在 Figma 界面顶部显示《检查更新》按钮；点击后检查官方最新版，发现新版后询问是否更新。"
-      ProgressText = "正在安装更新按钮功能..."
+      Title = "在 Figma 顶部显示 FigBoost 菜单"
+      Description = "在 Figma 界面顶部显示 FigBoost 入口；菜单中可检查官方最新版，发现新版后询问是否更新。"
+      ProgressText = "正在安装 FigBoost 菜单功能..."
       FailurePrefix = "附加功能安装失败"
       Action = {
         Set-ProgressState 35 "正在写入功能配置..."
@@ -1717,7 +1719,7 @@ function Show-Gui {
       IsInstalled = { Test-FeatureInstalled $txtRuntime.Text "auto-check-official-latest" }
       SuccessMessage = {
         param($result)
-        return "附加功能已安装。`r`n`r`n之后打开 Figma 时，顶部会显示《检查更新》按钮；点击后会检查官方最新版，发现新版后会先询问再更新。`r`n补丁状态：$(if ($result.Patched) { "已安装" } else { "未安装" })"
+        return "附加功能已安装。`r`n`r`n之后打开 Figma 时，顶部会显示 FigBoost 入口；打开菜单即可检查官方最新版，发现新版后会先询问再更新。`r`n补丁状态：$(if ($result.Patched) { "已安装" } else { "未安装" })"
       }
       UninstallProgressText = "正在卸载附加功能..."
       UninstallFailurePrefix = "附加功能卸载失败"
