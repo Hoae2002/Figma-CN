@@ -1734,7 +1734,7 @@ function Show-Gui {
       UninstallSuccessMessage = {
         param($result)
         $patchState = if ($result) { "`r`n补丁状态：$(if ($result.Patched) { "已安装" } else { "未安装" })" } else { "" }
-        return "附加功能已卸载。`r`n`r`n之后打开 Figma 时不再显示《检查更新》按钮；汉化补丁不受影响。$patchState"
+        return "附加功能已卸载。`r`n`r`n之后打开 Figma 时不再显示 FigBoost 入口；汉化补丁不受影响。$patchState"
       }
     }
   )
