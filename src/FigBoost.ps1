@@ -99,6 +99,53 @@ function Find-LatestFigmaAppDir {
   return $items[0].FullName
 }
 
+function Test-OfficialFigmaAppDir {
+  param([string]$AppDir)
+  if (-not $AppDir) { return $false }
+  try {
+    $resolvedAppDir = (Resolve-Path -LiteralPath $AppDir).Path
+    $figmaRoot = Join-Path $env:LOCALAPPDATA "Figma"
+    if (-not (Test-Path -LiteralPath $figmaRoot)) { return $false }
+    $resolvedFigmaRoot = (Resolve-Path -LiteralPath $figmaRoot).Path
+    return (
+      ((Split-Path -Parent $resolvedAppDir) -ieq $resolvedFigmaRoot) -and
+      ((Split-Path -Leaf $resolvedAppDir) -match '^app-\d+\.\d+\.\d+')
+    )
+  } catch {
+    return $false
+  }
+}
+
+function Find-FigmaAppDirAtLeastVersion {
+  param([string]$Version)
+  $figmaRoot = Join-Path $env:LOCALAPPDATA "Figma"
+  if (-not (Test-Path -LiteralPath $figmaRoot)) {
+    throw "Figma directory not found: $figmaRoot"
+  }
+
+  $items = Get-ChildItem -LiteralPath $figmaRoot -Directory |
+    Where-Object {
+      (Get-SemverParts $_.Name) -and
+      (Test-FigmaAppDir $_.FullName) -and
+      ((Compare-VersionString (Get-FigmaVersionFromAppDir $_.FullName) $Version) -ge 0)
+    } |
+    Sort-Object @{
+      Expression = { (Get-SemverParts (Get-FigmaVersionFromAppDir $_.FullName))[0] }
+      Descending = $true
+    }, @{
+      Expression = { (Get-SemverParts (Get-FigmaVersionFromAppDir $_.FullName))[1] }
+      Descending = $true
+    }, @{
+      Expression = { (Get-SemverParts (Get-FigmaVersionFromAppDir $_.FullName))[2] }
+      Descending = $true
+    }
+
+  if (-not $items -or $items.Count -eq 0) {
+    throw "Cannot find updated Figma app directory for version $Version in: $figmaRoot"
+  }
+  return $items[0].FullName
+}
+
 function Test-FigmaAppDir {
   param([string]$Path)
   if (-not $Path) { return $false }
@@ -583,6 +630,48 @@ function Move-FigmaAppDir {
   return [pscustomobject]@{ AppDir = $selected; Migrated = $true; SourceAppDir = $source }
 }
 
+function Sync-FigmaAppDir {
+  param([string]$SourceAppDir, [string]$DestinationDir)
+  if (-not $SourceAppDir) { throw "未找到更新后的 Figma 客户端目录。" }
+  if (-not $DestinationDir) { throw "未找到要覆盖的 Figma 客户端目录。" }
+  $source = (Resolve-Path -LiteralPath $SourceAppDir).Path
+  $destination = (Resolve-Path -LiteralPath $DestinationDir).Path
+  if (-not (Test-FigmaAppDir $source)) {
+    throw "源目录不是有效的 Figma app-* 目录：$source"
+  }
+  if (-not (Test-FigmaAppDir $destination)) {
+    throw "目标目录不是有效的 Figma 客户端目录：$destination"
+  }
+  $comparison = [StringComparison]::OrdinalIgnoreCase
+  if ($destination.Equals($source, $comparison)) {
+    return $destination
+  }
+  if ($destination.StartsWith($source.TrimEnd('\') + "\", $comparison)) {
+    throw "目标目录不能位于源客户端目录内部：$destination"
+  }
+  if ($source.StartsWith($destination.TrimEnd('\') + "\", $comparison)) {
+    throw "源目录不能位于目标客户端目录内部：$source"
+  }
+
+  Get-ChildItem -LiteralPath $destination -Force | Remove-Item -Recurse -Force
+  Get-ChildItem -LiteralPath $source -Force | Copy-Item -Destination $destination -Recurse -Force
+  if (-not (Test-FigmaAppDir $destination)) {
+    throw "覆盖完成后目标目录仍不是有效的 Figma 客户端目录：$destination"
+  }
+  return $destination
+}
+
+function Select-UpdatedFigmaAppDir {
+  param([string]$RuntimeDir, [string]$ReleaseVersion)
+  $preferred = Get-PreferredAppDir $RuntimeDir
+  $updatedOfficialAppDir = Find-FigmaAppDirAtLeastVersion $ReleaseVersion
+  if ($preferred -and (-not (Test-OfficialFigmaAppDir $preferred))) {
+    $syncedAppDir = Sync-FigmaAppDir $updatedOfficialAppDir $preferred
+    return Set-PreferredAppDir $RuntimeDir $syncedAppDir
+  }
+  return Set-PreferredAppDir $RuntimeDir $updatedOfficialAppDir
+}
+
 function Repair-FeatureConfigEncoding {
   param([string]$RuntimeDir)
   $path = Get-FeatureConfigPath $RuntimeDir
@@ -816,7 +905,9 @@ function Update-FigmaOfficial {
 
   if ($Progress) { & $Progress 78 "正在检测更新后的客户端版本..." }
   Start-Sleep -Seconds 3
-  $target = Resolve-Target (Resolve-ManagedFigmaAppDir $SelectedRuntimeDir)
+  if ($Progress) { & $Progress 82 "正在应用更新后的客户端目录..." }
+  $targetAppDir = Select-UpdatedFigmaAppDir $SelectedRuntimeDir $release.Version
+  $target = Resolve-Target $targetAppDir
   if ((Compare-VersionString $target.FigmaVersion $release.Version) -lt 0) {
     throw "Figma update did not reach official version $($release.Version). Current version: $($target.FigmaVersion)."
   }
@@ -1092,6 +1183,40 @@ function Invoke-SelfTest {
     if (-not (Test-Path -LiteralPath $shortcutPath)) { throw "Self-test feature uninstall shortcut repair deleted shortcut." }
     $uninstalledFeatureShortcut = $shell.CreateShortcut($shortcutPath)
     if ($uninstalledFeatureShortcut.TargetPath -ne (Join-Path $fakePreferredAppDir "Figma.exe")) { throw "Self-test feature uninstall changed shortcut away from preferred app dir." }
+    $officialUpdateAppDir = Join-Path $fakeFigmaRoot "app-11.0.0"
+    New-Item -ItemType Directory -Force -Path (Join-Path $officialUpdateAppDir "resources") | Out-Null
+    New-Item -ItemType File -Force -Path (Join-Path $officialUpdateAppDir "Figma.exe") | Out-Null
+    New-FakeAsar (Join-Path $officialUpdateAppDir "resources\app.asar")
+    $env:LOCALAPPDATA = $fakeLocalAppData
+    Set-PreferredAppDir $fakeRuntime $validOlderAppDir | Out-Null
+    $selectedOfficialUpdate = Select-UpdatedFigmaAppDir $fakeRuntime "11.0.0"
+    if ($selectedOfficialUpdate -ne $officialUpdateAppDir) { throw "Self-test official update did not select the updated app dir." }
+    if ((Get-PreferredAppDir $fakeRuntime) -ne $officialUpdateAppDir) { throw "Self-test official update did not save the updated app dir." }
+    $managedUpdateSourceDir = Join-Path $fakeFigmaRoot "app-12.0.0"
+    $managedUpdateTargetDir = Join-Path $temp "managed-app-12.0.0"
+    New-Item -ItemType Directory -Force -Path (Join-Path $managedUpdateSourceDir "resources") | Out-Null
+    New-Item -ItemType File -Force -Path (Join-Path $managedUpdateSourceDir "Figma.exe") | Out-Null
+    New-FakeAsar (Join-Path $managedUpdateSourceDir "resources\app.asar")
+    New-Item -ItemType File -Force -Path (Join-Path $managedUpdateSourceDir "updated-client.txt") | Out-Null
+    New-Item -ItemType Directory -Force -Path (Join-Path $managedUpdateTargetDir "resources") | Out-Null
+    New-Item -ItemType File -Force -Path (Join-Path $managedUpdateTargetDir "Figma.exe") | Out-Null
+    New-FakeAsar (Join-Path $managedUpdateTargetDir "resources\app.asar")
+    New-Item -ItemType File -Force -Path (Join-Path $managedUpdateTargetDir "old-client.txt") | Out-Null
+    Set-PreferredAppDir $fakeRuntime $managedUpdateTargetDir | Out-Null
+    $selectedManagedUpdate = Select-UpdatedFigmaAppDir $fakeRuntime "12.0.0"
+    if ($selectedManagedUpdate -ne $managedUpdateTargetDir) { throw "Self-test managed update did not preserve the custom app dir." }
+    if ((Get-PreferredAppDir $fakeRuntime) -ne $managedUpdateTargetDir) { throw "Self-test managed update did not keep the custom app dir saved." }
+    if (-not (Test-Path -LiteralPath (Join-Path $managedUpdateTargetDir "updated-client.txt"))) { throw "Self-test managed update did not copy updated client files." }
+    if (Test-Path -LiteralPath (Join-Path $managedUpdateTargetDir "old-client.txt")) { throw "Self-test managed update did not overwrite old client files." }
+    $preferredBeforeFailedUpdate = Get-PreferredAppDir $fakeRuntime
+    $failedUpdatePreservedPreferred = $false
+    try {
+      Select-UpdatedFigmaAppDir $fakeRuntime "99.0.0" | Out-Null
+    } catch {
+      $failedUpdatePreservedPreferred = ((Get-PreferredAppDir $fakeRuntime) -eq $preferredBeforeFailedUpdate)
+    }
+    if (-not $failedUpdatePreservedPreferred) { throw "Self-test failed update changed preferred app dir." }
+    $env:LOCALAPPDATA = $originalLocalAppData
     if ((Get-FeatureInstallEmptySelectionMessage 1) -ne "所选功能已经安装，不需要重复安装。") { throw "Self-test installed feature prompt is incorrect." }
     if ((Get-FeatureInstallEmptySelectionMessage 0) -ne "请先勾选要安装的附加功能。") { throw "Self-test empty feature prompt is incorrect." }
     $featureUpgradeAppDir = Join-Path $temp "app-2.0.0"
