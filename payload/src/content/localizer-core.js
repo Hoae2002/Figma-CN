@@ -486,6 +486,7 @@
   }
 
   const FONT_STYLE_OPTION_TERMS = new Set([
+    "Default",
     "Thin",
     "ExtraLight",
     "Extra Light",
@@ -517,13 +518,20 @@
   ]);
 
   const TRANSLATED_FONT_STYLE_TERMS = new Map([
+    ["默认", "Default"],
     ["浅色", "Light"],
     ["正常", "Normal"],
     ["常规", "Regular"],
     ["中", "Medium"],
     ["中等", "Medium"],
-    ["加粗", "Bold"]
+    ["加粗", "Bold"],
+    ["斜体", "Italic"],
+    ["加粗/斜体", "Bold Italic"]
   ]);
+
+  function isFontStyleTermText(text) {
+    return FONT_STYLE_OPTION_TERMS.has(text) || TRANSLATED_FONT_STYLE_TERMS.has(text);
+  }
 
   const GRADIENT_TYPE_TERMS = new Map([
     ["Linear", "线性渐变"],
@@ -590,7 +598,7 @@
       const hasNearbyFontSize = /\b(?:[8-9]|[1-9]\d|1\d\d)\b/.test(nearby);
       const hasNearbyFontFamily = before.some((value) => (
         /[A-Za-z]/.test(value)
-        && !FONT_STYLE_OPTION_TERMS.has(value)
+        && !isFontStyleTermText(value)
         && !/(?:Typography|Letter spacing|Line height|Text align)/.test(value)
         && !/(?:排版|字距|行高|对齐方式)/.test(value)
         && !/\b(?:[8-9]|[1-9]\d|1\d\d)\b/.test(value)
@@ -657,13 +665,18 @@
       if (index < 0) index = siblings.indexOf(normalizeText(element.textContent));
       if (index < 0) continue;
 
-      const styleHits = siblings.filter((value) => FONT_STYLE_OPTION_TERMS.has(value)).length;
+      const styleHits = siblings.filter((value) => isFontStyleTermText(value)).length;
+      const hasDistinctFontStyleTerm = siblings.some((value) => (
+        /(?:Default|ExtraLight|Normal|Regular|Medium|Heavy|Semi Bold|SemiBold|Extra Bold|ExtraBold|Italic|Thin Italic|Variable font axes)/.test(value)
+        || TRANSLATED_FONT_STYLE_TERMS.has(value)
+      ));
       if (
         styleHits >= 5
-        && siblings.some((value) => /(?:ExtraLight|Normal|Regular|Medium|Heavy|Semi Bold|SemiBold|Extra Bold|ExtraBold|Thin Italic|Variable font axes)/.test(value))
+        && hasDistinctFontStyleTerm
       ) {
         return true;
       }
+      if (styleHits >= 2 && hasDistinctFontStyleTerm && hasMenuLikeControls(parent)) return true;
 
       if (normalizeText(element.textContent) !== styleText) break;
     }
