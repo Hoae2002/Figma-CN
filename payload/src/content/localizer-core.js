@@ -101,6 +101,7 @@
   const EDITABLE_VALUE_TIMER_KEY = "__figmaZhEditableValueTimer";
   const EDITABLE_VALUE_EVENT_KEY = "__figmaZhEditableValueEvents";
   const TRANSLATABLE_ATTRS = ["aria-label", "title", "placeholder"];
+  const FONT_STYLE_RESTORABLE_ATTRS = ["aria-label", "title", "data-value", "aria-valuetext"];
 
   function normalizeText(value) {
     return String(value || "").replace(/\s+/g, " ").trim();
@@ -464,6 +465,7 @@
   function shouldTranslateAttribute(element, name) {
     if (isLayerTreeContentElement(element)) return false;
     if (isUserNamedContentElement(element, element.getAttribute(name))) return false;
+    if (isFontStyleAttributeValue(element, element.getAttribute(name))) return false;
     if (name === "placeholder") return true;
     return !isIconOnlyControlElement(element);
   }
@@ -530,7 +532,20 @@
   ]);
 
   function isFontStyleTermText(text) {
-    return FONT_STYLE_OPTION_TERMS.has(text) || TRANSLATED_FONT_STYLE_TERMS.has(text);
+    return Boolean(getFontStyleSourceTerm(text));
+  }
+
+  function getFontStyleSourceTerm(text) {
+    const normalized = normalizeText(text).replace(/^[✓✔]\s*/, "");
+    if (FONT_STYLE_OPTION_TERMS.has(normalized)) return normalized;
+    return TRANSLATED_FONT_STYLE_TERMS.get(normalized) || "";
+  }
+
+  function preserveFontStyleMarker(original, translated) {
+    const marker = String(original || "").match(/^(\s*[✓✔]\s*)/);
+    if (!marker) return preserveOuterWhitespace(original, translated);
+    const suffix = String(original || "").match(/\s*$/)[0];
+    return `${marker[1]}${translated}${suffix}`;
   }
 
   const GRADIENT_TYPE_TERMS = new Map([
@@ -629,12 +644,30 @@
       if (!scopeText || scopeText.length > 1800) continue;
       if (!scopeText.includes(styleText)) continue;
       if (!/(?:Typography|Line height|Letter spacing|Text align|Font size|排版|行高|字距|对齐方式|字号|字重)/.test(scopeText)) continue;
-      if (/(?:Inter|PingFang|Newsreader|Roboto|Arial|Helvetica|SF Pro|Noto Sans|Source Han|MiSans|HarmonyOS|Microsoft YaHei|苹方|微软雅黑)/i.test(scopeText)) {
+      if (hasTypographyFontContext(scopeText, styleText)) {
         return true;
       }
     }
 
     return false;
+  }
+
+  function hasTypographyFontContext(scopeText, styleText) {
+    if (/(?:Inter|PingFang|Newsreader|Roboto|Arial|Helvetica|SF Pro|Noto Sans|Source Han|MiSans|HarmonyOS|Microsoft YaHei|苹方|微软雅黑)/i.test(scopeText)) {
+      return true;
+    }
+
+    const textWithoutStyle = normalizeText(scopeText.replace(styleText, " "));
+    const hasLikelyFontFamily = textWithoutStyle.split(/\s+/).some((token) => (
+      /^[A-Z][A-Za-z0-9 ._-]{2,63}$/.test(token)
+      && !isFontStyleTermText(token)
+      && !/^(?:Typography|Line|height|Letter|spacing|Text|align|Font|size|Auto|px)$/i.test(token)
+    ));
+    const hasTypographyShape = /(?:Typography|排版)/.test(scopeText)
+      && /(?:Line height|Letter spacing|Text align|行高|字距|对齐方式)/.test(scopeText)
+      && /\b(?:[8-9]|[1-9]\d|1\d\d)\b/.test(scopeText);
+
+    return hasLikelyFontFamily && hasTypographyShape;
   }
 
   function hasTypographyPanelContext(element, styleText) {
@@ -648,7 +681,7 @@
     if (!hasTypographyControls) return false;
 
     const hasFontSize = /\b(?:[8-9]|[1-9]\d|1\d\d)\b/.test(scopeText);
-    const hasFontFamily = /(?:Inter|PingFang|Newsreader|Roboto|Arial|Helvetica|SF Pro|Noto Sans|Source Han|MiSans|HarmonyOS|Microsoft YaHei|苹方|微软雅黑)/i.test(scopeText);
+    const hasFontFamily = hasTypographyFontContext(scopeText, styleText);
     const hasFontControlShape = hasFontSize || /(?:Line height|Letter spacing|行高|字距)/.test(scopeText);
 
     return hasFontControlShape && hasFontFamily;
@@ -666,6 +699,7 @@
       if (index < 0) continue;
 
       const styleHits = siblings.filter((value) => isFontStyleTermText(value)).length;
+      const hasVariableAction = siblings.some((value) => /(?:Apply variable|应用变量)/.test(value));
       const hasDistinctFontStyleTerm = siblings.some((value) => (
         /(?:Default|ExtraLight|Normal|Regular|Medium|Heavy|Semi Bold|SemiBold|Extra Bold|ExtraBold|Italic|Thin Italic|Variable font axes)/.test(value)
         || TRANSLATED_FONT_STYLE_TERMS.has(value)
@@ -677,6 +711,7 @@
         return true;
       }
       if (styleHits >= 2 && hasDistinctFontStyleTerm && hasMenuLikeControls(parent)) return true;
+      if (styleHits >= 1 && hasDistinctFontStyleTerm && hasVariableAction && hasMenuLikeControls(parent)) return true;
 
       if (normalizeText(element.textContent) !== styleText) break;
     }
@@ -684,21 +719,79 @@
     return false;
   }
 
+  function findNearbyFontStyleMenuContainer(startElement, styleText) {
+    const source = getFontStyleSourceTerm(styleText) || styleText;
+    let element = startElement;
+    for (let depth = 0; element && depth < 8; depth += 1, element = element.parentElement) {
+      if (!element.children) continue;
+
+      const scopeText = normalizeText(element.textContent);
+      if (!scopeText || scopeText.length > 1600) continue;
+      if (!scopeText.includes(styleText) && !scopeText.includes(source)) continue;
+
+      const itemTexts = Array.from(element.querySelectorAll("[role='option'],[role='menuitem'],button,[data-value]"))
+        .map((item) => normalizeText(item.textContent) || normalizeText(item.getAttribute("data-value")));
+      const directTexts = Array.from(element.children).map((item) => normalizeText(item.textContent));
+      const terms = [...itemTexts, ...directTexts].map((value) => getFontStyleSourceTerm(value)).filter(Boolean);
+      const uniqueTerms = new Set(terms);
+      const hasVariableAction = /(?:Apply variable|应用变量)/.test(scopeText);
+      if (uniqueTerms.size < 2 && !hasVariableAction) continue;
+      if (!uniqueTerms.has(source)) continue;
+
+      if (
+        element.matches("[role='menu'],[role='listbox'],[role='dialog'],[data-testid*='dropdown' i],[data-testid*='popover' i]")
+        || element.querySelector("[role='option'],[role='menuitem'],button,[data-value]")
+      ) {
+        return element;
+      }
+    }
+
+    return null;
+  }
+
   function isFontStyleControlTerm(node) {
     const text = normalizeText(node && node.nodeValue);
     if (!FONT_STYLE_OPTION_TERMS.has(text)) return false;
     if (hasNearbyFontStyleControlContext(node.parentElement, text)) return true;
     if (hasNearbyFontStyleMenuContext(node.parentElement, text)) return true;
+    if (findNearbyFontStyleMenuContainer(node.parentElement, text)) return true;
     return false;
   }
 
   function getTranslatedFontStyleSourceTerm(node) {
     const text = normalizeText(node && node.nodeValue);
-    const source = TRANSLATED_FONT_STYLE_TERMS.get(text);
+    const source = getFontStyleSourceTerm(text);
     if (!source) return "";
+    if (source === text) return "";
     if (hasNearbyFontStyleControlContext(node.parentElement, text)) return source;
     if (hasNearbyFontStyleMenuContext(node.parentElement, source)) return source;
+    if (findNearbyFontStyleMenuContainer(node.parentElement, text)) return source;
     return "";
+  }
+
+  function getTranslatedFontStyleAttributeSource(element, value) {
+    const text = normalizeText(value);
+    const source = TRANSLATED_FONT_STYLE_TERMS.get(text);
+    if (!source) return "";
+    if (hasNearbyFontStyleControlContext(element, text)) return source;
+    if (hasNearbyFontStyleMenuContext(element, source)) return source;
+    if (findNearbyFontStyleMenuContainer(element, text)) return source;
+    return "";
+  }
+
+  function isFontStyleAttributeValue(element, value) {
+    const source = getFontStyleSourceTerm(value);
+    if (!source) return false;
+    if (hasNearbyFontStyleControlContext(element, source)) return true;
+    if (hasNearbyFontStyleMenuContext(element, source)) return true;
+    if (findNearbyFontStyleMenuContainer(element, value)) return true;
+    return false;
+  }
+
+  function getFontStyleAttributeSelector() {
+    return Array.from(new Set([...TRANSLATABLE_ATTRS, ...FONT_STYLE_RESTORABLE_ATTRS]))
+      .map((name) => `[${name}]`)
+      .join(",");
   }
 
   function getGradientTypeTranslation(node) {
@@ -1083,8 +1176,27 @@
       );
     }
 
+    function restoreFontStyleAttributes(element) {
+      if (!element || element.nodeType !== Node.ELEMENT_NODE) return;
+      for (const name of FONT_STYLE_RESTORABLE_ATTRS) {
+        const current = element.getAttribute(name);
+        if (!current) continue;
+        const source = getTranslatedFontStyleAttributeSource(element, current);
+        if (!source || source === current) continue;
+
+        if (!element[ORIGINAL_ATTR_KEY]) element[ORIGINAL_ATTR_KEY] = {};
+        if (!element[TRANSLATED_ATTR_KEY]) element[TRANSLATED_ATTR_KEY] = {};
+        element[ORIGINAL_ATTR_KEY][name] = source;
+        element[TRANSLATED_ATTR_KEY][name] = source;
+        element.setAttribute(name, preserveFontStyleMarker(current, source));
+        markChangedElement(element);
+        stats.changedAttributes += 1;
+      }
+    }
+
     function translateAttributes(element) {
       if (!options.translateAttributes || !element || isAttributeSkippableElement(element)) return;
+      restoreFontStyleAttributes(element);
       for (const name of TRANSLATABLE_ATTRS) {
         if (!shouldTranslateAttribute(element, name)) continue;
         const current = element.getAttribute(name);
@@ -1180,7 +1292,7 @@
   function translateTextNode(node) {
     const fontStyleSource = getTranslatedFontStyleSourceTerm(node);
     if (fontStyleSource) {
-      node.nodeValue = preserveOuterWhitespace(node.nodeValue, fontStyleSource);
+      node.nodeValue = preserveFontStyleMarker(node.nodeValue, fontStyleSource);
       markChangedElement(node.parentElement);
       return;
     }
@@ -1242,7 +1354,7 @@
         node = walker.nextNode();
       }
 
-      const attrNodes = root.querySelectorAll("[aria-label], [title], [placeholder]");
+      const attrNodes = root.querySelectorAll(getFontStyleAttributeSelector());
       for (const element of attrNodes) translateAttributes(element);
     }
 
@@ -1312,7 +1424,7 @@
         node = job.walker.nextNode();
       }
 
-      if (!job.attrNodes) job.attrNodes = root.querySelectorAll("[aria-label], [title], [placeholder]");
+      if (!job.attrNodes) job.attrNodes = root.querySelectorAll(getFontStyleAttributeSelector());
       while (job.attrIndex < job.attrNodes.length) {
         translateAttributes(job.attrNodes[job.attrIndex]);
         job.attrIndex += 1;
@@ -1464,7 +1576,7 @@
         subtree: true,
         characterData: true,
         attributes: true,
-        attributeFilter: ["aria-label", "title", "placeholder"]
+        attributeFilter: Array.from(new Set([...TRANSLATABLE_ATTRS, ...FONT_STYLE_RESTORABLE_ATTRS]))
       });
       log("started");
     }
@@ -1582,7 +1694,7 @@
         }
 
         if (options.translateAttributes) {
-          const attrNodes = [root, ...root.querySelectorAll(TRANSLATABLE_ATTRS.map((name) => `[${name}]`).join(","))];
+          const attrNodes = [root, ...root.querySelectorAll(getFontStyleAttributeSelector())];
           for (const element of attrNodes) {
             if (isAttributeSkippableElement(element)) continue;
             for (const attr of TRANSLATABLE_ATTRS) {
