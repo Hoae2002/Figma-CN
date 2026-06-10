@@ -3,7 +3,8 @@
 
   const IS_TEST_PAGE = Boolean(window.__FIGMA_ZH_TEST__);
   const IS_FIGMA_PAGE = /(^|\.)figma\.com$/.test(location.hostname);
-  if (!IS_TEST_PAGE && !IS_FIGMA_PAGE) return;
+  const IS_TITLEBAR_PAGE = Boolean(window.__FIGBOOST_TITLEBAR_BUTTON_ENABLED__);
+  if (!IS_TEST_PAGE && !IS_FIGMA_PAGE && !IS_TITLEBAR_PAGE) return;
 
   const DEFAULT_SETTINGS = {
     enabled: true,
@@ -62,26 +63,18 @@
   ];
 
   function findTopBarHost() {
-    const selectorGroups = [
-      [
-        "[class*='tab_bar']",
-        "[class*='tabbar']",
-        "[role='tablist']"
-      ],
-      [
-        "[class*='top_bar']",
-        "[class*='topbar']",
-        "header"
-      ]
+    const selectors = [
+      "[class*='tab_bar']",
+      "[class*='tabbar']",
+      "[role='tablist']"
     ];
-    for (const selectors of selectorGroups) {
-      for (const selector of selectors) {
-        const element = document.querySelector(selector);
-        if (element && element.getBoundingClientRect().height >= 24) {
-          return { element, placement: selectors[0].includes("tab") ? "tab" : "host" };
-        }
+    for (const selector of selectors) {
+      const element = document.querySelector(selector);
+      if (element && element.getBoundingClientRect().height >= 24) {
+        return { element, placement: "tab" };
       }
     }
+    if (IS_TITLEBAR_PAGE && document.body) return { element: document.body, placement: "titlebar" };
     return null;
   }
 
@@ -92,9 +85,8 @@
     style.id = "figboost-menu-style";
     style.textContent = [
       ".figboost-menu-wrap{z-index:2147483000;pointer-events:auto;font:12px/16px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#222;}",
-      ".figboost-menu-wrap[data-placement='tab']{position:absolute;right:206px;top:50%;transform:translateY(-50%);}",
-      ".figboost-menu-wrap[data-placement='host']{position:absolute;right:206px;top:7px;}",
-      ".figboost-menu-wrap[data-placement='fixed']{position:fixed;right:206px;top:7px;}",
+      ".figboost-menu-wrap[data-placement='tab']{position:absolute;right:234px;top:50%;transform:translateY(-50%);}",
+      ".figboost-menu-wrap[data-placement='titlebar']{position:fixed;right:234px;top:6px;}",
       ".figboost-menu-button{box-sizing:border-box;width:24px;height:24px;margin:0;padding:0;border:0;border-radius:4px;background:transparent;color:#b6b6b6;display:flex;align-items:center;justify-content:center;cursor:pointer;}",
       ".figboost-menu-button:hover,.figboost-menu-button[aria-expanded='true']{background:rgba(255,255,255,.08);color:#fff;}",
       ".figboost-menu-button:active{background:rgba(255,255,255,.12);}",
@@ -164,10 +156,11 @@
     if (!document.body || !installFigBoostMenuStyle()) return;
 
     const host = findTopBarHost();
+    if (!host) return;
     const wrap = document.createElement("div");
     wrap.id = "figboost-menu";
     wrap.className = "figboost-menu-wrap";
-    wrap.dataset.placement = host ? host.placement : "fixed";
+    wrap.dataset.placement = host.placement;
 
     const button = document.createElement("button");
     button.id = "figboost-menu-button";
@@ -217,13 +210,9 @@
     wrap.appendChild(panel);
     ensureFigBoostMenuDismissHandlers();
 
-    if (host) {
-      const position = window.getComputedStyle(host.element).position;
-      if (position === "static") host.element.style.position = "relative";
-      host.element.appendChild(wrap);
-    } else {
-      document.body.appendChild(wrap);
-    }
+    const position = window.getComputedStyle(host.element).position;
+    if (position === "static" && host.element !== document.body) host.element.style.position = "relative";
+    host.element.appendChild(wrap);
   }
 
   function scheduleUpdateButtonInstall() {
@@ -247,6 +236,10 @@
     setTimeout(run, 3000);
   }
 
+  scheduleAntiFlashStyleInstall();
+  if (IS_TITLEBAR_PAGE || IS_TEST_PAGE) scheduleUpdateButtonInstall();
+  if (IS_TITLEBAR_PAGE && !IS_FIGMA_PAGE && !IS_TEST_PAGE) return;
+
   const extensionApi = typeof chrome === "undefined" ? null : chrome;
   const storage = extensionApi && extensionApi.storage && extensionApi.storage.sync;
   const dictionary = window.FIGMA_ZH_DICTIONARY || { exact: {}, phrases: [], version: "unknown" };
@@ -261,8 +254,6 @@
     immediateTextLimit: 120
   });
 
-  scheduleAntiFlashStyleInstall();
-  scheduleUpdateButtonInstall();
   window.__figmaZhLocalizer = localizer;
   window.__figmaZhScanUntranslated = (options) => localizer.scanUntranslated(options);
 
