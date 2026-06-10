@@ -218,10 +218,21 @@
   }
 
   function scheduleUpdateButtonInstall() {
-    const run = () => installUpdateButton();
+    if (!isFigBoostUpdateButtonEnabled()) return;
+
+    let observer = null;
+    const run = () => {
+      installUpdateButton();
+      if (document.getElementById("figboost-menu") && observer) {
+        observer.disconnect();
+        observer = null;
+      }
+    };
     run();
+    if (document.getElementById("figboost-menu")) return;
+
     document.addEventListener("DOMContentLoaded", run, { once: true });
-    const observer = new MutationObserver(run);
+    observer = new MutationObserver(run);
     observer.observe(document.documentElement, { childList: true, subtree: true });
     setTimeout(run, 1000);
     setTimeout(run, 3000);

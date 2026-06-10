@@ -11,6 +11,7 @@
     maxTextLength: 260,
     translateAttributes: true
   };
+  const MAX_TRANSLATION_CACHE_SIZE = 6000;
 
   const SKIP_SELECTOR = [
     "canvas",
@@ -202,6 +203,14 @@
       return matches.length > 0 && matches.every((token) => protectedAsciiTokens.has(token));
     }
 
+    function cacheResult(key, value) {
+      if (cache.size >= MAX_TRANSLATION_CACHE_SIZE) {
+        cache.delete(cache.keys().next().value);
+      }
+      cache.set(key, value);
+      return value;
+    }
+
     function replaceUiTerms(value) {
       if (!isSafeForTermFallback(value)) return null;
 
@@ -235,15 +244,13 @@
       const exactMatch = exact.get(normalized);
       if (exactMatch) {
         const result = preserveOuterWhitespace(value, exactMatch);
-        cache.set(cacheKey, result);
-        return result;
+        return cacheResult(cacheKey, result);
       }
 
       const mcpServerStatus = normalized.match(/^MCP server enabled on (.+)$/);
       if (mcpServerStatus) {
         const result = preserveOuterWhitespace(value, `MCP 服务器已启用：${mcpServerStatus[1]}`);
-        cache.set(cacheKey, result);
-        return result;
+        return cacheResult(cacheKey, result);
       }
 
       if (looksLikeProtectedContent(normalized)) return null;
@@ -256,14 +263,12 @@
           }
           if (!allowAscii && hasUntranslatedAscii(next)) continue;
           const result = preserveOuterWhitespace(value, next);
-          cache.set(cacheKey, result);
-          return result;
+          return cacheResult(cacheKey, result);
         }
       }
 
       if (/[\u4e00-\u9fff]/.test(normalized)) {
-        cache.set(cacheKey, null);
-        return null;
+        return cacheResult(cacheKey, null);
       }
 
       let next = normalized;
@@ -284,13 +289,11 @@
       }
 
       if (changed && hasUntranslatedAscii(next)) {
-        cache.set(cacheKey, null);
-        return null;
+        return cacheResult(cacheKey, null);
       }
 
       const result = changed ? preserveOuterWhitespace(value, next) : null;
-      cache.set(cacheKey, result);
-      return result;
+      return cacheResult(cacheKey, result);
     }
 
     function classifyUntranslated(value) {
