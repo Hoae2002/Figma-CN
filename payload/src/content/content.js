@@ -4,6 +4,7 @@
   const IS_TEST_PAGE = Boolean(window.__FIGMA_ZH_TEST__);
   const IS_FIGMA_PAGE = /(^|\.)figma\.com$/.test(location.hostname);
   const IS_TITLEBAR_PAGE = Boolean(window.__FIGBOOST_TITLEBAR_BUTTON_ENABLED__);
+  const SHOULD_INSTALL_UPDATE_BUTTON = IS_TEST_PAGE || (IS_TITLEBAR_PAGE && !IS_FIGMA_PAGE);
   if (!IS_TEST_PAGE && !IS_FIGMA_PAGE && !IS_TITLEBAR_PAGE) return;
 
   const DEFAULT_SETTINGS = {
@@ -88,8 +89,8 @@
       ".figboost-menu-wrap[data-placement='tab']{position:absolute;right:234px;top:50%;transform:translateY(-50%);}",
       ".figboost-menu-wrap[data-placement='titlebar']{position:fixed;right:234px;top:6px;}",
       ".figboost-menu-button{box-sizing:border-box;width:24px;height:24px;margin:0;padding:0;border:0;border-radius:4px;background:transparent;color:#b6b6b6;display:flex;align-items:center;justify-content:center;cursor:pointer;}",
-      ".figboost-menu-button:hover,.figboost-menu-button[aria-expanded='true']{background:rgba(255,255,255,.08);color:#fff;}",
-      ".figboost-menu-button:active{background:rgba(255,255,255,.12);}",
+      ".figboost-menu-button:hover,.figboost-menu-button[aria-expanded='true']{background:#3f3f3f;color:#d6d6d6;}",
+      ".figboost-menu-button:active{background:#4a4a4a;}",
       ".figboost-menu-button:disabled{cursor:default;opacity:.55;}",
       ".figboost-menu-button svg{width:14px;height:14px;display:block;stroke:currentColor;}",
       ".figboost-menu-panel{box-sizing:border-box;position:absolute;top:34px;right:0;min-width:148px;padding:6px 0;border:1px solid rgba(0,0,0,.12);border-radius:6px;background:#fff;box-shadow:0 8px 24px rgba(0,0,0,.14);}",
@@ -237,7 +238,7 @@
   }
 
   scheduleAntiFlashStyleInstall();
-  if (IS_TITLEBAR_PAGE || IS_TEST_PAGE) scheduleUpdateButtonInstall();
+  if (SHOULD_INSTALL_UPDATE_BUTTON) scheduleUpdateButtonInstall();
   if (IS_TITLEBAR_PAGE && !IS_FIGMA_PAGE && !IS_TEST_PAGE) return;
 
   const extensionApi = typeof chrome === "undefined" ? null : chrome;

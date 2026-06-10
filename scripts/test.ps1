@@ -34,6 +34,12 @@ if ($content -notmatch "data-placement='tab'") {
 if ($content -notmatch "data-placement='titlebar'") {
   throw "Update button must include the titlebar fallback placement style."
 }
+if ($content -notmatch "SHOULD_INSTALL_UPDATE_BUTTON = IS_TEST_PAGE \|\| \(IS_TITLEBAR_PAGE && !IS_FIGMA_PAGE\)") {
+  throw "Update button must not install inside figma.com content pages."
+}
+if ($content -notmatch "background:#3f3f3f") {
+  throw "Update button hover state must match the native titlebar ghost style."
+}
 
 $core = Get-Content -LiteralPath (Join-Path $root "payload\src\content\localizer-core.js") -Raw
 if ($core -notmatch "MAX_TRANSLATION_CACHE_SIZE") {
