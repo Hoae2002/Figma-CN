@@ -26,6 +26,8 @@
     "Default": "默认",
     "Exit": "退出",
     "Figma Desktop App version 126.3.12": "Figma 桌面应用版本 126.3.12",
+    "Install now": "立即安装",
+    "Install on next launch": "下次启动时安装",
     "Manage Plugins...": "管理插件...",
     "Manage Plugins…": "管理插件…",
     "Reset to Default": "重置为默认值",
@@ -49,7 +51,11 @@
     "Save Performance Log…": "保存性能日志…",
     "Disable Hardware Acceleration": "禁用硬件加速",
     "Prefer High-Performance CPU": "优先使用高性能 CPU",
+    "Prefer High-Performance GPU": "优先使用高性能 GPU",
     "Graphics Backend": "图形后端",
+    "WebGL1": "WebGL1",
+    "WebGL2": "WebGL2",
+    "WebGPU": "WebGPU",
     "Missing a new feature? Try reloading your tabs and check again. If you experience any other issues, please contact support.": "缺少新功能？请重新加载标签页后再检查。如果遇到其他问题，请联系支持。",
     "No Update Available": "没有可用更新",
     "Reload All Tabs": "重新加载全部标签页",
@@ -57,6 +63,7 @@
     "Replace Existing Files": "替换现有文件",
     "Replace existing files?": "要替换现有文件吗？",
     "Reset Figma and Restart": "重置 Figma 并重启",
+    "Update Available": "有可用更新",
     "Copy Link": "复制链接",
     "Rename File": "重命名文件",
     "Reload Tab": "重新加载标签页",
@@ -64,12 +71,15 @@
     "Pin Tab": "固定标签页",
     "Close Other Tabs": "关闭其他标签页",
     "Close All Tabs": "关闭全部标签页",
+    "A new version of Figma is ready to be installed.": "新版 Figma 已准备好安装。",
     "You are already using the latest version of Figma.": "您已经在使用最新版 Figma。"
   };
 
   const labelPatterns = [
     [/^Figma Desktop App version (.+)$/, "Figma 桌面应用版本 $1"],
     [/^Copyright © (\d{4}) Figma, Inc\.$/, "版权所有 © $1 Figma, Inc."],
+    [/^→\s*Install now$/, "→ 立即安装"],
+    [/^→\s*Install on next launch$/, "→ 下次启动时安装"],
     [/^(\d+) files including "(.+)" already exist\. Replacing them will overwrite their existing contents\.$/, "$1 个文件（包括“$2”）已存在。替换后将覆盖其现有内容。"]
   ];
 
@@ -132,6 +142,20 @@
       const optionIndex = args[0] && typeof args[0] === "object" && !("title" in args[0] || "message" in args[0] || "detail" in args[0]) ? 1 : 0;
       if (args[optionIndex]) args[optionIndex] = localizeDialogOptions(args[optionIndex]);
       return original(...args);
+    };
+  }
+
+  function hookAboutPanelOptions() {
+    if (!app || typeof app.setAboutPanelOptions !== "function") return;
+    const original = app.setAboutPanelOptions.bind(app);
+    app.setAboutPanelOptions = function (options) {
+      if (options && typeof options === "object") {
+        options = { ...options };
+        for (const key of ["title", "message", "detail", "applicationVersion", "version", "copyright"]) {
+          options[key] = localizeText(options[key]);
+        }
+      }
+      return original(options);
     };
   }
 
@@ -390,6 +414,7 @@
     };
     hookDialogMethod("showMessageBox");
     hookDialogMethod("showMessageBoxSync");
+    hookAboutPanelOptions();
     hookBuiltInUpdateChecks();
     registerManualOfficialUpdateCheck();
     app.whenReady().then(scheduleLocalize).catch(() => {});

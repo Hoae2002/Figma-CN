@@ -239,6 +239,13 @@
         return result;
       }
 
+      const mcpServerStatus = normalized.match(/^MCP server enabled on (.+)$/);
+      if (mcpServerStatus) {
+        const result = preserveOuterWhitespace(value, `MCP 服务器已启用：${mcpServerStatus[1]}`);
+        cache.set(cacheKey, result);
+        return result;
+      }
+
       if (looksLikeProtectedContent(normalized)) return null;
 
       for (const [pattern, replacement, allowAscii] of patterns) {
@@ -346,9 +353,17 @@
     return /\/files(?:\/|$)|\/file_browser(?:\/|$)|\/team\//.test(window.location.pathname);
   }
 
+  const FILE_BROWSER_SYSTEM_TITLES = new Set([
+    "Drafts",
+    "Recent",
+    "Recents",
+    "Recently viewed"
+  ]);
+
   function isUserNamedContentElement(element, text) {
     if (!element || element.nodeType !== Node.ELEMENT_NODE) return false;
     if (!looksLikeUserProvidedName(text)) return false;
+    if (FILE_BROWSER_SYSTEM_TITLES.has(normalizeText(text))) return false;
     if (element.closest(USER_NAMED_CONTENT_SELECTOR)) return true;
     if (!isFileBrowserRoute()) return false;
     return Boolean(element.closest("h1,h2,[role='heading']"));
