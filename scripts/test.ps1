@@ -21,6 +21,14 @@ if ($content -notmatch "if \(!isFigBoostUpdateButtonEnabled\(\)\) return;") {
 if ($content -notmatch "observer\.disconnect\(\);") {
   throw "Update button observer must disconnect after the menu is installed."
 }
+$tabSelectorIndex = $content.IndexOf("[class*='tab_bar']")
+$topSelectorIndex = $content.IndexOf("[class*='top_bar']")
+if ($tabSelectorIndex -lt 0 -or $topSelectorIndex -lt 0 -or $tabSelectorIndex -gt $topSelectorIndex) {
+  throw "Update button must prefer the tab bar before the in-file top bar."
+}
+if ($content -notmatch "data-placement='tab'") {
+  throw "Update button must include the tab bar placement style."
+}
 
 $core = Get-Content -LiteralPath (Join-Path $root "payload\src\content\localizer-core.js") -Raw
 if ($core -notmatch "MAX_TRANSLATION_CACHE_SIZE") {

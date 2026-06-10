@@ -62,17 +62,25 @@
   ];
 
   function findTopBarHost() {
-    const selectors = [
-      "[class*='top_bar']",
-      "[class*='topbar']",
-      "[class*='tab_bar']",
-      "[class*='tabbar']",
-      "[role='tablist']",
-      "header"
+    const selectorGroups = [
+      [
+        "[class*='tab_bar']",
+        "[class*='tabbar']",
+        "[role='tablist']"
+      ],
+      [
+        "[class*='top_bar']",
+        "[class*='topbar']",
+        "header"
+      ]
     ];
-    for (const selector of selectors) {
-      const element = document.querySelector(selector);
-      if (element && element.getBoundingClientRect().height >= 28) return element;
+    for (const selectors of selectorGroups) {
+      for (const selector of selectors) {
+        const element = document.querySelector(selector);
+        if (element && element.getBoundingClientRect().height >= 24) {
+          return { element, placement: selectors[0].includes("tab") ? "tab" : "host" };
+        }
+      }
     }
     return null;
   }
@@ -84,13 +92,14 @@
     style.id = "figboost-menu-style";
     style.textContent = [
       ".figboost-menu-wrap{z-index:2147483000;pointer-events:auto;font:12px/16px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#222;}",
-      ".figboost-menu-wrap[data-placement='host']{position:absolute;right:104px;top:50%;transform:translateY(-50%);}",
-      ".figboost-menu-wrap[data-placement='fixed']{position:fixed;right:118px;top:7px;}",
-      ".figboost-menu-button{box-sizing:border-box;width:28px;height:28px;margin:0;padding:0;border:0;border-radius:6px;background:transparent;color:#333;display:flex;align-items:center;justify-content:center;cursor:pointer;}",
-      ".figboost-menu-button:hover,.figboost-menu-button[aria-expanded='true']{background:rgba(0,0,0,.06);}",
-      ".figboost-menu-button:active{background:rgba(0,0,0,.1);}",
+      ".figboost-menu-wrap[data-placement='tab']{position:absolute;right:206px;top:50%;transform:translateY(-50%);}",
+      ".figboost-menu-wrap[data-placement='host']{position:absolute;right:206px;top:7px;}",
+      ".figboost-menu-wrap[data-placement='fixed']{position:fixed;right:206px;top:7px;}",
+      ".figboost-menu-button{box-sizing:border-box;width:24px;height:24px;margin:0;padding:0;border:0;border-radius:4px;background:transparent;color:#b6b6b6;display:flex;align-items:center;justify-content:center;cursor:pointer;}",
+      ".figboost-menu-button:hover,.figboost-menu-button[aria-expanded='true']{background:rgba(255,255,255,.08);color:#fff;}",
+      ".figboost-menu-button:active{background:rgba(255,255,255,.12);}",
       ".figboost-menu-button:disabled{cursor:default;opacity:.55;}",
-      ".figboost-menu-button svg{width:16px;height:16px;display:block;stroke:currentColor;}",
+      ".figboost-menu-button svg{width:14px;height:14px;display:block;stroke:currentColor;}",
       ".figboost-menu-panel{box-sizing:border-box;position:absolute;top:34px;right:0;min-width:148px;padding:6px 0;border:1px solid rgba(0,0,0,.12);border-radius:6px;background:#fff;box-shadow:0 8px 24px rgba(0,0,0,.14);}",
       ".figboost-menu-panel[hidden]{display:none;}",
       ".figboost-menu-item{box-sizing:border-box;width:100%;min-height:28px;padding:6px 12px;border:0;background:transparent;color:#222;text-align:left;font:12px/16px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;white-space:nowrap;cursor:pointer;}",
@@ -158,7 +167,7 @@
     const wrap = document.createElement("div");
     wrap.id = "figboost-menu";
     wrap.className = "figboost-menu-wrap";
-    wrap.dataset.placement = host ? "host" : "fixed";
+    wrap.dataset.placement = host ? host.placement : "fixed";
 
     const button = document.createElement("button");
     button.id = "figboost-menu-button";
@@ -168,7 +177,7 @@
     button.setAttribute("aria-label", "FigBoost");
     button.setAttribute("aria-haspopup", "menu");
     button.setAttribute("aria-expanded", "false");
-    button.innerHTML = '<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4.5 2.5h7M4.5 8h5.8M4.5 13.5V2.5" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    button.innerHTML = '<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="3.5" y="3" width="9" height="9.5" rx="1" stroke-width="1.4"/><path d="M6 1.8v2.4M10 1.8v2.4M5.8 6.2h4.4M5.8 8.6h2.7" stroke-width="1.4" stroke-linecap="round"/></svg>';
     button.addEventListener("click", () => {
       toggleFigBoostMenu(wrap);
     });
@@ -209,9 +218,9 @@
     ensureFigBoostMenuDismissHandlers();
 
     if (host) {
-      const position = window.getComputedStyle(host).position;
-      if (position === "static") host.style.position = "relative";
-      host.appendChild(wrap);
+      const position = window.getComputedStyle(host.element).position;
+      if (position === "static") host.element.style.position = "relative";
+      host.element.appendChild(wrap);
     } else {
       document.body.appendChild(wrap);
     }
