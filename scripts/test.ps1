@@ -37,8 +37,17 @@ if ($content -notmatch "data-placement='titlebar'") {
 if ($content -notmatch "SHOULD_INSTALL_UPDATE_BUTTON = IS_TEST_PAGE \|\| \(IS_TITLEBAR_PAGE && !IS_FIGMA_PAGE\)") {
   throw "Update button must not install inside figma.com content pages."
 }
-if ($content -notmatch "background:#3f3f3f") {
+if ($content -notmatch "width:20px;height:20px") {
+  throw "Update button visual hit area must match the compact native titlebar icon."
+}
+if ($content -notmatch "border-radius:2px") {
+  throw "Update button hover radius must match the native titlebar ghost style."
+}
+if ($content -notmatch "background:#454545") {
   throw "Update button hover state must match the native titlebar ghost style."
+}
+if ($content -notmatch "svg\{width:12px;height:12px") {
+  throw "Update button icon must match the compact native titlebar icon size."
 }
 
 $core = Get-Content -LiteralPath (Join-Path $root "payload\src\content\localizer-core.js") -Raw
