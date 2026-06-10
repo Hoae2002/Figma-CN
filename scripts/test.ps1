@@ -34,16 +34,19 @@ if ($content -notmatch "data-placement='tab'") {
 if ($content -notmatch "data-placement='titlebar'") {
   throw "Update button must include the titlebar fallback placement style."
 }
+if ($content -notmatch "right:274px;top:0") {
+  throw "Update button titlebar placement must sit beside the native titlebar icon cell."
+}
 if ($content -notmatch "SHOULD_INSTALL_UPDATE_BUTTON = IS_TEST_PAGE \|\| \(IS_TITLEBAR_PAGE && !IS_FIGMA_PAGE\)") {
   throw "Update button must not install inside figma.com content pages."
 }
-if ($content -notmatch "width:20px;height:20px") {
-  throw "Update button visual hit area must match the compact native titlebar icon."
+if ($content -notmatch "width:50px;height:37px") {
+  throw "Update button visual hit area must match the native titlebar hover cell."
 }
-if ($content -notmatch "border-radius:2px") {
+if ($content -notmatch "border-radius:0") {
   throw "Update button hover radius must match the native titlebar ghost style."
 }
-if ($content -notmatch "background:#454545") {
+if ($content -notmatch "background:#424242") {
   throw "Update button hover state must match the native titlebar ghost style."
 }
 if ($content -notmatch "svg\{width:12px;height:12px") {
