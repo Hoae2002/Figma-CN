@@ -50,6 +50,9 @@ if ($content -notmatch "width:50px;height:37px") {
 if ($content.Contains(".figboost-menu-wrap[data-placement='titlebar'] .figboost-menu-button{width:34px;}")) {
   throw "Update button titlebar visual hit area must not be narrower than the native hover cell."
 }
+if (-not $content.Contains(".figboost-menu-wrap[data-placement='titlebar'] .figboost-menu-button{border-left:1px solid #4c4c4c;}")) {
+  throw "Update button titlebar placement must keep the native divider from the button on its left."
+}
 if ($content -notmatch "border-radius:0") {
   throw "Update button hover radius must match the native titlebar ghost style."
 }
