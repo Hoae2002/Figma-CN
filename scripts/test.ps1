@@ -25,6 +25,10 @@ $tabSelectorIndex = $content.IndexOf("[class*='tab_bar']")
 if ($tabSelectorIndex -lt 0) {
   throw "Update button must look for the tab bar host."
 }
+$titlebarHostIndex = $content.IndexOf('if (IS_TITLEBAR_PAGE && document.body) return { element: document.body, placement: "titlebar" };')
+if ($titlebarHostIndex -lt 0 -or $titlebarHostIndex -gt $tabSelectorIndex) {
+  throw "Update button titlebar placement must take precedence over in-page tab hosts."
+}
 if ($content.Contains("[class*='top_bar']")) {
   throw "Update button must not fall back to the in-file top bar."
 }
@@ -41,6 +45,9 @@ if ($content -notmatch "SHOULD_INSTALL_UPDATE_BUTTON = IS_TEST_PAGE \|\| \(IS_TI
   throw "Update button must not install inside figma.com content pages."
 }
 if ($content -notmatch "width:50px;height:37px") {
+  throw "Update button tab visual hit area must remain stable."
+}
+if (-not $content.Contains(".figboost-menu-wrap[data-placement='titlebar'] .figboost-menu-button{width:34px;}")) {
   throw "Update button visual hit area must match the native titlebar hover cell."
 }
 if ($content -notmatch "border-radius:0") {
@@ -54,6 +61,12 @@ if ($content -notmatch "appearance:none;-webkit-appearance:none;outline:0;-webki
 }
 if ($content -notmatch "\.figboost-menu-button:active\{background:#424242;color:#d6d6d6;\}") {
   throw "Update button active state must match the native titlebar hover state."
+}
+if ($content -notmatch "if \(host\.placement === `"titlebar`"\)") {
+  throw "Update button titlebar placement must not open a clipped dropdown menu."
+}
+if ($content -notmatch "await FIGBOOST_MENU_ITEMS\[0\]\.run\(\);") {
+  throw "Update button titlebar click must run the update check directly."
 }
 if ($content -notmatch "svg\{width:12px;height:12px") {
   throw "Update button icon must match the compact native titlebar icon size."
