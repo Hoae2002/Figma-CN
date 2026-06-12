@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "FigBoost",
   "description": "轻量汉化网页版 Figma 的界面文案，不处理画布内容。",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "action": {
     "default_popup": "src/popup/popup.html",
     "default_title": "FigBoost"
