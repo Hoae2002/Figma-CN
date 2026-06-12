@@ -45,10 +45,10 @@ if ($content -notmatch "SHOULD_INSTALL_UPDATE_BUTTON = IS_TEST_PAGE \|\| \(IS_TI
   throw "Update button must not install inside figma.com content pages."
 }
 if ($content -notmatch "width:50px;height:37px") {
-  throw "Update button tab visual hit area must remain stable."
-}
-if (-not $content.Contains(".figboost-menu-wrap[data-placement='titlebar'] .figboost-menu-button{width:34px;}")) {
   throw "Update button visual hit area must match the native titlebar hover cell."
+}
+if ($content.Contains(".figboost-menu-wrap[data-placement='titlebar'] .figboost-menu-button{width:34px;}")) {
+  throw "Update button titlebar visual hit area must not be narrower than the native hover cell."
 }
 if ($content -notmatch "border-radius:0") {
   throw "Update button hover radius must match the native titlebar ghost style."

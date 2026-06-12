@@ -90,7 +90,6 @@
       ".figboost-menu-wrap[data-placement='tab']{position:absolute;right:234px;top:50%;transform:translateY(-50%);}",
       ".figboost-menu-wrap[data-placement='titlebar']{position:fixed;right:274px;top:0;}",
       ".figboost-menu-button{box-sizing:border-box;width:50px;height:37px;margin:0;padding:0;border:0;border-radius:0;background:transparent;color:#b6b6b6;display:flex;align-items:center;justify-content:center;cursor:pointer;appearance:none;-webkit-appearance:none;outline:0;-webkit-app-region:no-drag;}",
-      ".figboost-menu-wrap[data-placement='titlebar'] .figboost-menu-button{width:34px;}",
       ".figboost-menu-button:hover,.figboost-menu-button[aria-expanded='true']{background:#424242;color:#d6d6d6;}",
       ".figboost-menu-button:active{background:#424242;color:#d6d6d6;}",
       ".figboost-menu-button:disabled{cursor:default;opacity:.55;}",
