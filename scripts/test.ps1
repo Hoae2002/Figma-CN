@@ -38,8 +38,8 @@ if ($content -notmatch "data-placement='tab'") {
 if ($content -notmatch "data-placement='titlebar'") {
   throw "Update button must include the titlebar fallback placement style."
 }
-if ($content -notmatch "right:274px;top:0") {
-  throw "Update button titlebar placement must sit beside the native titlebar icon cell."
+if ($content -notmatch "right:234px;top:0") {
+  throw "Update button titlebar placement must sit on the native titlebar button grid."
 }
 if ($content -notmatch "SHOULD_INSTALL_UPDATE_BUTTON = IS_TEST_PAGE \|\| \(IS_TITLEBAR_PAGE && !IS_FIGMA_PAGE\)") {
   throw "Update button must not install inside figma.com content pages."
