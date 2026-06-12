@@ -49,6 +49,12 @@ if ($content -notmatch "border-radius:0") {
 if ($content -notmatch "background:#424242") {
   throw "Update button hover state must match the native titlebar ghost style."
 }
+if ($content -notmatch "appearance:none;-webkit-appearance:none;outline:0;-webkit-app-region:no-drag") {
+  throw "Update button must use native titlebar button interaction behavior."
+}
+if ($content -notmatch "\.figboost-menu-button:active\{background:#424242;color:#d6d6d6;\}") {
+  throw "Update button active state must match the native titlebar hover state."
+}
 if ($content -notmatch "svg\{width:12px;height:12px") {
   throw "Update button icon must match the compact native titlebar icon size."
 }
