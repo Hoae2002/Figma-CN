@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const { app, autoUpdater, dialog, ipcMain, Menu, BrowserWindow, webContents } = require("electron");
+  const { app, autoUpdater, clipboard, dialog, ipcMain, Menu, BrowserWindow, webContents } = require("electron");
   const fs = require("fs");
   const https = require("https");
   const path = require("path");
@@ -220,7 +220,12 @@
     if (!dialog || typeof dialog[name] !== "function") return;
     const original = dialog[name].bind(dialog);
     dialog[name] = function (...args) {
-      const optionIndex = args[0] && typeof args[0] === "object" && !("title" in args[0] || "message" in args[0] || "detail" in args[0]) ? 1 : 0;
+      const looksLikeOptions = (value) => !!(
+        value
+        && typeof value === "object"
+        && ("title" in value || "message" in value || "detail" in value || Array.isArray(value.buttons))
+      );
+      const optionIndex = looksLikeOptions(args[1]) ? 1 : 0;
       if (args[optionIndex]) args[optionIndex] = localizeDialogOptions(args[optionIndex]);
       return original(...args);
     };
@@ -442,7 +447,9 @@
 </html>
 `)}`);
     progressWindow.once("ready-to-show", () => {
-      if (!progressWindow.isDestroyed()) progressWindow.show();
+      if (progressWindow.isDestroyed()) return;
+      if (typeof progressWindow.showInactive === "function") progressWindow.showInactive();
+      else progressWindow.show();
     });
     return {
       close() {
@@ -546,12 +553,951 @@
     ipcMain.handle("figboost:check-official-update", () => checkOfficialUpdateManually());
   }
 
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  function showMessageBoxForOwner(owner, options) {
+    return owner && !owner.isDestroyed()
+      ? dialog.showMessageBox(owner, options)
+      : dialog.showMessageBox(options);
+  }
+
+  function showOpenDialogForOwner(owner, options) {
+    return owner && !owner.isDestroyed()
+      ? dialog.showOpenDialog(owner, options)
+      : dialog.showOpenDialog(options);
+  }
+
+  function createBulkExportProgressWindow(owner) {
+    const progressWindow = new BrowserWindow({
+      width: 520,
+      height: 220,
+      useContentSize: true,
+      parent: undefined,
+      modal: false,
+      show: false,
+      autoHideMenuBar: true,
+      resizable: false,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      title: "\u6279\u91cf\u5bfc\u51fa\u753b\u677f\u6587\u4ef6",
+      backgroundColor: "#ffffff",
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true
+      }
+    });
+    progressWindow.webContents.__FIGBOOST_SKIP_RENDERER_INJECTION__ = true;
+    progressWindow.setMenu(null);
+    if (typeof progressWindow.removeMenu === "function") progressWindow.removeMenu();
+    progressWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    html,body{box-sizing:border-box;width:100%;height:100%;margin:0;overflow:hidden;background:#fff;color:#111;}
+    body{padding:26px 30px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei UI",sans-serif;}
+    .title{font-size:20px;line-height:28px;font-weight:700;margin-bottom:8px;}
+    .sub{font-size:14px;line-height:22px;color:#4a5568;margin-bottom:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+    .bar{height:5px;overflow:hidden;border-radius:999px;background:#e6e8ec;margin-bottom:16px;}
+    .bar:before{content:"";display:block;width:42%;height:100%;border-radius:999px;background:#1677ff;animation:move 1s ease-in-out infinite;}
+    .foot{font-size:12px;line-height:18px;color:#718096;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+    @keyframes move{0%{transform:translateX(-105%);}100%{transform:translateX(245%);}}
+  </style>
+</head>
+<body>
+  <div class="title" id="title">&#27491;&#22312;&#26816;&#32034;&#30011;&#26495;&#25991;&#20214;</div>
+  <div class="sub" id="sub">&#27491;&#22312;&#20351;&#29992;&#24403;&#21069; Figma &#30331;&#24405;&#20250;&#35805;&#25195;&#25551;&#21487;&#35265;&#25991;&#20214;&#8230;</div>
+  <div class="bar"></div>
+  <div class="foot" id="foot">&#35831;&#31245;&#20505;</div>
+  <script>
+    window.setFigBoostExportStatus = function (payload) {
+      if (!payload) return;
+      if (payload.title) document.getElementById("title").textContent = payload.title;
+      if (payload.sub) document.getElementById("sub").textContent = payload.sub;
+      if (payload.foot) document.getElementById("foot").textContent = payload.foot;
+    };
+  </script>
+</body>
+</html>
+`)}`);
+    progressWindow.once("ready-to-show", () => {
+      if (!progressWindow.isDestroyed()) progressWindow.show();
+    });
+    return {
+      update(payload) {
+        if (progressWindow.isDestroyed()) return;
+        progressWindow.webContents.executeJavaScript(
+          `window.setFigBoostExportStatus(${JSON.stringify(payload || {})})`,
+          true
+        ).catch(() => {});
+      },
+      close() {
+        if (!progressWindow.isDestroyed()) progressWindow.close();
+      }
+    };
+  }
+
+  function getFigmaFileCategory(file) {
+    const categories = Array.isArray(file && file.categories) ? file.categories.filter(Boolean) : [];
+    if (categories.length) return categories[0];
+    const source = String(file && file.sourceUrl || "");
+    if (/\/files\/drafts/i.test(source)) return "\u8349\u7a3f";
+    if (/\/files\/recent/i.test(source)) return "\u6700\u8fd1";
+    if (/\/files\/team/i.test(source)) return "\u56e2\u961f\u6587\u4ef6";
+    if (/\/files\/project/i.test(source)) return "\u9879\u76ee";
+    return "\u5176\u4ed6";
+  }
+
+  async function showBulkExportSelectionWindow(owner, files) {
+    const selectionWindow = new BrowserWindow({
+      width: 820,
+      height: 660,
+      minWidth: 720,
+      minHeight: 520,
+      parent: owner || undefined,
+      modal: Boolean(owner),
+      show: false,
+      autoHideMenuBar: true,
+      title: "\u9009\u62e9\u8981\u5bfc\u51fa\u7684\u753b\u677f\u6587\u4ef6",
+      backgroundColor: "#ffffff",
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true
+      }
+    });
+    selectionWindow.webContents.__FIGBOOST_SKIP_RENDERER_INJECTION__ = true;
+    selectionWindow.setMenu(null);
+    if (typeof selectionWindow.removeMenu === "function") selectionWindow.removeMenu();
+    const safeFiles = files.map((file, index) => ({
+      index,
+      key: file.key,
+      name: file.name,
+      url: file.url,
+      category: getFigmaFileCategory(file),
+      sourceUrl: file.sourceUrl || ""
+    }));
+    selectionWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    *{box-sizing:border-box}
+    html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#f7f8fa;color:#111;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei UI",sans-serif}
+    body{display:flex;flex-direction:column}
+    header{padding:18px 22px 14px;background:#fff;border-bottom:1px solid #e6e8ec}
+    h1{margin:0 0 6px;font-size:20px;line-height:28px}
+    .summary{font-size:13px;line-height:20px;color:#5f6b7a}
+    .toolbar{display:flex;align-items:center;gap:8px;padding:10px 22px;background:#fff;border-bottom:1px solid #e6e8ec}
+    button{height:32px;border:1px solid #ccd2dc;border-radius:6px;background:#fff;color:#18202d;padding:0 12px;font-size:13px;cursor:pointer}
+    button.primary{border-color:#1677ff;background:#1677ff;color:#fff}
+    button:disabled{opacity:.45;cursor:not-allowed}
+    .spacer{flex:1}
+    .list{flex:1;overflow:auto;padding:12px 18px 18px}
+    .group{margin:0 0 12px;background:#fff;border:1px solid #e6e8ec;border-radius:8px;overflow:hidden}
+    .group-title{display:flex;align-items:center;gap:8px;padding:10px 12px;background:#fbfcfe;border-bottom:1px solid #edf0f4;font-size:13px;font-weight:650}
+    .row{display:grid;grid-template-columns:28px 1fr;gap:8px;align-items:center;padding:9px 12px;border-top:1px solid #f0f2f5}
+    .row:first-of-type{border-top:none}
+    .name{font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .url{font-size:11px;line-height:16px;color:#7b8494;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    footer{display:flex;align-items:center;gap:10px;padding:12px 22px;background:#fff;border-top:1px solid #e6e8ec}
+    .count{font-size:13px;color:#42526b}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>&#36873;&#25321;&#35201;&#23548;&#20986;&#30340;&#30011;&#26495;&#25991;&#20214;</h1>
+    <div class="summary" id="summary"></div>
+  </header>
+  <div class="toolbar">
+    <button id="selectAll">&#20840;&#36873;</button>
+    <button id="selectNone">&#20840;&#19981;&#36873;</button>
+    <div class="spacer"></div>
+    <input id="filter" placeholder="&#25628;&#32034;&#25991;&#20214;&#21517;" style="height:32px;width:220px;border:1px solid #ccd2dc;border-radius:6px;padding:0 10px;font-size:13px">
+  </div>
+  <div class="list" id="list"></div>
+  <footer>
+    <div class="count" id="count"></div>
+    <div class="spacer"></div>
+    <button id="cancel">&#21462;&#28040;</button>
+    <button class="primary" id="export">&#36873;&#25321;&#20301;&#32622;&#24182;&#23548;&#20986;</button>
+  </footer>
+  <script>
+    const files = ${JSON.stringify(safeFiles)};
+    let selected = new Set(files.map((file) => file.key));
+    let filterText = "";
+    const byCategory = () => files.reduce((map, file) => {
+      if (filterText && !file.name.toLowerCase().includes(filterText)) return map;
+      const group = file.category || "\\u5176\\u4ed6";
+      if (!map.has(group)) map.set(group, []);
+      map.get(group).push(file);
+      return map;
+    }, new Map());
+    const updateCount = () => {
+      document.getElementById("summary").textContent = "\\u5171\\u68c0\\u7d22\\u5230 " + files.length + " \\u4e2a Figma Design \\u6587\\u4ef6\\uff0c\\u6309\\u6765\\u6e90\\u5206\\u7c7b\\u663e\\u793a\\u3002";
+      document.getElementById("count").textContent = "\\u5df2\\u9009\\u62e9 " + selected.size + " / " + files.length + " \\u4e2a";
+      document.getElementById("export").disabled = selected.size === 0;
+    };
+    const render = () => {
+      const list = document.getElementById("list");
+      list.innerHTML = "";
+      for (const [category, groupFiles] of byCategory().entries()) {
+        const group = document.createElement("section");
+        group.className = "group";
+        const title = document.createElement("div");
+        title.className = "group-title";
+        const groupCheck = document.createElement("input");
+        groupCheck.type = "checkbox";
+        groupCheck.checked = groupFiles.every((file) => selected.has(file.key));
+        groupCheck.indeterminate = !groupCheck.checked && groupFiles.some((file) => selected.has(file.key));
+        groupCheck.onchange = () => {
+          for (const file of groupFiles) groupCheck.checked ? selected.add(file.key) : selected.delete(file.key);
+          render();
+        };
+        title.appendChild(groupCheck);
+        title.appendChild(document.createTextNode(category + " (" + groupFiles.length + ")"));
+        group.appendChild(title);
+        for (const file of groupFiles) {
+          const row = document.createElement("label");
+          row.className = "row";
+          const check = document.createElement("input");
+          check.type = "checkbox";
+          check.checked = selected.has(file.key);
+          check.onchange = () => {
+            check.checked ? selected.add(file.key) : selected.delete(file.key);
+            updateCount();
+            render();
+          };
+          const info = document.createElement("div");
+          const name = document.createElement("div");
+          name.className = "name";
+          name.textContent = file.name || "Untitled";
+          const url = document.createElement("div");
+          url.className = "url";
+          url.textContent = file.sourceUrl || file.url;
+          info.appendChild(name);
+          info.appendChild(url);
+          row.appendChild(check);
+          row.appendChild(info);
+          group.appendChild(row);
+        }
+        list.appendChild(group);
+      }
+      updateCount();
+    };
+    document.getElementById("selectAll").onclick = () => { selected = new Set(files.map((file) => file.key)); render(); };
+    document.getElementById("selectNone").onclick = () => { selected = new Set(); render(); };
+    document.getElementById("filter").oninput = (event) => { filterText = event.target.value.trim().toLowerCase(); render(); };
+    document.getElementById("cancel").onclick = () => { window.__FIGBOOST_SELECTION_RESULT__ = { canceled: true }; };
+    document.getElementById("export").onclick = () => { window.__FIGBOOST_SELECTION_RESULT__ = { canceled: false, keys: Array.from(selected) }; };
+    render();
+  </script>
+</body>
+</html>
+`)}`);
+    selectionWindow.once("ready-to-show", () => {
+      if (!selectionWindow.isDestroyed()) selectionWindow.show();
+    });
+    while (!selectionWindow.isDestroyed()) {
+      const result = await selectionWindow.webContents.executeJavaScript("window.__FIGBOOST_SELECTION_RESULT__ || null", true).catch(() => null);
+      if (result) {
+        selectionWindow.close();
+        if (result.canceled) return null;
+        const keys = new Set(result.keys || []);
+        return files.filter((file) => keys.has(file.key));
+      }
+      await sleep(200);
+    }
+    return null;
+  }
+
+  function cleanDiscoveredFileName(value) {
+    return String(value || "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function sanitizeWindowsFileName(value) {
+    let name = cleanDiscoveredFileName(value)
+      .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "_")
+      .replace(/[. ]+$/g, "")
+      .trim();
+    if (!name) name = "Untitled";
+    if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(name)) name = `_${name}`;
+    return name.slice(0, 180);
+  }
+
+  function getFileNameFromUrlSlug(slug, key) {
+    try {
+      const decoded = decodeURIComponent(String(slug || "").replace(/\+/g, " "));
+      const cleaned = cleanDiscoveredFileName(decoded.replace(/[-_]+/g, " "));
+      if (cleaned) return cleaned;
+    } catch (_) {}
+    return key || "Untitled";
+  }
+
+  function toFigmaAbsoluteUrl(href) {
+    try {
+      const url = new URL(href, "https://www.figma.com");
+      if (!/(^|\.)figma\.com$/i.test(url.hostname)) return null;
+      url.hostname = "www.figma.com";
+      url.hash = "";
+      return url.toString();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function getFigmaPageCategory(sourceUrl, sourceTitle) {
+    const url = String(sourceUrl || "");
+    const title = cleanDiscoveredFileName(String(sourceTitle || "").replace(/\s*[-|]\s*Figma.*$/i, ""));
+    if (/\/files\/drafts/i.test(url)) return "\u8349\u7a3f";
+    if (/\/files\/recent/i.test(url)) return "\u6700\u8fd1";
+    if (/\/files\/team/i.test(url)) return title && !/^Figma$/i.test(title) ? `\u56e2\u961f / ${title}` : "\u56e2\u961f\u6587\u4ef6";
+    if (/\/files\/project/i.test(url)) return title ? `\u9879\u76ee / ${title}` : "\u9879\u76ee";
+    if (/\/files/i.test(url)) return title && !/^Figma$/i.test(title) ? title : "\u6240\u6709\u9879\u76ee";
+    return title || "\u5176\u4ed6";
+  }
+
+  function extractFigmaFileLink(href, label, sourceUrl, sourceTitle) {
+    const url = toFigmaAbsoluteUrl(href);
+    if (!url) return null;
+    const match = /^https:\/\/www\.figma\.com\/(?:file|design)\/([A-Za-z0-9]+)(?:\/([^?#]+))?/i.exec(url);
+    if (!match) return null;
+    const name = cleanDiscoveredFileName(label) || getFileNameFromUrlSlug(match[2], match[1]);
+    const category = getFigmaPageCategory(sourceUrl, sourceTitle);
+    return {
+      key: match[1],
+      name,
+      url,
+      sourceUrl,
+      categories: [category]
+    };
+  }
+
+  function shouldScanFigmaPage(href) {
+    const url = toFigmaAbsoluteUrl(href);
+    if (!url) return false;
+    try {
+      const parsed = new URL(url);
+      if (!parsed.pathname.startsWith("/files")) return false;
+      if (/\/(?:file|design)\//i.test(parsed.pathname)) return false;
+      if (/deleted|trash|community/i.test(parsed.pathname)) return false;
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function shouldReadVisibleFigmaPage(url) {
+    const absoluteUrl = toFigmaAbsoluteUrl(url);
+    if (!absoluteUrl) return false;
+    try {
+      const parsed = new URL(absoluteUrl);
+      if (!parsed.pathname.startsWith("/files")) return false;
+      if (/\/files\/(?:recent|drafts)\b/i.test(parsed.pathname)) return false;
+      if (/desktop_new_tab/i.test(absoluteUrl)) return false;
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  async function loadFigmaPage(window, url) {
+    try {
+      await window.loadURL(url);
+    } catch (_) {}
+    await sleep(700);
+  }
+
+  async function readFigmaPageLinks(window) {
+    return window.webContents.executeJavaScript(`(async () => {
+      const scrollTargets = () => {
+        const targets = [document.scrollingElement, document.documentElement, document.body].filter(Boolean);
+        for (const element of Array.from(document.querySelectorAll("div,main,section"))) {
+          if (element.scrollHeight > element.clientHeight + 120) targets.push(element);
+        }
+        return Array.from(new Set(targets));
+      };
+      let lastLinkCount = -1;
+      let stableCount = 0;
+      for (let index = 0; index < 14 && stableCount < 3; index += 1) {
+        for (const target of scrollTargets()) target.scrollTop = target.scrollHeight;
+        window.scrollTo(0, document.body ? document.body.scrollHeight : 0);
+        await new Promise((resolve) => setTimeout(resolve, 260));
+        const nextLinkCount = document.querySelectorAll("a[href]").length;
+        if (nextLinkCount === lastLinkCount) stableCount += 1;
+        else stableCount = 0;
+        lastLinkCount = nextLinkCount;
+      }
+      const visibleText = (element) => (element && element.innerText || element && element.textContent || "")
+        .replace(/\\s+/g, " ")
+        .trim();
+      const isVisible = (element) => {
+        const rect = element.getBoundingClientRect();
+        const style = window.getComputedStyle(element);
+        return rect.width > 80 && rect.height > 24 && style.visibility !== "hidden" && style.display !== "none";
+      };
+      const candidates = [];
+      const seenTexts = new Set();
+      Array.from(document.querySelectorAll("a[href],button,[role='button'],[tabindex],div,li")).forEach((element) => {
+        if (!isVisible(element)) return;
+        const text = visibleText(element);
+        if (!text || text.length > 220 || seenTexts.has(text)) return;
+        if (!/(\\d+\\s*(files?|文件)|草稿|最近|所有项目|团队|项目|文件夹|All projects|Drafts|Recent|Teams?|Projects?|Folders?)/i.test(text)) return;
+        seenTexts.add(text);
+        candidates.push({
+          text,
+          href: element.href || element.getAttribute("href") || "",
+          rect: (() => {
+            const rect = element.getBoundingClientRect();
+            return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+          })()
+        });
+      });
+      return {
+        title: document.title || "",
+        url: location.href,
+        links: Array.from(document.querySelectorAll("a[href]")).map((link) => ({
+          href: link.href,
+          label: [
+            link.getAttribute("aria-label"),
+            link.getAttribute("title"),
+            link.textContent
+          ].filter(Boolean).join(" ")
+        })),
+        candidates
+      };
+    })();`, true);
+  }
+
+  async function clickFigmaPageCandidate(window, candidateText) {
+    return window.webContents.executeJavaScript(`(() => {
+      const targetText = ${JSON.stringify(candidateText)};
+      const visibleText = (element) => (element && element.innerText || element && element.textContent || "")
+        .replace(/\\s+/g, " ")
+        .trim();
+      const isVisible = (element) => {
+        const rect = element.getBoundingClientRect();
+        const style = window.getComputedStyle(element);
+        return rect.width > 80 && rect.height > 24 && style.visibility !== "hidden" && style.display !== "none";
+      };
+      const candidates = Array.from(document.querySelectorAll("a[href],button,[role='button'],[tabindex],div,li"))
+        .filter((element) => isVisible(element) && visibleText(element) === targetText);
+      const element = candidates[0];
+      if (!element) return false;
+      element.scrollIntoView({ block: "center", inline: "center" });
+      const rect = element.getBoundingClientRect();
+      const target = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2) || element;
+      target.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
+      target.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window }));
+      target.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+      return true;
+    })();`, true);
+  }
+
+  function mergeDiscoveredPage(page, filesByKey, queue, seenPages) {
+    for (const link of page.links || []) {
+      const file = extractFigmaFileLink(link.href, link.label, page.url, page.title);
+      if (file) {
+        if (!filesByKey.has(file.key)) {
+          filesByKey.set(file.key, file);
+        } else {
+          const existing = filesByKey.get(file.key);
+          existing.categories = Array.from(new Set([...(existing.categories || []), ...(file.categories || [])]));
+        }
+        continue;
+      }
+      const nextPage = shouldScanFigmaPage(link.href) ? toFigmaAbsoluteUrl(link.href) : null;
+      if (nextPage && !seenPages.has(nextPage) && !queue.includes(nextPage)) queue.push(nextPage);
+    }
+  }
+
+  function enqueueFigmaProjectCandidates(page, queue, seenPages) {
+    for (const candidate of page.candidates || []) {
+      if (!/\d+\s*(files?|文件)|团队|项目|文件夹|Teams?|Projects?|Folders?/i.test(candidate.text)) continue;
+      const job = {
+        url: page.url,
+        clickText: candidate.text
+      };
+      const marker = `${job.url}#${job.clickText}`;
+      if (!seenPages.has(marker) && !queue.some((item) => item && item.url === job.url && item.clickText === job.clickText)) {
+        queue.push(job);
+      }
+    }
+  }
+
+  async function discoverFigmaFiles(progress) {
+    const owner = BrowserWindow.getFocusedWindow();
+    const createScanWindow = () => {
+      const scanWindow = new BrowserWindow({
+        width: 1280,
+        height: 900,
+        show: false,
+        autoHideMenuBar: true,
+        webPreferences: {
+          nodeIntegration: false,
+          contextIsolation: true
+        }
+      });
+      scanWindow.webContents.__FIGBOOST_SKIP_RENDERER_INJECTION__ = true;
+      return scanWindow;
+    };
+    const queue = [
+      "https://www.figma.com/files",
+      "https://www.figma.com/files/recent",
+      "https://www.figma.com/files/team",
+      "https://www.figma.com/files/projects"
+    ];
+    const seenPages = new Set();
+    const filesByKey = new Map();
+    const scanWindows = [createScanWindow(), createScanWindow(), createScanWindow()];
+    let scannedCount = 0;
+    const maxPages = 260;
+    try {
+      for (const contents of webContents.getAllWebContents()) {
+        try {
+          if (!contents || contents.isDestroyed() || contents.__FIGBOOST_SKIP_RENDERER_INJECTION__) continue;
+          if (!/^https:\/\/([^/]+\.)?figma\.com/i.test(contents.getURL())) continue;
+          if (/\/files\/drafts\b/i.test(contents.getURL())) continue;
+          const page = await readFigmaPageLinks({ webContents: contents });
+          mergeDiscoveredPage(page, filesByKey, queue, seenPages);
+          enqueueFigmaProjectCandidates(page, queue, seenPages);
+        } catch (_) {}
+      }
+      while (queue.length && seenPages.size < maxPages) {
+        const job = queue.shift();
+        const pageUrl = typeof job === "string" ? job : job && job.url;
+        const clickText = typeof job === "object" && job ? job.clickText : "";
+        const pageMarker = clickText ? `${pageUrl}#${clickText}` : pageUrl;
+        if (!pageUrl || seenPages.has(pageMarker)) continue;
+        seenPages.add(pageMarker);
+        if (progress) {
+          progress.update({
+            sub: clickText ? "\u6b63\u5728\u6253\u5f00\u9879\u76ee\uff1a" + clickText : "\u6b63\u5728\u626b\u63cf\u9875\u9762\uff1a" + pageUrl,
+            foot: `\u5df2\u68c0\u7d22 ${filesByKey.size} \u4e2a\u6587\u4ef6\uff0c${seenPages.size} \u4e2a\u9875\u9762`
+          });
+        }
+        const scanWindow = scanWindows[seenPages.size % scanWindows.length];
+        await loadFigmaPage(scanWindow, pageUrl);
+        if (clickText) {
+          const clicked = await clickFigmaPageCandidate(scanWindow, clickText);
+          if (!clicked) continue;
+          await sleep(900);
+        }
+        let page;
+        try {
+          page = await readFigmaPageLinks(scanWindow);
+        } catch (_) {
+          continue;
+        }
+        mergeDiscoveredPage(page, filesByKey, queue, seenPages);
+        const candidates = (page.candidates || [])
+          .filter((candidate) => /\d+\s*(files?|文件)|团队|项目|文件夹|Teams?|Projects?|Folders?/i.test(candidate.text))
+          .slice(0, 40);
+        for (const candidate of candidates) {
+          if (seenPages.size >= maxPages) break;
+          const marker = `${pageUrl}#${candidate.text}`;
+          if (seenPages.has(marker)) continue;
+          seenPages.add(marker);
+          if (progress) {
+            progress.update({
+              sub: "\u6b63\u5728\u6253\u5f00\u9879\u76ee\uff1a" + candidate.text,
+              foot: `\u5df2\u68c0\u7d22 ${filesByKey.size} \u4e2a\u6587\u4ef6\uff0c${seenPages.size} \u4e2a\u9875\u9762`
+            });
+          }
+          await loadFigmaPage(scanWindow, pageUrl);
+          const clicked = await clickFigmaPageCandidate(scanWindow, candidate.text);
+          if (!clicked) continue;
+          await sleep(900);
+          let childPage;
+          try {
+            childPage = await readFigmaPageLinks(scanWindow);
+          } catch (_) {
+            continue;
+          }
+          mergeDiscoveredPage(childPage, filesByKey, queue, seenPages);
+        }
+      }
+    } finally {
+      for (const scanWindow of scanWindows) {
+        if (!scanWindow.isDestroyed()) scanWindow.close();
+      }
+      if (owner && !owner.isDestroyed()) owner.focus();
+    }
+    return Array.from(filesByKey.values()).sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
+  }
+
+  function createTimestampExportDir(rootDir) {
+    const now = new Date();
+    const pad = (value) => String(value).padStart(2, "0");
+    const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    let dir = path.join(rootDir, stamp);
+    let index = 2;
+    while (fs.existsSync(dir)) {
+      dir = path.join(rootDir, `${stamp}-${index}`);
+      index += 1;
+    }
+    fs.mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+
+  function getUniqueExportPath(exportDir, fileName, usedPaths) {
+    const base = sanitizeWindowsFileName(fileName);
+    let candidate = path.join(exportDir, `${base}.fig`);
+    let index = 2;
+    while (usedPaths.has(candidate.toLowerCase()) || fs.existsSync(candidate)) {
+      candidate = path.join(exportDir, `${base} (${index}).fig`);
+      index += 1;
+    }
+    usedPaths.add(candidate.toLowerCase());
+    return candidate;
+  }
+
+  async function waitForStableFile(filePath, timeoutMs) {
+    const start = Date.now();
+    let lastSize = -1;
+    let stableCount = 0;
+    while (Date.now() - start < timeoutMs) {
+      if (fs.existsSync(filePath)) {
+        const size = fs.statSync(filePath).size;
+        if (size > 0 && size === lastSize) {
+          stableCount += 1;
+          if (stableCount >= 2) return;
+        } else {
+          stableCount = 0;
+          lastSize = size;
+        }
+      }
+      await sleep(800);
+    }
+    throw new Error("\u7b49\u5f85\u672c\u5730\u526f\u672c\u6587\u4ef6\u751f\u6210\u8d85\u65f6");
+  }
+
+  function waitForDownloadToPath(contents, targetPath, timeoutMs) {
+    return new Promise((resolve, reject) => {
+      let timer = null;
+      const session = contents.session;
+      const cleanup = () => {
+        if (timer) clearTimeout(timer);
+        session.removeListener("will-download", onDownload);
+      };
+      const onDownload = (_, item) => {
+        try {
+          item.setSavePath(targetPath);
+          item.once("done", (_event, state) => {
+            cleanup();
+            if (state === "completed") resolve();
+            else reject(new Error(`\u4e0b\u8f7d\u672c\u5730\u526f\u672c\u5931\u8d25\uff1a${state}`));
+          });
+        } catch (error) {
+          cleanup();
+          reject(error);
+        }
+      };
+      timer = setTimeout(() => {
+        cleanup();
+        reject(new Error("\u7b49\u5f85 Figma \u672c\u5730\u526f\u672c\u4e0b\u8f7d\u8d85\u65f6"));
+      }, timeoutMs);
+      session.once("will-download", onDownload);
+    });
+  }
+
+  function findMenuItem(patterns) {
+    const menu = Menu.getApplicationMenu();
+    const tests = patterns.map((pattern) => pattern instanceof RegExp ? pattern : new RegExp(pattern, "i"));
+    const visit = (items) => {
+      for (const item of items || []) {
+        const label = String(item.label || "");
+        if (tests.some((pattern) => pattern.test(label))) return item;
+        const found = item.submenu && visit(item.submenu.items);
+        if (found) return found;
+      }
+      return null;
+    };
+    return menu && visit(menu.items);
+  }
+
+  function clickMenuItem(patterns, owner, missingMessage) {
+    const item = findMenuItem(patterns);
+    if (!item || typeof item.click !== "function") throw new Error(missingMessage);
+    item.click(item, owner || BrowserWindow.getFocusedWindow(), { triggeredByAccelerator: false });
+  }
+
+  function getFigmaDesktopInternals() {
+    try {
+      const windowManager = typeof V !== "undefined" ? V : null;
+      const openUrl = typeof io === "function" ? io : null;
+      if (windowManager && typeof windowManager.newWindow === "function" && openUrl) {
+        return { windowManager, openUrl };
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  function moveExportWindowToBackground(browserWindow, owner) {
+    if (!browserWindow || browserWindow.isDestroyed()) return;
+    try { browserWindow.setSkipTaskbar(true); } catch (_) {}
+    try { browserWindow.setBounds({ x: -32000, y: -32000, width: 1280, height: 900 }); } catch (_) {}
+    try { browserWindow.showInactive(); } catch (_) {}
+    if (owner && !owner.isDestroyed()) {
+      try { owner.focus(); } catch (_) {}
+    }
+  }
+
+  function createFigmaExportContext(owner) {
+    const internals = getFigmaDesktopInternals();
+    if (!internals) return { owner, close() {} };
+    try {
+      const desktopWindow = internals.windowManager.newWindow();
+      const browserWindow = desktopWindow && desktopWindow.browserWindow;
+      moveExportWindowToBackground(browserWindow, owner);
+      return {
+        internals,
+        desktopWindow,
+        browserWindow,
+        owner: browserWindow || owner,
+        close() {
+          try {
+            if (browserWindow && !browserWindow.isDestroyed()) browserWindow.close();
+          } catch (_) {}
+        }
+      };
+    } catch (_) {
+      return { owner, close() {} };
+    }
+  }
+
+  async function withSaveDialogTarget(targetPath, task) {
+    const originalShowSaveDialog = dialog.showSaveDialog;
+    const originalShowSaveDialogSync = dialog.showSaveDialogSync;
+    dialog.showSaveDialog = async () => ({ canceled: false, filePath: targetPath });
+    dialog.showSaveDialogSync = () => targetPath;
+    try {
+      return await task();
+    } finally {
+      dialog.showSaveDialog = originalShowSaveDialog;
+      dialog.showSaveDialogSync = originalShowSaveDialogSync;
+    }
+  }
+
+  function getFigmaFileKey(url) {
+    const match = /\/(?:file|design)\/([A-Za-z0-9]+)/.exec(String(url || ""));
+    return match && match[1];
+  }
+
+  function findFigmaWebContentsByFileKey(fileKey) {
+    if (!fileKey) return null;
+    return webContents.getAllWebContents().find((contents) => {
+      if (!contents || contents.isDestroyed()) return false;
+      return contents.getURL().includes(`/file/${fileKey}`) || contents.getURL().includes(`/design/${fileKey}`);
+    }) || null;
+  }
+
+  async function waitForFigmaFileWebContents(fileUrl, timeoutMs) {
+    const fileKey = getFigmaFileKey(fileUrl);
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      const contents = findFigmaWebContentsByFileKey(fileKey);
+      if (contents && !contents.isLoading()) return contents;
+      await sleep(500);
+    }
+    throw new Error("\u7b49\u5f85 Figma \u6253\u5f00\u753b\u677f\u6587\u4ef6\u8d85\u65f6");
+  }
+
+  function getActiveWebContentsFromExportContext(exportContext) {
+    try {
+      const view = exportContext && exportContext.desktopWindow && exportContext.desktopWindow.activeView;
+      return view && view.webContents && !view.webContents.isDestroyed() ? view.webContents : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async function waitForExportContextFileWebContents(exportContext, fileUrl, timeoutMs) {
+    const fileKey = getFigmaFileKey(fileUrl);
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      const active = getActiveWebContentsFromExportContext(exportContext);
+      if (active && (active.getURL().includes(`/file/${fileKey}`) || active.getURL().includes(`/design/${fileKey}`)) && !active.isLoading()) {
+        return active;
+      }
+      await sleep(500);
+    }
+    throw new Error("\u7b49\u5f85 Figma \u540e\u53f0\u7a97\u53e3\u6253\u5f00\u753b\u677f\u6587\u4ef6\u8d85\u65f6");
+  }
+
+  async function openFigmaFileInDesktop(owner, fileUrl, exportContext) {
+    if (exportContext && exportContext.internals && exportContext.desktopWindow) {
+      exportContext.internals.openUrl(fileUrl, {
+        targetWindow: exportContext.desktopWindow,
+        isExternalOpen: true,
+        openInBackground: false,
+        source: "figboost-bulk-export"
+      });
+      moveExportWindowToBackground(exportContext.browserWindow, owner);
+      const contents = await waitForExportContextFileWebContents(exportContext, fileUrl, 90000);
+      await sleep(2500);
+      return { owner: exportContext.browserWindow || owner, contents, exportContext };
+    }
+    const previousClipboard = clipboard.readText();
+    try {
+      clipboard.writeText(fileUrl);
+      clickMenuItem([
+        /Open File URL From Clipboard/i,
+        /\u4ece\u526a\u8d34\u677f\u6253\u5f00\u6587\u4ef6\s*URL/i
+      ], owner, "\u627e\u4e0d\u5230 Figma \u7684\u201c\u4ece\u526a\u8d34\u677f\u6253\u5f00\u6587\u4ef6 URL\u201d\u547d\u4ee4");
+    } finally {
+      clipboard.writeText(previousClipboard || "");
+    }
+    const contents = await waitForFigmaFileWebContents(fileUrl, 90000);
+    owner = BrowserWindow.fromWebContents(contents) || owner || BrowserWindow.getFocusedWindow();
+    if (owner && !owner.isDestroyed()) {
+      owner.show();
+      owner.focus();
+    }
+    await sleep(3000);
+    return { owner, contents };
+  }
+
+  async function triggerFigmaSaveLocalCopy(owner, exportContext) {
+    if (exportContext && exportContext.desktopWindow && typeof exportContext.desktopWindow.postMessageToActiveWebBinding === "function") {
+      exportContext.desktopWindow.postMessageToActiveWebBinding("handleAction", "save-as", "os-menu");
+      return;
+    }
+    clickMenuItem([
+      /Save Local Copy/i,
+      /\u4fdd\u5b58\u672c\u5730\u526f\u672c/i
+    ], owner, "\u627e\u4e0d\u5230 Figma \u7684\u201c\u4fdd\u5b58\u672c\u5730\u526f\u672c\u201d\u547d\u4ee4");
+  }
+
+  async function exportFigmaFileLocalCopy(file, targetPath, exportContext) {
+    const owner = BrowserWindow.getFocusedWindow();
+    const opened = await openFigmaFileInDesktop(owner, file.url, exportContext);
+    await withSaveDialogTarget(targetPath, async () => {
+      const download = waitForDownloadToPath(opened.contents, targetPath, 300000);
+      await triggerFigmaSaveLocalCopy(opened.owner, opened.exportContext);
+      await download;
+    });
+    await waitForStableFile(targetPath, 300000);
+  }
+
+  async function bulkExportFigmaFiles() {
+    if (global.__FIGBOOST_BULK_EXPORT_RUNNING__) {
+      await dialog.showMessageBox({
+        type: "info",
+        title: "\u6b63\u5728\u6279\u91cf\u5bfc\u51fa",
+        message: "\u753b\u677f\u6587\u4ef6\u6b63\u5728\u6279\u91cf\u5bfc\u51fa\uff0c\u8bf7\u7a0d\u5019\u3002"
+      });
+      return { running: true };
+    }
+    global.__FIGBOOST_BULK_EXPORT_RUNNING__ = true;
+    const owner = BrowserWindow.getFocusedWindow();
+    const progress = createBulkExportProgressWindow(owner);
+    try {
+      let files = await discoverFigmaFiles(progress);
+      if (!files.length) {
+        progress.close();
+        await showMessageBoxForOwner(owner, {
+          type: "info",
+          title: "\u672a\u68c0\u7d22\u5230\u6587\u4ef6",
+          message: "\u6ca1\u6709\u68c0\u7d22\u5230\u5f53\u524d\u8d26\u53f7\u53ef\u89c1\u7684 Figma Design \u6587\u4ef6\u3002",
+          detail: "\u8bf7\u786e\u8ba4 Figma Desktop \u5df2\u767b\u5f55\uff0c\u5e76\u4e14\u5f53\u524d\u8d26\u53f7\u6709\u6743\u9650\u8bbf\u95ee\u76f8\u5e94\u56e2\u961f\u6216\u9879\u76ee\u3002"
+        });
+        return { files: 0 };
+      }
+      progress.update({
+        title: "\u68c0\u7d22\u5b8c\u6210",
+        sub: `\u5171\u68c0\u7d22\u5230 ${files.length} \u4e2a Figma Design \u6587\u4ef6`,
+        foot: "\u8bf7\u5728\u5217\u8868\u4e2d\u52fe\u9009\u8981\u5bfc\u51fa\u7684\u6587\u4ef6"
+      });
+      progress.close();
+      files = await showBulkExportSelectionWindow(owner, files);
+      if (!files || !files.length) return { canceled: true };
+      const selected = await showOpenDialogForOwner(owner, {
+        title: "\u9009\u62e9\u6279\u91cf\u5bfc\u51fa\u4fdd\u5b58\u4f4d\u7f6e",
+        properties: ["openDirectory", "createDirectory"]
+      });
+      if (selected.canceled || !selected.filePaths || !selected.filePaths[0]) {
+        return { canceled: true, files: files.length };
+      }
+      const exportDir = createTimestampExportDir(selected.filePaths[0]);
+      const usedPaths = new Set();
+      const succeeded = [];
+      const failed = [];
+      const exportContext = createFigmaExportContext(owner);
+      const exportProgress = createBulkExportProgressWindow(owner);
+      try {
+        for (let index = 0; index < files.length; index += 1) {
+          const file = files[index];
+          const targetPath = getUniqueExportPath(exportDir, file.name, usedPaths);
+          exportProgress.update({
+            title: "\u6b63\u5728\u6279\u91cf\u5bfc\u51fa",
+            sub: `${index + 1}/${files.length} ${file.name}`,
+            foot: exportDir
+          });
+          try {
+            await exportFigmaFileLocalCopy(file, targetPath, exportContext);
+            succeeded.push({ file, targetPath });
+          } catch (error) {
+            failed.push({
+              file,
+              error: error && error.message ? error.message : String(error)
+            });
+          }
+        }
+      } finally {
+        exportContext.close();
+        exportProgress.close();
+      }
+      progress.close();
+      const failedDetail = failed.slice(0, 8).map((entry) => `${entry.file.name}: ${entry.error}`).join("\n");
+      await showMessageBoxForOwner(owner, {
+        type: failed.length ? "warning" : "info",
+        title: "\u6279\u91cf\u5bfc\u51fa\u5b8c\u6210",
+        message: `\u6210\u529f ${succeeded.length} \u4e2a\uff0c\u5931\u8d25 ${failed.length} \u4e2a\u3002`,
+        detail: `\u5bfc\u51fa\u76ee\u5f55\uff1a${exportDir}${failedDetail ? "\n\n\u5931\u8d25\u6587\u4ef6\uff1a\n" + failedDetail : ""}`
+      });
+      return { ok: true, exportDir, succeeded: succeeded.length, failed: failed.length };
+    } catch (error) {
+      progress.close();
+      await showMessageBoxForOwner(owner, {
+        type: "error",
+        title: "\u6279\u91cf\u5bfc\u51fa\u5931\u8d25",
+        message: "\u65e0\u6cd5\u6279\u91cf\u5bfc\u51fa\u753b\u677f\u6587\u4ef6",
+        detail: error && error.message ? error.message : String(error)
+      });
+      return { ok: false };
+    } finally {
+      progress.close();
+      global.__FIGBOOST_BULK_EXPORT_RUNNING__ = false;
+    }
+  }
+
+  function registerBulkFigmaFileExport() {
+    if (!ipcMain || global.__FIGBOOST_BULK_EXPORT_IPC_REGISTERED__) return;
+    global.__FIGBOOST_BULK_EXPORT_IPC_REGISTERED__ = true;
+    global.__FIGBOOST_BULK_EXPORT_FILES__ = bulkExportFigmaFiles;
+    ipcMain.handle("figboost:bulk-export-files", () => bulkExportFigmaFiles());
+  }
+
   function buildFigBoostFeatureMenuTemplate() {
     return [
       {
         label: "检查更新",
         click: () => {
           checkOfficialUpdateManually();
+        }
+      },
+      { type: "separator" },
+      {
+        label: "\u6279\u91cf\u5bfc\u51fa\u753b\u677f\u6587\u4ef6...",
+        click: () => {
+          bulkExportFigmaFiles();
         }
       }
     ];
@@ -665,6 +1611,11 @@
               value: (bounds) => ipcRenderer.invoke("figboost:open-feature-menu", bounds)
             });
           }
+          if (ipcRenderer && !window.__FIGBOOST_BULK_EXPORT_FILES__) {
+            Object.defineProperty(window, "__FIGBOOST_BULK_EXPORT_FILES__", {
+              value: () => ipcRenderer.invoke("figboost:bulk-export-files")
+            });
+          }
         } catch (_) {
           window.__FIGBOOST_UPDATE_BUTTON_ENABLED__ = true;
           ${showTitlebarButton ? "window.__FIGBOOST_TITLEBAR_BUTTON_ENABLED__ = true;" : ""}
@@ -690,6 +1641,16 @@
         if (event && event.preventDefault) event.preventDefault();
         const openMenu = global.__FIGBOOST_OPEN_FEATURE_MENU__;
         if (typeof openMenu === "function") openMenu(contents, parseFigBoostMenuBoundsFromUrl(url));
+        return true;
+      }
+      if (/^figboost:\/\/bulk-export-files/i.test(url || "")) {
+        if (event && event.preventDefault) event.preventDefault();
+        const bulkExport = global.__FIGBOOST_BULK_EXPORT_FILES__;
+        if (typeof bulkExport === "function") {
+          Promise.resolve(bulkExport()).finally(() => dispatchUpdateCheckFinished(contents));
+        } else {
+          dispatchUpdateCheckFinished(contents);
+        }
         return true;
       }
       if (!/^figboost:\/\/check-official-update/i.test(url || "")) return false;
@@ -756,6 +1717,7 @@
     hookAboutPanelOptions();
     hookBuiltInUpdateChecks();
     registerManualOfficialUpdateCheck();
+    registerBulkFigmaFileExport();
     registerFigBoostFeatureMenu();
     registerRendererInjection();
     app.whenReady().then(scheduleLocalize).catch(() => {});

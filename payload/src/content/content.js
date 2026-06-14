@@ -55,6 +55,12 @@
       : null;
   }
 
+  function getFigBoostBulkExportBridge() {
+    return typeof window.__FIGBOOST_BULK_EXPORT_FILES__ === "function"
+      ? window.__FIGBOOST_BULK_EXPORT_FILES__
+      : null;
+  }
+
   function isFigBoostUpdateButtonEnabled() {
     return Boolean(window.__FIGBOOST_UPDATE_BUTTON_ENABLED__ || getFigBoostUpdateBridge() || window.__FIGMA_ZH_TEST_UPDATE_BUTTON__);
   }
@@ -66,6 +72,13 @@
       busyLabel: "检查中...",
       title: "检查 Figma 官方新版",
       run: runOfficialUpdateCheck
+    },
+    {
+      id: "bulk-export-files",
+      label: "批量导出画板文件...",
+      busyLabel: "导出中...",
+      title: "检索并批量导出当前账号可见的 Figma 文件",
+      run: runBulkExportFiles
     }
   ];
 
@@ -133,6 +146,24 @@
       };
       window.addEventListener("figboost:update-check-finished", done, { once: true });
       window.location.href = `figboost://check-official-update?ts=${Date.now()}`;
+      setTimeout(done, 45000);
+    });
+  }
+
+  async function runBulkExportFiles() {
+    const bridge = getFigBoostBulkExportBridge();
+    if (bridge) {
+      await bridge();
+      return;
+    }
+
+    await new Promise((resolve) => {
+      const done = () => {
+        window.removeEventListener("figboost:update-check-finished", done);
+        resolve();
+      };
+      window.addEventListener("figboost:update-check-finished", done, { once: true });
+      window.location.href = `figboost://bulk-export-files?ts=${Date.now()}`;
       setTimeout(done, 45000);
     });
   }

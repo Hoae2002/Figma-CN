@@ -1940,7 +1940,7 @@ function Show-Gui {
     [pscustomobject]@{
       Id = "auto-check-official-latest"
       Title = "在 Figma 顶部显示 FigBoost 菜单"
-      Description = "在 Figma 界面顶部显示 FigBoost 入口；菜单中可检查官方最新版，发现新版后询问是否更新。"
+      Description = "在 Figma 界面顶部显示 FigBoost 入口；菜单中可检查官方最新版，也可批量导出当前账号可见的画板文件。"
       ProgressText = "正在安装 FigBoost 菜单功能..."
       FailurePrefix = "附加功能安装失败"
       Action = {
@@ -1954,7 +1954,7 @@ function Show-Gui {
       IsInstalled = { Test-FeatureInstalled $txtRuntime.Text "auto-check-official-latest" }
       SuccessMessage = {
         param($result)
-        return "附加功能已安装。`r`n`r`n之后打开 Figma 时，顶部会显示 FigBoost 入口；打开菜单即可检查官方最新版，发现新版后会先询问再更新。`r`n补丁状态：$(if ($result.Patched) { "已安装" } else { "未安装" })"
+        return "附加功能已安装。`r`n`r`n之后打开 Figma 时，顶部会显示 FigBoost 入口；打开菜单即可检查官方最新版，也可批量导出当前账号可见的画板文件。`r`n补丁状态：$(if ($result.Patched) { "已安装" } else { "未安装" })"
       }
       UninstallProgressText = "正在卸载附加功能..."
       UninstallFailurePrefix = "附加功能卸载失败"

@@ -111,6 +111,9 @@ if ($content -notmatch "resetFigBoostButtonState\(button\)" -or $content -notmat
 if ($content -notmatch "getFigBoostFeatureMenuBridge\(\)" -or $content -notmatch "getFigBoostMenuBounds\(button\)" -or $content -notmatch "bridge\(bounds\)" -or $content -notmatch "figboost://open-feature-menu") {
   throw "Update button titlebar placement must open the native feature menu bridge with button bounds."
 }
+if ($content -notmatch "getFigBoostBulkExportBridge\(\)" -or $content -notmatch "bulk-export-files" -or $content -notmatch "批量导出画板文件") {
+  throw "Update button fallback menu must expose batch file export."
+}
 if ($content -match "await bridge\(getFigBoostMenuBounds\(button\)\)") {
   throw "Update button titlebar click must not wait for the native menu to close."
 }
@@ -134,6 +137,24 @@ $main = Get-Content -LiteralPath (Join-Path $root "payload\src\main\menu-localiz
 if ($main -notmatch 'ipcMain\.handle\("figboost:open-feature-menu"' -or $main -notmatch "Menu\.buildFromTemplate\(buildFigBoostFeatureMenuTemplate\(\)\)" -or $main -notmatch 'label: "检查更新"') {
   throw "Main process must expose a native FigBoost feature menu."
 }
+if ($main -notmatch 'figboost:bulk-export-files' -or $main -notmatch '\\u6279\\u91cf\\u5bfc\\u51fa\\u753b\\u677f\\u6587\\u4ef6\.\.\.' -or $main -notmatch "function bulkExportFigmaFiles" -or $main -notmatch "createTimestampExportDir" -or $main -notmatch "showOpenDialog" -or $main -notmatch "failed\.push") {
+  throw "Native FigBoost feature menu must include batch .fig export with timestamp folder, path selection, and failure summary."
+}
+if ($main -notmatch "function showBulkExportSelectionWindow" -or $main -notmatch "selectAll" -or $main -notmatch "selectNone" -or $main -notmatch "keys: Array\.from\(selected\)" -or $main -notmatch "getFigmaPageCategory" -or $main -notmatch "categories") {
+  throw "Batch .fig export must show a categorized selectable file list with select-all controls."
+}
+if ($main -notmatch "showInactive" -or $main -notmatch "createFigmaExportContext" -or $main -notmatch "moveExportWindowToBackground" -or $main -notmatch 'postMessageToActiveWebBinding\("' -or $main -notmatch "save-as" -or $main -notmatch "maxPages = 260" -or $main -notmatch "scanWindows") {
+  throw "Batch .fig export must reduce foreground disruption, expand scanning, and reuse a background export context."
+}
+if ($main -match 'https://www\.figma\.com/files/drafts') {
+  throw "Batch .fig export scan must not include Drafts pages."
+}
+if ($main -notmatch "function shouldReadVisibleFigmaPage" -or $main -notmatch "desktop_new_tab" -or $main -notmatch "webContents\.getAllWebContents\(\)" -or $main -notmatch "readFigmaPageLinks") {
+  throw "Batch .fig export scan must read visible All Projects pages while filtering drafts, recent, and new-tab cache pages."
+}
+if ($main -notmatch "function waitForDownloadToPath" -or $main -notmatch 'session\.once\("will-download"' -or $main -notmatch "item\.setSavePath\(targetPath\)" -or $main -notmatch "function openFigmaFileInDesktop" -or $main -notmatch "Open File URL From Clipboard" -or $main -notmatch "function withSaveDialogTarget" -or $main -notmatch "dialog\.showSaveDialog = async" -or $main -notmatch "function triggerFigmaSaveLocalCopy" -or $main -notmatch "Save Local Copy" -or $main -match "function findSaveLocalCopyMenuItem" -or $main -match "clickFigmaMainMenu") {
+  throw "Batch .fig export must open real Figma tabs, invoke native Save Local Copy, and intercept the save/download path."
+}
 if ($main -notmatch "findOwnerWindowForWebContents" -or $main -notmatch "window\.getBrowserViews\(\)" -or $main -notmatch "BrowserWindow\.getFocusedWindow\(\)" -or $main -notmatch "normalizeFigBoostMenuBounds" -or $main -notmatch "popupOptions\.x = point\.x" -or $main -notmatch "__FIGBOOST_ACTIVE_FEATURE_MENUS__" -or $main -notmatch "__FIGBOOST_OPEN_FEATURE_MENU__ = openFigBoostFeatureMenu" -or $main -notmatch "menu\.popup\(popupOptions\)") {
   throw "Native FigBoost feature menu must bind to the owning BrowserWindow and button position."
 }
@@ -146,6 +167,9 @@ if ($main -notmatch "dispatchFeatureMenuClosed" -or $main -notmatch "figboost:fe
 
 if ($main -notmatch "function showOfficialUpdateCheckingWindow" -or $main -notmatch "\\u6b63\\u5728\\u68c0\\u67e5\\u66f4\\u65b0" -or $main -notmatch "const checkingWindow = showOfficialUpdateCheckingWindow\(\)" -or $main -notmatch "checkingWindow\.close\(\)") {
   throw "Manual update check must show and close a checking progress dialog."
+}
+if ($main -notmatch "const looksLikeOptions" -or $main -notmatch "const optionIndex = looksLikeOptions\(args\[1\]\) \? 1 : 0;") {
+  throw "Dialog localization hook must not mistake BrowserWindow arguments for message box options."
 }
 if ($main -notmatch "useContentSize: true" -or $main -notmatch "autoHideMenuBar: true" -or $main -notmatch "removeMenu" -or $main -notmatch "overflow:hidden") {
   throw "Manual update checking dialog must hide menus and avoid clipped scrollable content."
