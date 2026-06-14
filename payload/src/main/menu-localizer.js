@@ -398,11 +398,13 @@
   function showOfficialUpdateCheckingWindow() {
     const owner = BrowserWindow.getFocusedWindow();
     const progressWindow = new BrowserWindow({
-      width: 340,
-      height: 140,
+      width: 420,
+      height: 190,
+      useContentSize: true,
       parent: owner || undefined,
       modal: Boolean(owner),
       show: false,
+      autoHideMenuBar: true,
       resizable: false,
       minimizable: false,
       maximizable: false,
@@ -414,17 +416,20 @@
         contextIsolation: true
       }
     });
+    progressWindow.webContents.__FIGBOOST_SKIP_RENDERER_INJECTION__ = true;
     progressWindow.setMenu(null);
+    if (typeof progressWindow.removeMenu === "function") progressWindow.removeMenu();
     progressWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`
 <!doctype html>
 <html>
 <head>
   <meta charset="utf-8">
   <style>
-    body{margin:0;padding:24px 26px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei UI",sans-serif;background:#fff;color:#111;}
-    .title{font-size:16px;font-weight:600;margin-bottom:10px;}
-    .sub{font-size:13px;color:#555;margin-bottom:18px;}
-    .bar{height:4px;overflow:hidden;border-radius:999px;background:#e6e8ec;}
+    html,body{box-sizing:border-box;width:100%;height:100%;margin:0;overflow:hidden;background:#fff;color:#111;}
+    body{padding:26px 30px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei UI",sans-serif;}
+    .title{font-size:20px;line-height:28px;font-weight:700;margin-bottom:8px;}
+    .sub{font-size:14px;line-height:22px;color:#4a5568;margin-bottom:22px;white-space:nowrap;}
+    .bar{height:5px;overflow:hidden;border-radius:999px;background:#e6e8ec;}
     .bar:before{content:"";display:block;width:42%;height:100%;border-radius:999px;background:#1677ff;animation:move 1s ease-in-out infinite;}
     @keyframes move{0%{transform:translateX(-105%);}100%{transform:translateX(245%);}}
   </style>
@@ -703,7 +708,7 @@
   }
 
   function injectRendererPayload(contents) {
-    if (!contents || contents.__FIGBOOST_RENDERER_INJECTED__) return;
+    if (!contents || contents.__FIGBOOST_RENDERER_INJECTED__ || contents.__FIGBOOST_SKIP_RENDERER_INJECTION__) return;
     contents.__FIGBOOST_RENDERER_INJECTED__ = true;
     contents.on("will-navigate", (event, url) => handleFigBoostNavigation(contents, event, url));
     if (contents.setWindowOpenHandler) {
@@ -713,6 +718,7 @@
     }
     const run = () => {
       try {
+        if (contents.__FIGBOOST_SKIP_RENDERER_INJECTION__) return;
         const url = contents.getURL();
         const isFigmaPage = /^https:\/\/([^/]+\.)?figma\.com/i.test(url);
         const bridge = buildFigBoostRendererBridgeScript(!isFigmaPage);

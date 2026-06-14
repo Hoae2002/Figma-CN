@@ -147,6 +147,12 @@ if ($main -notmatch "dispatchFeatureMenuClosed" -or $main -notmatch "figboost:fe
 if ($main -notmatch "function showOfficialUpdateCheckingWindow" -or $main -notmatch "\\u6b63\\u5728\\u68c0\\u67e5\\u66f4\\u65b0" -or $main -notmatch "const checkingWindow = showOfficialUpdateCheckingWindow\(\)" -or $main -notmatch "checkingWindow\.close\(\)") {
   throw "Manual update check must show and close a checking progress dialog."
 }
+if ($main -notmatch "useContentSize: true" -or $main -notmatch "autoHideMenuBar: true" -or $main -notmatch "removeMenu" -or $main -notmatch "overflow:hidden") {
+  throw "Manual update checking dialog must hide menus and avoid clipped scrollable content."
+}
+if ($main -notmatch "__FIGBOOST_SKIP_RENDERER_INJECTION__" -or $main -notmatch "if \(contents\.__FIGBOOST_SKIP_RENDERER_INJECTION__\) return;" -or $main -match 'class="icon"' -or $main -match "\.icon\{") {
+  throw "Manual update checking dialog must not receive injected buttons or extra body icons."
+}
 
 $core = Get-Content -LiteralPath (Join-Path $root "payload\src\content\localizer-core.js") -Raw
 if ($core -notmatch "MAX_TRANSLATION_CACHE_SIZE") {
