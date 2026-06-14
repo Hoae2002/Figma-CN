@@ -38,7 +38,7 @@ if ($content -notmatch "data-placement='tab'") {
 if ($content -notmatch "data-placement='titlebar'") {
   throw "Update button must include the titlebar fallback placement style."
 }
-if ($content -notmatch "right:250px;top:0;border-left:solid 1px var\(--color-bordertranslucent\)") {
+if ($content -notmatch "right:250px;top:0;border-left:solid 1px var\(--color-bordertranslucent\);border-right:solid 1px var\(--color-bordertranslucent\)") {
   throw "Update button titlebar placement must sit on the native titlebar button grid."
 }
 if ($content -notmatch "SHOULD_INSTALL_UPDATE_BUTTON = IS_TEST_PAGE \|\| \(IS_TITLEBAR_PAGE && !IS_FIGMA_PAGE\)") {
@@ -50,7 +50,7 @@ if ($content -notmatch "width:50px;height:38px") {
 if ($content -notmatch "min-width:0;min-height:0") {
   throw "Update button must neutralize inherited button minimum sizes."
 }
-if ($content -notmatch "\.figboost-menu-wrap\[data-placement='titlebar'\] \.figboost-menu-button\{background-color:unset;display:flex;align-items:center;justify-content:center;width:50px;height:38px;-webkit-app-region:no-drag;color:var\(--color-text-secondary\);fill:var\(--color-text-secondary\);--fpl-icon-color:var\(--color-text-secondary\);pointer-events:bounding-box;\}") {
+if ($content -notmatch "\.figboost-menu-wrap\[data-placement='titlebar'\] \.figboost-menu-button\{background-color:unset;display:flex;align-items:center;justify-content:center;width:50px;height:38px;-webkit-app-region:no-drag;color:var\(--color-text-secondary\);fill:var\(--color-text-secondary\);--fpl-icon-color:var\(--color-text-secondary\);pointer-events:bounding-box;cursor:default;\}") {
   throw "Update button titlebar placement must reuse the native caption button style."
 }
 if ($content -notmatch "border-radius:0") {
