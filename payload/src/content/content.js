@@ -98,7 +98,7 @@
       ".figboost-menu-button:focus{outline:0;}",
       ".figboost-menu-button:focus-visible{outline:1px solid #6a6a6a;outline-offset:-1px;}",
       ".figboost-menu-button:disabled{cursor:default;opacity:.55;}",
-      ".figboost-menu-button svg{width:12px;height:12px;display:block;stroke:currentColor;}",
+      ".figboost-menu-button svg{width:13px;height:13px;display:block;stroke:currentColor;}",
       ".figboost-menu-panel{box-sizing:border-box;position:absolute;top:34px;right:0;min-width:148px;padding:6px 0;border:1px solid rgba(0,0,0,.12);border-radius:6px;background:#fff;box-shadow:0 8px 24px rgba(0,0,0,.14);}",
       ".figboost-menu-wrap[data-placement='titlebar'] .figboost-menu-panel{top:44px;}",
       ".figboost-menu-panel[hidden]{display:none;}",
@@ -179,19 +179,19 @@
     button.setAttribute("aria-haspopup", "menu");
     button.setAttribute("aria-expanded", "false");
     button.setAttribute("aria-pressed", "false");
-    button.innerHTML = '<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="3.5" y="3" width="9" height="9.5" rx="1" stroke-width="1.4"/><path d="M6 1.8v2.4M10 1.8v2.4M5.8 6.2h4.4M5.8 8.6h2.7" stroke-width="1.4" stroke-linecap="round"/></svg>';
+    button.innerHTML = '<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="3.5" y="3" width="9" height="9.5" rx="1" stroke-width="1.1"/><path d="M6 1.8v2.4M10 1.8v2.4M5.8 6.2h4.4M5.8 8.6h2.7" stroke-width="1.1" stroke-linecap="round"/></svg>';
     let titlebarUpdateBusy = false;
     button.addEventListener("click", async () => {
       if (host.placement === "titlebar") {
         if (titlebarUpdateBusy) return;
         titlebarUpdateBusy = true;
-        button.setAttribute("aria-pressed", "true");
         try {
           await FIGBOOST_MENU_ITEMS[0].run();
         } catch (error) {
           window.alert(`${FIGBOOST_MENU_ITEMS[0].label}失败：${error && error.message ? error.message : String(error)}`);
         } finally {
           titlebarUpdateBusy = false;
+          button.setAttribute("aria-pressed", "false");
         }
         return;
       }

@@ -71,8 +71,8 @@ if ($content -notmatch "\.figboost-menu-button:active\{background:#424242;color:
 if ($content -notmatch "\.figboost-menu-button:focus-visible\{outline:1px solid #6a6a6a;outline-offset:-1px;\}") {
   throw "Update button focus-visible state must avoid the browser default blue outline."
 }
-if ($content -notmatch "\.figboost-menu-button\[aria-pressed='true'\]") {
-  throw "Update button selected state must persist after pointer hover ends."
+if ($content -match 'button\.setAttribute\("aria-pressed", "true"\)') {
+  throw "Update button titlebar click must not leave a persistent selected highlight."
 }
 if ($content -notmatch "if \(host\.placement === `"titlebar`"\)") {
   throw "Update button titlebar placement must not open a clipped dropdown menu."
@@ -80,11 +80,11 @@ if ($content -notmatch "if \(host\.placement === `"titlebar`"\)") {
 if ($content -notmatch "await FIGBOOST_MENU_ITEMS\[0\]\.run\(\);") {
   throw "Update button titlebar click must run the update check directly."
 }
-if ($content -notmatch "let titlebarUpdateBusy = false;" -or $content -match "button\.disabled = true") {
+if ($content -notmatch "let titlebarUpdateBusy = false;" -or $content -match "button\.disabled = true" -or $content -notmatch 'button\.setAttribute\("aria-pressed", "false"\);') {
   throw "Update button titlebar busy state must not trigger disabled browser styles."
 }
-if ($content -notmatch "svg\{width:12px;height:12px") {
-  throw "Update button icon must match the compact native titlebar icon size."
+if ($content -notmatch "svg\{width:13px;height:13px" -or $content -notmatch 'stroke-width="1\.1"') {
+  throw "Update button icon must be slightly larger with a lighter stroke."
 }
 
 $core = Get-Content -LiteralPath (Join-Path $root "payload\src\content\localizer-core.js") -Raw
