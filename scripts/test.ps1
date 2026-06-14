@@ -143,7 +143,7 @@ if ($main -notmatch 'figboost:bulk-export-files' -or $main -notmatch '\\u6279\\u
 if ($main -notmatch "function showBulkExportSelectionWindow" -or $main -notmatch "selectAll" -or $main -notmatch "selectNone" -or $main -notmatch "keys: Array\.from\(selected\)" -or $main -notmatch "getFigmaPageCategory" -or $main -notmatch "categories") {
   throw "Batch .fig export must show a categorized selectable file list with select-all controls."
 }
-if ($main -notmatch "showInactive" -or $main -notmatch "createFigmaExportContext" -or $main -notmatch "moveExportWindowToBackground" -or $main -notmatch 'postMessageToActiveWebBinding\("' -or $main -notmatch "save-as" -or $main -notmatch "maxPages = 260" -or $main -notmatch "scanWindows") {
+if ($main -notmatch "showInactive" -or $main -notmatch "createFigmaExportContext" -or $main -notmatch "moveExportWindowToBackground" -or $main -notmatch 'postMessageToActiveWebBinding\("' -or $main -notmatch "save-as" -or $main -notmatch "maxPages = 90" -or $main -notmatch "scanTargets") {
   throw "Batch .fig export must reduce foreground disruption, expand scanning, and reuse a background export context."
 }
 if ($main -match 'https://www\.figma\.com/files/drafts') {
@@ -152,7 +152,22 @@ if ($main -match 'https://www\.figma\.com/files/drafts') {
 if ($main -match 'https://www\.figma\.com/files/recent') {
   throw "Batch .fig export scan must not include Recent pages."
 }
-if ($main -notmatch "function shouldReadVisibleFigmaPage" -or $main -notmatch "desktop_new_tab" -or $main -notmatch "webContents\.getAllWebContents\(\)" -or $main -notmatch "readFigmaPageLinks") {
+if ($main -notmatch "function getFigmaFileBrowserUrlsFromSettings" -or $main -notmatch "settings\.json" -or $main -notmatch "all-projects" -or $main -notmatch "function isFigmaProjectOverviewPage") {
+  throw "Batch .fig export scan must use Figma's saved all-projects file browser path and ignore project overview cache links."
+}
+if ($main -notmatch "function getFigmaTeamIdsFromSettings" -or $main -notmatch "fetchFigmaTeamProjectsAndFilesViaRest" -or $main -notmatch "/v1/teams/" -or $main -notmatch "/v1/projects/" -or $main -notmatch "fetchFigmaTeamProjectsViaLiveGraph" -or $main -notmatch "FileBrowserTeamPageProjectsView" -or $main -notmatch "PaginatedFilesByProjectAndEditorTypeView") {
+  throw "Batch .fig export scan must use fast team/project APIs first and fall back to LiveGraph project views."
+}
+if ($main -notmatch "recents-and-sharing\|deleted\|trash\|community" -or $main -match 'recents-and-sharing\?fuid') {
+  throw "Batch .fig export scan must exclude recents-and-sharing and other non-project browser pages."
+}
+if ($main -notmatch 'editorType === "design" \|\| editorType === 0' -or $main -match 'editorType === undefined \|\| editorType === null \|\| editorType === "design"') {
+  throw "Batch .fig export scan must not treat unknown editor types as Figma Design files."
+}
+if ($main -notmatch "function createFigmaScanTarget" -or $main -notmatch "openInBackground: false" -or $main -notmatch "figboost-bulk-scan" -or $main -notmatch "activeJobs" -or $main -notmatch "getFigmaScanTargetWebContents" -or $main -notmatch "scanDeadline" -or $main -notmatch "function isExpectedFigmaScanUrl") {
+  throw "Batch .fig export scan must use real Figma background windows and parallel queue workers."
+}
+if ($main -notmatch "function shouldReadVisibleFigmaPage" -or $main -notmatch "desktop_new_tab" -or $main -notmatch "team_id" -or $main -notmatch "webContents\.getAllWebContents\(\)" -or $main -notmatch "shouldReadVisibleFigmaPage\(currentUrl\)" -or $main -notmatch "readFigmaPageLinksFast" -or $main -notmatch "\\u6587\\u4ef6" -or $main -notmatch "elementFromPoint\(point\.x, point\.y\)") {
   throw "Batch .fig export scan must read visible All Projects pages while filtering drafts, recent, and new-tab cache pages."
 }
 if ($main -notmatch "function waitForDownloadToPath" -or $main -notmatch 'session\.once\("will-download"' -or $main -notmatch "item\.setSavePath\(targetPath\)" -or $main -notmatch "function openFigmaFileInDesktop" -or $main -notmatch "Open File URL From Clipboard" -or $main -notmatch "function withSaveDialogTarget" -or $main -notmatch "dialog\.showSaveDialog = async" -or $main -notmatch "function triggerFigmaSaveLocalCopy" -or $main -notmatch "Save Local Copy" -or $main -match "function findSaveLocalCopyMenuItem" -or $main -match "clickFigmaMainMenu") {

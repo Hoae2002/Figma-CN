@@ -869,6 +869,7 @@
     const match = /^https:\/\/www\.figma\.com\/(?:file|design)\/([A-Za-z0-9]+)(?:\/([^?#]+))?/i.exec(url);
     if (!match) return null;
     const name = cleanDiscoveredFileName(label) || getFileNameFromUrlSlug(match[2], match[1]);
+    if (name === match[1] && isFigmaProjectOverviewPage(sourceUrl)) return null;
     const category = getFigmaPageCategory(sourceUrl, sourceTitle);
     return {
       key: match[1],
@@ -879,6 +880,11 @@
     };
   }
 
+  function isFigmaProjectOverviewPage(sourceUrl) {
+    const url = String(sourceUrl || "");
+    return /desktop_new_tab/i.test(url) || /\/files\/team\/[^/?#]+\/all-projects\b/i.test(url);
+  }
+
   function shouldScanFigmaPage(href) {
     const url = toFigmaAbsoluteUrl(href);
     if (!url) return false;
@@ -886,7 +892,8 @@
       const parsed = new URL(url);
       if (!parsed.pathname.startsWith("/files")) return false;
       if (/\/(?:file|design)\//i.test(parsed.pathname)) return false;
-      if (/deleted|trash|community/i.test(parsed.pathname)) return false;
+      if (/\/files\/(?:drafts|recent|feed)\b/i.test(parsed.pathname)) return false;
+      if (/recents-and-sharing|deleted|trash|community/i.test(parsed.pathname)) return false;
       return true;
     } catch (_) {
       return false;
@@ -898,20 +905,238 @@
     if (!absoluteUrl) return false;
     try {
       const parsed = new URL(absoluteUrl);
+      if (/\/desktop_new_tab\b/i.test(parsed.pathname)) {
+        return Boolean(parsed.searchParams.get("team_id") || parsed.searchParams.get("fuid"));
+      }
       if (!parsed.pathname.startsWith("/files")) return false;
       if (/\/files\/(?:recent|drafts)\b/i.test(parsed.pathname)) return false;
-      if (/desktop_new_tab/i.test(absoluteUrl)) return false;
+      if (/\/files\/feed\b/i.test(parsed.pathname)) return false;
+      if (/recents-and-sharing|deleted|trash|community/i.test(parsed.pathname)) return false;
       return true;
     } catch (_) {
       return false;
     }
   }
 
-  async function loadFigmaPage(window, url) {
+  function getFigmaScanTargetWebContents(target) {
+    if (!target) return null;
+    if (target.webContents && !target.webContents.isDestroyed()) return target.webContents;
     try {
-      await window.loadURL(url);
+      const view = target.desktopWindow && target.desktopWindow.activeView;
+      if (view && view.webContents && !view.webContents.isDestroyed()) return view.webContents;
     } catch (_) {}
-    await sleep(700);
+    try {
+      if (target.browserWindow && !target.browserWindow.isDestroyed()) return target.browserWindow.webContents;
+    } catch (_) {}
+    return null;
+  }
+
+  function closeFigmaScanTarget(target) {
+    try {
+      if (target && target.browserWindow && !target.browserWindow.isDestroyed()) target.browserWindow.close();
+    } catch (_) {}
+    try {
+      if (target && target.window && !target.window.isDestroyed()) target.window.close();
+    } catch (_) {}
+  }
+
+  function createFigmaScanTarget(owner) {
+    const internals = getFigmaDesktopInternals();
+    if (internals) {
+      try {
+        const desktopWindow = internals.windowManager.newWindow();
+        const browserWindow = desktopWindow && desktopWindow.browserWindow;
+        moveExportWindowToBackground(browserWindow, owner);
+        return {
+          internals,
+          desktopWindow,
+          browserWindow,
+          webContents: getFigmaScanTargetWebContents({ desktopWindow, browserWindow })
+        };
+      } catch (_) {}
+    }
+    const scanWindow = new BrowserWindow({
+      width: 1280,
+      height: 900,
+      show: false,
+      autoHideMenuBar: true,
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true
+      }
+    });
+    scanWindow.webContents.__FIGBOOST_SKIP_RENDERER_INJECTION__ = true;
+    return { window: scanWindow, webContents: scanWindow.webContents };
+  }
+
+  function pushCapturedFigmaLink(target, link) {
+    if (!target || !link || !link.href) return;
+    if (!target.capturedLinks) target.capturedLinks = [];
+    if (target.capturedLinks.some((item) => item.href === link.href)) return;
+    target.capturedLinks.push(link);
+  }
+
+  function pushCapturedFigmaProject(target, project) {
+    if (!target || !project || !project.projectId || !project.teamId) return;
+    if (!target.capturedProjects) target.capturedProjects = [];
+    if (target.capturedProjects.some((item) => item.projectId === project.projectId && item.teamId === project.teamId)) return;
+    target.capturedProjects.push(project);
+  }
+
+  function appendCapturedFigmaLinksFromValue(value, links, depth = 0) {
+    if (!value || depth > 8) return;
+    if (typeof value === "string") {
+      const matches = value.match(/(?:https:\/\/www\.figma\.com)?\/(?:file|design)\/[A-Za-z0-9]{16,128}(?:\/[^"'<>\\\s]*)?/g) || [];
+      for (const match of matches) links.push({ href: match, label: "" });
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) appendCapturedFigmaLinksFromValue(item, links, depth + 1);
+      return;
+    }
+    if (typeof value !== "object") return;
+    const key = value.key || value.fileKey || value.file_key || value.figFileKey || value.fig_file_key;
+    const name = value.name || value._name || value.title || value.fileName || value.file_name;
+    const editorType = value.editorType || value.editor_type;
+    const isDesign = editorType === "design" || editorType === 0;
+    const cleanName = cleanDiscoveredFileName(name);
+    if (typeof key === "string" && /^[A-Za-z0-9]{16,128}$/.test(key) && isDesign && cleanName && cleanName !== key) {
+      links.push({ href: "https://www.figma.com/design/" + key, label: cleanName });
+    }
+    for (const item of Object.values(value)) appendCapturedFigmaLinksFromValue(item, links, depth + 1);
+  }
+
+  function appendCapturedFigmaProjectsFromValue(value, projects, depth = 0, inheritedTeamId = "") {
+    if (!value || depth > 8) return;
+    if (Array.isArray(value)) {
+      for (const item of value) appendCapturedFigmaProjectsFromValue(item, projects, depth + 1, inheritedTeamId);
+      return;
+    }
+    if (typeof value !== "object") return;
+    const nextTeamId = value.teamId || value.team_id || inheritedTeamId;
+    if (value.project && typeof value.project === "object") {
+      appendCapturedFigmaProjectsFromValue(value.project, projects, depth + 1, nextTeamId);
+    }
+    const id = value.id || value.projectId || value.project_id;
+    const teamId = nextTeamId;
+    const name = value.name || value.path || value.title;
+    const hasProjectShape = value.filesPartial || value.files || value.fileCount !== undefined || value.folderId !== undefined || value.touchedAt !== undefined || value.teamId !== undefined || value.team_id !== undefined;
+    if (id && teamId && name && !value.key && hasProjectShape) {
+      projects.push({ projectId: String(id), teamId: String(teamId), name: cleanDiscoveredFileName(name) });
+    }
+    for (const item of Object.values(value)) appendCapturedFigmaProjectsFromValue(item, projects, depth + 1, nextTeamId);
+  }
+
+  function extractCapturedFigmaDataFromText(text) {
+    const links = [];
+    const projects = [];
+    const value = String(text || "");
+    if (!value || (!/\/(?:file|design)\//i.test(value) && !/"(?:key|fileKey|file_key|figFileKey|fig_file_key|projectId|project_id|teamId|team_id)"/.test(value))) {
+      return { links, projects };
+    }
+    appendCapturedFigmaLinksFromValue(value, links);
+    try {
+      const parsed = JSON.parse(value);
+      appendCapturedFigmaLinksFromValue(parsed, links);
+      appendCapturedFigmaProjectsFromValue(parsed, projects);
+    } catch (_) {}
+    return { links, projects };
+  }
+
+  function ensureFigmaNetworkCapture(target) {
+    const contents = getFigmaScanTargetWebContents(target);
+    if (!contents || contents.isDestroyed() || contents.__FIGBOOST_NETWORK_CAPTURE__) return;
+    contents.__FIGBOOST_NETWORK_CAPTURE__ = true;
+    try {
+      if (!contents.debugger.isAttached()) contents.debugger.attach("1.3");
+      contents.debugger.sendCommand("Network.enable").catch(() => {});
+      contents.debugger.on("message", async (_event, method, params) => {
+        try {
+          if (method === "Network.webSocketFrameReceived" || method === "Network.webSocketFrameSent") {
+            const data = extractCapturedFigmaDataFromText(params && params.response && params.response.payloadData);
+            for (const link of data.links) pushCapturedFigmaLink(target, link);
+            for (const project of data.projects) pushCapturedFigmaProject(target, project);
+            return;
+          }
+          if (method !== "Network.responseReceived") return;
+          const response = params && params.response;
+          const url = response && response.url;
+          if (!url || !/figma\.com\/(?:api|internal|livegraph)/i.test(url)) return;
+          const body = await contents.debugger.sendCommand("Network.getResponseBody", { requestId: params.requestId }).catch(() => null);
+          if (!body || !body.body) return;
+          const text = body.base64Encoded ? Buffer.from(body.body, "base64").toString("utf8") : body.body;
+          const data = extractCapturedFigmaDataFromText(text);
+          for (const link of data.links) pushCapturedFigmaLink(target, link);
+          for (const project of data.projects) pushCapturedFigmaProject(target, project);
+        } catch (_) {}
+      });
+    } catch (_) {}
+  }
+
+  function drainCapturedFigmaLinks(target) {
+    const links = target && target.capturedLinks ? target.capturedLinks : [];
+    if (target) target.capturedLinks = [];
+    return links;
+  }
+
+  function drainCapturedFigmaProjects(target) {
+    const projects = target && target.capturedProjects ? target.capturedProjects : [];
+    if (target) target.capturedProjects = [];
+    return projects;
+  }
+
+  function isExpectedFigmaScanUrl(currentUrl, expectedUrl) {
+    const current = toFigmaAbsoluteUrl(currentUrl);
+    const expected = toFigmaAbsoluteUrl(expectedUrl);
+    if (!current || !expected) return Boolean(current);
+    try {
+      const currentParsed = new URL(current);
+      const expectedParsed = new URL(expected);
+      if (currentParsed.pathname === expectedParsed.pathname) return true;
+      if (expectedParsed.pathname.startsWith("/files") && /\/desktop_new_tab\b/i.test(currentParsed.pathname)) return true;
+      const teamMatch = /^\/files\/team\/([^/]+)\/all-projects\b/i.exec(expectedParsed.pathname);
+      if (teamMatch && /\/desktop_new_tab\b/i.test(currentParsed.pathname)) {
+        return currentParsed.searchParams.get("team_id") === teamMatch[1];
+      }
+      return current.includes(expectedParsed.pathname);
+    } catch (_) {
+      return current === expected;
+    }
+  }
+
+  async function waitForFigmaScanTarget(target, timeoutMs, expectedUrl) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      const contents = getFigmaScanTargetWebContents(target);
+      if (contents && !contents.isLoading() && isExpectedFigmaScanUrl(contents.getURL(), expectedUrl)) return contents;
+      await sleep(250);
+    }
+    const contents = getFigmaScanTargetWebContents(target);
+    if (contents && isExpectedFigmaScanUrl(contents.getURL(), expectedUrl)) return contents;
+    throw new Error("\u7b49\u5f85 Figma \u540e\u53f0\u68c0\u7d22\u7a97\u53e3\u52a0\u8f7d\u8d85\u65f6");
+  }
+
+  async function loadFigmaPage(target, url) {
+    ensureFigmaNetworkCapture(target);
+    if (target && target.internals && target.desktopWindow) {
+      target.internals.openUrl(url, {
+        targetWindow: target.desktopWindow,
+        isExternalOpen: true,
+        openInBackground: false,
+        source: "figboost-bulk-scan"
+      });
+      moveExportWindowToBackground(target.browserWindow, BrowserWindow.getFocusedWindow());
+      await waitForFigmaScanTarget(target, 15000, url);
+      ensureFigmaNetworkCapture(target);
+      await sleep(500);
+      return;
+    }
+    try {
+      if (target && typeof target.loadURL === "function") await target.loadURL(url);
+      else if (target && target.window) await target.window.loadURL(url);
+    } catch (_) {}
+    ensureFigmaNetworkCapture(target);
+    await sleep(500);
   }
 
   async function loadFigmaWebContents(contents, url) {
@@ -922,7 +1147,11 @@
   }
 
   function isFigmaProjectCandidateText(text) {
-    return /\d+\s*(files?|文件)|团队|项目|文件夹|Teams?|Projects?|Folders?/i.test(String(text || ""));
+    const value = String(text || "").replace(/\s+/g, " ").trim();
+    if (!value || value.length > 140) return false;
+    if (/^\d+\s*(files?|文件)$/i.test(value)) return false;
+    if (/^(All projects|Drafts|Recent|Community|Resources|Trash|Admin|Starred|Project|Share|所有项目|草稿|最近|社区|资源|回收站|管理|已加星标|项目|分享)$/i.test(value)) return false;
+    return /\d+\s*(files?|文件)|团队|项目|文件夹|Teams?|Projects?|Folders?/i.test(value);
   }
 
   async function readFigmaPageLinks(window) {
@@ -936,10 +1165,10 @@
       };
       let lastLinkCount = -1;
       let stableCount = 0;
-      for (let index = 0; index < 14 && stableCount < 3; index += 1) {
+      for (let index = 0; index < 8 && stableCount < 2; index += 1) {
         for (const target of scrollTargets()) target.scrollTop = target.scrollHeight;
         window.scrollTo(0, document.body ? document.body.scrollHeight : 0);
-        await new Promise((resolve) => setTimeout(resolve, 260));
+        await new Promise((resolve) => setTimeout(resolve, 180));
         const nextLinkCount = document.querySelectorAll("a[href]").length;
         if (nextLinkCount === lastLinkCount) stableCount += 1;
         else stableCount = 0;
@@ -970,25 +1199,48 @@
           })()
         });
       });
+      const links = [];
+      const seenHrefs = new Set();
+      const addLink = (href, label) => {
+        if (!href || seenHrefs.has(href)) return;
+        seenHrefs.add(href);
+        links.push({ href, label: label || "" });
+      };
+      Array.from(document.querySelectorAll("a[href]")).forEach((link) => addLink(link.href, [
+        link.getAttribute("aria-label"),
+        link.getAttribute("title"),
+        link.textContent
+      ].filter(Boolean).join(" ")));
+      Array.from(document.querySelectorAll("*")).forEach((element) => {
+        const label = [
+          element.getAttribute("aria-label"),
+          element.getAttribute("title"),
+          visibleText(element)
+        ].filter(Boolean).join(" ");
+        for (const attribute of Array.from(element.attributes || [])) {
+          const value = String(attribute.value || "");
+          const matches = value.match(/(?:https:\\/\\/www\\.figma\\.com)?\\/(?:file|design)\\/[A-Za-z0-9]{16,128}(?:\\/[^"'<>\\s]*)?/g) || [];
+          for (const match of matches) addLink(match, label);
+        }
+      });
       return {
         title: document.title || "",
         url: location.href,
-        links: Array.from(document.querySelectorAll("a[href]")).map((link) => ({
-          href: link.href,
-          label: [
-            link.getAttribute("aria-label"),
-            link.getAttribute("title"),
-            link.textContent
-          ].filter(Boolean).join(" ")
-        })),
+        links,
         candidates
       };
     })();`, true);
   }
 
-  async function clickFigmaPageCandidate(window, candidateText) {
-    return window.webContents.executeJavaScript(`(() => {
-      const targetText = ${JSON.stringify(candidateText)};
+  async function readFigmaPageLinksFast(window) {
+    return window.webContents.executeJavaScript(`(async () => {
+      const scrollTargets = () => {
+        const targets = [document.scrollingElement, document.documentElement, document.body].filter(Boolean);
+        for (const element of Array.from(document.querySelectorAll("div,main,section"))) {
+          if (element.scrollHeight > element.clientHeight + 120) targets.push(element);
+        }
+        return Array.from(new Set(targets));
+      };
       const visibleText = (element) => (element && element.innerText || element && element.textContent || "")
         .replace(/\\s+/g, " ")
         .trim();
@@ -997,23 +1249,484 @@
         const style = window.getComputedStyle(element);
         return rect.width > 80 && rect.height > 24 && style.visibility !== "hidden" && style.display !== "none";
       };
-      const candidates = Array.from(document.querySelectorAll("a[href],button,[role='button'],[tabindex],div,li"))
-        .filter((element) => isVisible(element) && visibleText(element) === targetText);
-      const element = candidates[0];
-      if (!element) return false;
-      element.scrollIntoView({ block: "center", inline: "center" });
-      const rect = element.getBoundingClientRect();
-      const target = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2) || element;
-      target.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
-      target.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window }));
-      target.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
-      return true;
+      const appendFileLinksFromValue = (value, values, depth = 0) => {
+        if (!value || depth > 8) return;
+        if (typeof value === "string") {
+          if (/(?:https:\\/\\/www\\.figma\\.com)?\\/(?:file|design)\\/[A-Za-z0-9]{16,128}/.test(value)) values.push(value);
+          return;
+        }
+        if (Array.isArray(value)) {
+          for (const item of value) appendFileLinksFromValue(item, values, depth + 1);
+          return;
+        }
+        if (typeof value === "object") {
+          const fileKey = value.key || value.file_key || value.fileKey;
+          const name = (value.name || value._name || value.title || value.fileName || value.file_name || "").trim();
+          if (fileKey && typeof fileKey === "string" && /^[A-Za-z0-9]{16,128}$/.test(fileKey) && name && name !== fileKey) {
+            values.push({ href: "https://www.figma.com/design/" + fileKey, label: name });
+          }
+          for (const item of Object.values(value)) appendFileLinksFromValue(item, values, depth + 1);
+        }
+      };
+      const extractStateLinks = () => {
+        const values = [];
+        for (const script of Array.from(document.querySelectorAll("script"))) {
+          const text = script.textContent || "";
+          if (!text || (!text.includes("/design/") && !text.includes("/file/") && !text.includes("file_key"))) continue;
+          const matches = text.match(/(?:https:\\/\\/www\\.figma\\.com)?\\/(?:file|design)\\/[A-Za-z0-9]{16,128}(?:\\/[^"'<>\\s]*)?/g) || [];
+          values.push(...matches);
+          const jsonMatches = text.match(/\\{[^<]{20,200000}\\}/g) || [];
+          for (const match of jsonMatches.slice(0, 12)) {
+            try { appendFileLinksFromValue(JSON.parse(match), values); } catch (_) {}
+          }
+        }
+        return values;
+      };
+      for (let index = 0; index < 5; index += 1) {
+        for (const target of scrollTargets()) target.scrollTop = Math.min(target.scrollHeight, target.scrollTop + Math.max(700, target.clientHeight || 700));
+        window.scrollTo(0, Math.min(document.body ? document.body.scrollHeight : 0, window.scrollY + 900));
+        await new Promise((resolve) => setTimeout(resolve, 120));
+      }
+      const candidates = [];
+      const seenTexts = new Set();
+      const addCandidate = (element, text, options = {}) => {
+        const value = String(text || "").replace(/\\s+/g, " ").trim();
+        if (!value || value.length > 220 || seenTexts.has(value)) return;
+        const clickable = element.closest("a[href],button,[role='button'],[tabindex]") || element;
+        const rect = options.rect || clickable.getBoundingClientRect();
+        seenTexts.add(value);
+        candidates.push({
+          text: value,
+          href: clickable.href || clickable.getAttribute("href") || element.href || element.getAttribute("href") || "",
+          rect: { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 },
+          projectRow: Boolean(options.projectRow)
+        });
+      };
+      const textElements = Array.from(document.querySelectorAll("a[href],button,[role='button'],[tabindex],div,li,span,p"));
+      const visibleElements = textElements.filter((element) => isVisible(element));
+      const fileCountPattern = /^\\d+\\s*(files?|\\u6587\\u4ef6)$/i;
+      for (const countElement of visibleElements) {
+        const countText = visibleText(countElement);
+        if (!fileCountPattern.test(countText)) continue;
+        const countRect = countElement.getBoundingClientRect();
+        const rowCenter = countRect.top + countRect.height / 2;
+        const titleCandidates = visibleElements
+          .map((element) => ({ element, text: visibleText(element), rect: element.getBoundingClientRect() }))
+          .filter((item) => {
+            if (!item.text || item.text.length > 80 || fileCountPattern.test(item.text)) return false;
+            if (/^(Open|Star|Name|Files|Updated|Project|Share|All projects|Drafts|Recent|Community|Resources|Trash|Admin|Starred|\\u6253\\u5f00|\\u661f\\u5f62|\\u540d\\u79f0|\\u6587\\u4ef6|\\u5df2\\u66f4\\u65b0|\\u9879\\u76ee|\\u5206\\u4eab|\\u6240\\u6709\\u9879\\u76ee|\\u8349\\u7a3f|\\u6700\\u8fd1|\\u793e\\u533a|\\u8d44\\u6e90|\\u56de\\u6536\\u7ad9|\\u7ba1\\u7406|\\u5df2\\u52a0\\u661f\\u6807)$/i.test(item.text)) return false;
+            const sameRow = rowCenter >= item.rect.top - 8 && rowCenter <= item.rect.bottom + 8;
+            return sameRow && item.rect.left < countRect.left - 30;
+          })
+          .sort((left, right) => right.rect.left - left.rect.left);
+        const title = titleCandidates[0];
+        if (title) {
+          const rect = title.rect;
+          addCandidate(title.element, title.text, {
+            projectRow: true,
+            rect: { left: rect.left, top: rect.top, width: Math.min(Math.max(rect.width, 160), 260), height: rect.height }
+          });
+        }
+      }
+      const candidatePattern = /(\\d+\\s*(files?|\\u6587\\u4ef6)|\\u8349\\u7a3f|\\u6700\\u8fd1|\\u6240\\u6709\\u9879\\u76ee|\\u56e2\\u961f|\\u9879\\u76ee|\\u6587\\u4ef6\\u5939|All projects|Drafts|Recent|Teams?|Projects?|Folders?)/i;
+      Array.from(document.querySelectorAll("a[href],button,[role='button'],[tabindex],div,li")).forEach((element) => {
+        if (!isVisible(element)) return;
+        const text = visibleText(element);
+        if (!text || text.length > 220 || seenTexts.has(text) || !candidatePattern.test(text)) return;
+        addCandidate(element, text);
+      });
+      const links = [];
+      const seenHrefs = new Set();
+      const addLink = (href, label) => {
+        if (!href || seenHrefs.has(href)) return;
+        seenHrefs.add(href);
+        links.push(typeof href === "object" ? href : { href, label: label || "" });
+      };
+      Array.from(document.querySelectorAll("a[href]")).forEach((link) => addLink(link.href, [
+        link.getAttribute("aria-label"),
+        link.getAttribute("title"),
+        link.textContent
+      ].filter(Boolean).join(" ")));
+      for (const item of extractStateLinks()) addLink(item);
+      Array.from(document.querySelectorAll("*")).forEach((element) => {
+        const label = [
+          element.getAttribute("aria-label"),
+          element.getAttribute("title"),
+          visibleText(element)
+        ].filter(Boolean).join(" ");
+        for (const attribute of Array.from(element.attributes || [])) {
+          const value = String(attribute.value || "");
+          const matches = value.match(/(?:https:\\/\\/www\\.figma\\.com)?\\/(?:file|design)\\/[A-Za-z0-9]{16,128}(?:\\/[^"'<>\\s]*)?/g) || [];
+          for (const match of matches) addLink(match, label);
+        }
+      });
+      return {
+        title: document.title || "",
+        url: location.href,
+        links,
+        candidates
+      };
     })();`, true);
   }
 
-  function mergeDiscoveredPage(page, filesByKey, queue, seenPages) {
+  async function clickFigmaPageCandidate(window, candidateText) {
+    return window.webContents.executeJavaScript(`(() => {
+      const candidate = ${JSON.stringify(candidateText)};
+      const targetText = typeof candidate === "string" ? candidate : candidate && candidate.text;
+      const point = candidate && typeof candidate === "object" ? candidate.rect : null;
+      const visibleText = (element) => (element && element.innerText || element && element.textContent || "")
+        .replace(/\\s+/g, " ")
+        .trim();
+      const isVisible = (element) => {
+        const rect = element.getBoundingClientRect();
+        const style = window.getComputedStyle(element);
+        return rect.width > 80 && rect.height > 24 && style.visibility !== "hidden" && style.display !== "none";
+      };
+      const clickElement = (element) => {
+        if (!element) return false;
+        const clickable = element.closest("a[href],button,[role='button'],[tabindex]") || element;
+        clickable.scrollIntoView({ block: "center", inline: "center" });
+        const rect = clickable.getBoundingClientRect();
+        const target = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2) || clickable;
+        target.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
+        target.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window }));
+        target.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+        return true;
+      };
+      if (point && Number.isFinite(point.x) && Number.isFinite(point.y)) {
+        const elementAtPoint = document.elementFromPoint(point.x, point.y);
+        if (clickElement(elementAtPoint)) return true;
+      }
+      const candidates = Array.from(document.querySelectorAll("a[href],button,[role='button'],[tabindex],div,li"))
+        .filter((element) => isVisible(element) && visibleText(element) === targetText);
+      return clickElement(candidates[0]);
+    })();`, true);
+  }
+
+  async function fetchFigmaTeamProjectsAndFilesViaRest(window, teamIds, fuid) {
+    return window.webContents.executeJavaScript(`(async () => {
+      const teamIds = ${JSON.stringify(teamIds || [])}.map((value) => String(value || "")).filter(Boolean);
+      const fuid = ${JSON.stringify(fuid || "")};
+      const links = [];
+      const projects = [];
+      const seenFiles = new Set();
+      const seenProjects = new Set();
+      const debug = { teams: 0, projects: 0, files: 0, errors: [] };
+      const clean = (value) => String(value || "").replace(/\\s+/g, " ").trim();
+      const addProject = (teamId, project) => {
+        if (!project) return;
+        const projectId = project.id || project.projectId || project.project_id;
+        const name = clean(project.name || project.path || project.title);
+        if (!projectId || !name) return;
+        const marker = teamId + ":" + projectId;
+        if (seenProjects.has(marker)) return;
+        seenProjects.add(marker);
+        projects.push({ teamId: String(teamId), projectId: String(projectId), name });
+      };
+      const addFile = (project, file) => {
+        if (!file) return;
+        const key = file.key || file.fileKey || file.file_key || file.figFileKey || file.fig_file_key;
+        const name = clean(file.name || file._name || file.title || file.fileName || file.file_name);
+        const editorType = file.editorType || file.editor_type;
+        const isDesign = editorType === "design" || editorType === 0 || /(?:^|[?&])type=design(?:&|$)/i.test(String(file.url || ""));
+        if (!key || !/^[A-Za-z0-9]{16,128}$/.test(String(key)) || !name || name === key || !isDesign || seenFiles.has(key)) return;
+        seenFiles.add(key);
+        links.push({
+          href: "https://www.figma.com/design/" + key,
+          label: name,
+          sourceTitle: project && project.name || "",
+          sourceUrl: project && project.teamId && project.projectId
+            ? "https://www.figma.com/files/team/" + project.teamId + "/project/" + project.projectId + (fuid ? "?fuid=" + encodeURIComponent(fuid) : "")
+            : ""
+        });
+      };
+      const collectProjects = (value, teamId, depth = 0) => {
+        if (!value || depth > 8) return;
+        if (Array.isArray(value)) {
+          for (const item of value) collectProjects(item, teamId, depth + 1);
+          return;
+        }
+        if (typeof value !== "object") return;
+        if (Array.isArray(value.projects)) collectProjects(value.projects, teamId, depth + 1);
+        if (Array.isArray(value.teamProjects)) collectProjects(value.teamProjects, teamId, depth + 1);
+        if (value.project && typeof value.project === "object") addProject(teamId, value.project);
+        addProject(teamId, value);
+        for (const item of Object.values(value)) collectProjects(item, teamId, depth + 1);
+      };
+      const collectFiles = (value, project, depth = 0) => {
+        if (!value || depth > 8) return;
+        if (Array.isArray(value)) {
+          for (const item of value) collectFiles(item, project, depth + 1);
+          return;
+        }
+        if (typeof value !== "object") return;
+        if (Array.isArray(value.files)) collectFiles(value.files, project, depth + 1);
+        if (Array.isArray(value.paginatedFilesByProjectId)) collectFiles(value.paginatedFilesByProjectId, project, depth + 1);
+        if (Array.isArray(value.paginatedFilesByProjectIdAndEditorType)) collectFiles(value.paginatedFilesByProjectIdAndEditorType, project, depth + 1);
+        addFile(project, value);
+        for (const item of Object.values(value)) collectFiles(item, project, depth + 1);
+      };
+      const fetchJson = async (url) => {
+        const response = await fetch(url, {
+          credentials: "include",
+          headers: { Accept: "application/json" }
+        });
+        if (!response.ok) throw new Error(response.status + " " + url);
+        return response.json();
+      };
+      for (const teamId of teamIds) {
+        for (const url of [
+          "/v1/teams/" + encodeURIComponent(teamId) + "/projects",
+          "/api/teams/" + encodeURIComponent(teamId) + "/projects"
+        ]) {
+          try {
+            collectProjects(await fetchJson(url), teamId);
+            break;
+          } catch (error) {
+            debug.errors.push(error && error.message ? error.message : String(error));
+          }
+        }
+      }
+      debug.teams = teamIds.length;
+      debug.projects = projects.length;
+      const queue = projects.slice();
+      const workers = Array.from({ length: Math.min(8, Math.max(1, queue.length)) }, async () => {
+        while (queue.length) {
+          const project = queue.shift();
+          for (const url of [
+            "/v1/projects/" + encodeURIComponent(project.projectId) + "/files",
+            "/api/projects/" + encodeURIComponent(project.projectId) + "/files"
+          ]) {
+            try {
+              collectFiles(await fetchJson(url), project);
+              break;
+            } catch (error) {
+              debug.errors.push(error && error.message ? error.message : String(error));
+            }
+          }
+        }
+      });
+      await Promise.all(workers);
+      debug.files = links.length;
+      return { links, projects, debug };
+    })();`, true);
+  }
+
+  async function fetchFigmaTeamProjectsViaLiveGraph(window, teamId, fuid) {
+    return window.webContents.executeJavaScript(`(async () => {
+      const teamId = String(${JSON.stringify(teamId || "")});
+      const fuid = ${JSON.stringify(fuid || "")};
+      if (!teamId) return { projects: [], debug: { errors: ["missing teamId"] } };
+      const projects = [];
+      const seen = new Set();
+      const debug = { messages: 0, auth: false, types: {}, errors: [] };
+      const clean = (value) => String(value || "").replace(/\\s+/g, " ").trim();
+      const addProject = (id, name, projectTeamId) => {
+        const nextTeamId = String(projectTeamId || teamId || "");
+        const projectId = String(id || "");
+        const cleanName = clean(name);
+        const marker = nextTeamId + ":" + projectId;
+        if (!projectId || !nextTeamId || !cleanName || seen.has(marker)) return;
+        seen.add(marker);
+        projects.push({ projectId, teamId: nextTeamId, name: cleanName });
+      };
+      const visit = (value, depth = 0, inheritedTeamId = teamId) => {
+        if (!value || depth > 10) return;
+        if (Array.isArray(value)) {
+          for (const item of value) visit(item, depth + 1, inheritedTeamId);
+          return;
+        }
+        if (typeof value !== "object") return;
+        const nextTeamId = value.teamId || value.team_id || inheritedTeamId;
+        if (value.project && typeof value.project === "object") {
+          visit(value.project, depth + 1, nextTeamId);
+        }
+        const id = value.id || value.projectId || value.project_id;
+        const name = value.name || value.path || value.title;
+        const hasProjectShape = value.filesPartial || value.files || value.fileCount !== undefined || value.folderId !== undefined || value.touchedAt !== undefined || value.teamId !== undefined || value.team_id !== undefined;
+        if (id && name && !value.key && hasProjectShape) addProject(id, name, nextTeamId);
+        for (const item of Object.values(value)) visit(item, depth + 1, nextTeamId);
+      };
+      const tokenResponse = await fetch("/api/desktop/livegraph_client/page_load_token", {
+        credentials: "include",
+        headers: { Accept: "application/json", "Content-Type": "application/json" }
+      });
+      if (!tokenResponse.ok) return { projects, debug };
+      const tokenJson = await tokenResponse.json();
+      const token = tokenJson && tokenJson.meta && tokenJson.meta.page_load_token;
+      if (!token) return { projects, debug };
+      const params = new URLSearchParams(token);
+      params.append("userId", fuid);
+      params.append("anonUserId", "");
+      params.append("clientType", "desktop-client");
+      params.append("commitHash", "desktop-missing");
+      params.append("requestedProtocolVersion", "2");
+      params.append("preload", "{}");
+      params.append("desktop", JSON.stringify("126.5.6"));
+      await new Promise((resolve) => {
+        let settled = false;
+        let quietTimer = null;
+        let timeout = null;
+        let socket = null;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          if (timeout) clearTimeout(timeout);
+          if (quietTimer) clearTimeout(quietTimer);
+          try { socket.close(); } catch (_) {}
+          resolve();
+        };
+        const markMessage = () => {
+          if (quietTimer) clearTimeout(quietTimer);
+          quietTimer = setTimeout(finish, 1200);
+        };
+        socket = new WebSocket("wss://" + location.host + "/api/livegraph?" + params.toString());
+        timeout = setTimeout(finish, 9000);
+        socket.onmessage = (event) => {
+          try {
+            const message = JSON.parse(event.data);
+            debug.messages += 1;
+            const type = message && (message.messageType || message.type || message.kind || "unknown");
+            debug.types[type] = (debug.types[type] || 0) + 1;
+            if (message && message.messageType === "viewSubscriptionFailed") debug.errors.push(message.errorCode || "viewSubscriptionFailed");
+            visit(message);
+            if (message && message.messageType === "authSuccess") {
+              debug.auth = true;
+              socket.send(JSON.stringify({
+                messageType: "subscribe",
+                viewName: "FileBrowserTeamPageProjectsView",
+                viewHash: "cf36e08a84bdcb107bf4bf332b21dcc6ef26b95cb17bf3e1ca742dfa5593b1db",
+                loadType: "initial",
+                args: {
+                  teamId,
+                  firstPageSize: 500,
+                  sortType: "updatedAt",
+                  sortDirection: "desc"
+                },
+                traceId: "figboost-team-" + teamId + "-" + Date.now()
+              }));
+            }
+            markMessage();
+          } catch (error) {
+            debug.errors.push(error && error.message ? error.message : String(error));
+          }
+        };
+        socket.onerror = finish;
+        socket.onclose = finish;
+      });
+      return { projects, debug };
+    })();`, true);
+  }
+
+  async function fetchFigmaProjectFilesViaLiveGraph(window, project, fuid) {
+    return window.webContents.executeJavaScript(`(async () => {
+      const project = ${JSON.stringify(project)};
+      const fuid = ${JSON.stringify(fuid || "")};
+      const projectId = String(project.projectId || "");
+      if (!projectId) return [];
+      const links = [];
+      const debug = { messages: 0, auth: false, types: {}, errors: [], samples: [] };
+      const seen = new Set();
+      const addFile = (key, name, editorType) => {
+        if (!key || seen.has(key)) return;
+        const isDesign = editorType === "design" || editorType === 0;
+        if (!isDesign || !name || name === key) return;
+        seen.add(key);
+        links.push({ href: "https://www.figma.com/design/" + key, label: name || key });
+      };
+      const visit = (value, depth = 0) => {
+        if (!value || depth > 10) return;
+        if (Array.isArray(value)) {
+          for (const item of value) visit(item, depth + 1);
+          return;
+        }
+        if (typeof value !== "object") return;
+        const key = value.key || value.fileKey || value.file_key || value.figFileKey || value.fig_file_key;
+        const name = value.name || value._name || value.title || value.fileName || value.file_name;
+        const editorType = value.editorType || value.editor_type;
+        if (typeof key === "string" && /^[A-Za-z0-9]{16,128}$/.test(key)) addFile(key, name, editorType);
+        for (const item of Object.values(value)) visit(item, depth + 1);
+      };
+      const tokenResponse = await fetch("/api/desktop/livegraph_client/page_load_token", {
+        credentials: "include",
+        headers: { Accept: "application/json", "Content-Type": "application/json" }
+      });
+      if (!tokenResponse.ok) return [];
+      const tokenJson = await tokenResponse.json();
+      const token = tokenJson && tokenJson.meta && tokenJson.meta.page_load_token;
+      if (!token) return [];
+      const params = new URLSearchParams(token);
+      params.append("userId", fuid);
+      params.append("anonUserId", "");
+      params.append("clientType", "desktop-client");
+      params.append("commitHash", "desktop-missing");
+      params.append("requestedProtocolVersion", "2");
+      params.append("preload", "{}");
+      params.append("desktop", JSON.stringify("126.5.6"));
+      await new Promise((resolve) => {
+        let settled = false;
+        let quietTimer = null;
+        let timeout = null;
+        let socket = null;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          if (timeout) clearTimeout(timeout);
+          if (quietTimer) clearTimeout(quietTimer);
+          try { socket.close(); } catch (_) {}
+          resolve();
+        };
+        const markMessage = () => {
+          if (quietTimer) clearTimeout(quietTimer);
+          quietTimer = setTimeout(finish, 1800);
+        };
+        socket = new WebSocket("wss://" + location.host + "/api/livegraph?" + params.toString());
+        timeout = setTimeout(finish, 12000);
+        socket.onmessage = (event) => {
+          try {
+            const message = JSON.parse(event.data);
+            debug.messages += 1;
+            const type = message && (message.messageType || message.type || message.kind || "unknown");
+            debug.types[type] = (debug.types[type] || 0) + 1;
+            if (type !== "authSuccess" && debug.samples.length < 2) {
+              debug.samples.push(JSON.stringify(message).slice(0, 1200));
+            }
+            if (message && message.messageType === "viewSubscriptionFailed") {
+              debug.errors.push(message.errorCode || "viewSubscriptionFailed");
+            }
+            visit(message);
+            if (message && message.messageType === "authSuccess") {
+              debug.auth = true;
+              socket.send(JSON.stringify({
+                messageType: "subscribe",
+                viewName: "PaginatedFilesByProjectAndEditorTypeView",
+                viewHash: "12538ad8aff56662ba6ff07961c818952541681a8fecf9b7edf1beebf4ad26c4",
+                loadType: "initial",
+                args: {
+                  projectId,
+                  editorType: 0,
+                  firstPageSize: 500,
+                  sortColumn: "updatedAt",
+                  sortType: "desc"
+                },
+                traceId: "figboost-" + projectId + "-" + Date.now()
+              }));
+            }
+            markMessage();
+          } catch (error) {
+            debug.errors.push(error && error.message ? error.message : String(error));
+          }
+        };
+        socket.onerror = finish;
+        socket.onclose = finish;
+      });
+      return { links, debug };
+    })();`, true);
+  }
+
+  function mergeDiscoveredPage(page, filesByKey, queue, seenPages, options = {}) {
     for (const link of page.links || []) {
-      const file = extractFigmaFileLink(link.href, link.label, page.url, page.title);
+      const file = options.ignoreFileLinks ? null : extractFigmaFileLink(link.href, link.label, link.sourceUrl || page.url, link.sourceTitle || page.title);
       if (file) {
         if (!filesByKey.has(file.key)) {
           filesByKey.set(file.key, file);
@@ -1023,22 +1736,48 @@
         }
         continue;
       }
+      if (options.ignoreScanLinks) continue;
       const nextPage = shouldScanFigmaPage(link.href) ? toFigmaAbsoluteUrl(link.href) : null;
       if (nextPage && !seenPages.has(nextPage) && !queue.includes(nextPage)) queue.push(nextPage);
     }
   }
 
   function enqueueFigmaProjectCandidates(page, queue, seenPages) {
+    const projectOverviewOnly = isFigmaProjectOverviewPage(page.url);
+    if (!projectOverviewOnly) return;
     for (const candidate of page.candidates || []) {
-      if (!isFigmaProjectCandidateText(candidate.text)) continue;
-      const job = {
+      if (!candidate.projectRow) continue;
+      if (!candidate.projectRow && !isFigmaProjectCandidateText(candidate.text)) continue;
+      const href = shouldScanFigmaPage(candidate.href) ? toFigmaAbsoluteUrl(candidate.href) : "";
+      const job = href || {
         url: page.url,
-        clickText: candidate.text
+        clickText: candidate.text,
+        rect: candidate.rect,
+        projectRow: candidate.projectRow
       };
-      const marker = `${job.url}#${job.clickText}`;
-      if (!seenPages.has(marker) && !queue.some((item) => item && item.url === job.url && item.clickText === job.clickText)) {
+      const marker = typeof job === "string" ? job : `${job.url}#${job.clickText}`;
+      const queued = queue.some((item) => {
+        if (typeof item === "string" || typeof job === "string") return item === job;
+        return item && item.url === job.url && item.clickText === job.clickText;
+      });
+      if (!seenPages.has(marker) && !queued) {
         queue.push(job);
       }
+    }
+  }
+
+  function enqueueFigmaProjectApiJobs(projects, queue, seenPages, fuid) {
+    for (const project of projects || []) {
+      const job = {
+        liveGraphProject: true,
+        projectId: project.projectId,
+        teamId: project.teamId,
+        name: project.name || project.projectId,
+        fuid
+      };
+      const marker = `livegraph#${job.teamId}#${job.projectId}`;
+      const queued = queue.some((item) => item && typeof item === "object" && item.liveGraphProject && item.projectId === job.projectId && item.teamId === job.teamId);
+      if (!seenPages.has(marker) && !queued) queue.push(job);
     }
   }
 
@@ -1067,12 +1806,17 @@
         });
       }
       await loadFigmaWebContents(contents, originalUrl);
-      const clicked = await clickFigmaPageCandidate({ webContents: contents }, candidate.text);
-      if (!clicked) continue;
+      const candidateUrl = shouldScanFigmaPage(candidate.href) ? toFigmaAbsoluteUrl(candidate.href) : "";
+      if (candidateUrl) {
+        await loadFigmaWebContents(contents, candidateUrl);
+      } else {
+        const clicked = await clickFigmaPageCandidate({ webContents: contents }, candidate);
+        if (!clicked) continue;
+      }
       await sleep(1200);
       let childPage;
       try {
-        childPage = await readFigmaPageLinks({ webContents: contents });
+        childPage = await readFigmaPageLinksFast({ webContents: contents });
       } catch (_) {
         continue;
       }
@@ -1082,102 +1826,330 @@
     await loadFigmaWebContents(contents, originalUrl);
   }
 
+  function getFigmaFileBrowserUrlsFromSettings() {
+    const urls = [];
+    try {
+      const settingsPath = path.join(app.getPath("appData"), "Figma", "settings.json");
+      if (!fs.existsSync(settingsPath)) return urls;
+      const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+      const fuid = settings.figmaID ? String(settings.figmaID) : "";
+      for (const item of settings.windows || []) {
+        const tab = item && item.fileBrowserTab;
+        if (!tab || !tab.path || !String(tab.path).startsWith("/files")) continue;
+        if (/\/files\/(?:drafts|recent)\b/i.test(tab.path)) continue;
+        if (/recents-and-sharing|deleted|trash|community/i.test(tab.path)) continue;
+        const params = tab.params || (fuid ? `?fuid=${encodeURIComponent(fuid)}` : "");
+        const teamMatch = /\/files\/team\/([^/?#]+)/i.exec(tab.path);
+        if (teamMatch) {
+          const allProjectsUrl = toFigmaAbsoluteUrl(`/files/team/${teamMatch[1]}/all-projects${params || ""}`);
+          if (allProjectsUrl && !urls.includes(allProjectsUrl)) urls.push(allProjectsUrl);
+        } else {
+          const url = toFigmaAbsoluteUrl(`${tab.path}${params || ""}`);
+          if (url && !urls.includes(url)) urls.push(url);
+        }
+      }
+    } catch (_) {}
+    return urls;
+  }
+
+  function getFigmaTeamIdsFromSettings() {
+    const teamIds = [];
+    try {
+      const settingsPath = path.join(app.getPath("appData"), "Figma", "settings.json");
+      if (!fs.existsSync(settingsPath)) return teamIds;
+      const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+      const pushTeamId = (value) => {
+        const teamId = String(value || "").trim();
+        if (teamId && /^\d+$/.test(teamId) && !teamIds.includes(teamId)) teamIds.push(teamId);
+      };
+      for (const item of settings.windows || []) {
+        const tab = item && item.fileBrowserTab;
+        const pathValue = tab && tab.path ? String(tab.path) : "";
+        const pathMatch = /\/files\/team\/([^/?#]+)/i.exec(pathValue);
+        if (pathMatch) pushTeamId(pathMatch[1]);
+        const params = tab && tab.params ? String(tab.params) : "";
+        try {
+          const searchParams = new URLSearchParams(params.startsWith("?") ? params.slice(1) : params);
+          pushTeamId(searchParams.get("team_id"));
+        } catch (_) {}
+      }
+      for (const item of settings.sharedTabHistory || []) {
+        const params = item && item.params ? String(item.params) : "";
+        try {
+          const searchParams = new URLSearchParams(params.startsWith("?") ? params.slice(1) : params);
+          pushTeamId(searchParams.get("team_id"));
+        } catch (_) {}
+      }
+    } catch (_) {}
+    return teamIds;
+  }
+
+  function getFigmaCurrentUserId() {
+    try {
+      const settingsPath = path.join(app.getPath("appData"), "Figma", "settings.json");
+      const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+      return settings.figmaID ? String(settings.figmaID) : "";
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function getFigmaDesktopProjectUrl(url) {
+    const absoluteUrl = toFigmaAbsoluteUrl(url);
+    if (!absoluteUrl) return "";
+    try {
+      const parsed = new URL(absoluteUrl);
+      const match = /^\/files\/team\/([^/]+)\/project\/(\d+)/i.exec(parsed.pathname);
+      if (!match) return "";
+      const fuid = parsed.searchParams.get("fuid") || getFigmaCurrentUserId();
+      const params = new URLSearchParams();
+      if (fuid) params.set("fuid", fuid);
+      params.set("team_id", match[1]);
+      params.set("project_id", match[2]);
+      return `https://www.figma.com/desktop_new_tab?${params.toString()}`;
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function getFigmaProjectInfoFromUrl(url) {
+    const absoluteUrl = toFigmaAbsoluteUrl(url);
+    if (!absoluteUrl) return null;
+    try {
+      const parsed = new URL(absoluteUrl);
+      const match = /^\/files\/team\/([^/]+)\/project\/(\d+)/i.exec(parsed.pathname);
+      if (!match) return null;
+      return {
+        teamId: match[1],
+        projectId: match[2],
+        name: cleanDiscoveredFileName(parsed.pathname.split("/").pop()) || match[2]
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+
   async function discoverFigmaFiles(progress) {
     const owner = BrowserWindow.getFocusedWindow();
-    const createScanWindow = () => {
-      const scanWindow = new BrowserWindow({
-        width: 1280,
-        height: 900,
-        show: false,
-        autoHideMenuBar: true,
-        webPreferences: {
-          nodeIntegration: false,
-          contextIsolation: true
-        }
-      });
-      scanWindow.webContents.__FIGBOOST_SKIP_RENDERER_INJECTION__ = true;
-      return scanWindow;
-    };
-    const queue = [
+    const settingsQueue = getFigmaFileBrowserUrlsFromSettings();
+    const teamIds = getFigmaTeamIdsFromSettings();
+    const fallbackQueue = [
       "https://www.figma.com/files",
-      "https://www.figma.com/files/team",
-      "https://www.figma.com/files/projects"
+      "https://www.figma.com/files/team"
     ];
+    const queue = settingsQueue.length ? [...settingsQueue] : [...fallbackQueue];
     const seenPages = new Set();
     const filesByKey = new Map();
-    const scanWindows = [createScanWindow(), createScanWindow(), createScanWindow()];
+    const scanTargets = [createFigmaScanTarget(owner), createFigmaScanTarget(owner), createFigmaScanTarget(owner)];
     let scannedCount = 0;
-    const maxPages = 260;
-    try {
+    const maxPages = 90;
+    const scanDeadline = Date.now() + 58000;
+    const fuid = getFigmaCurrentUserId();
+    const debug = () => {};
+    const enqueueFallbackScanPages = () => {
+      for (const url of fallbackQueue) {
+        if (!seenPages.has(url) && !queue.includes(url)) queue.push(url);
+      }
+    };
+    const runFastProjectScan = async () => {
+      const target = scanTargets[0];
+      if (!target || !teamIds.length) return;
+      const seedUrl = settingsQueue[0] || `https://www.figma.com/files/team/${teamIds[0]}/all-projects${fuid ? `?fuid=${encodeURIComponent(fuid)}` : ""}`;
+      try {
+        await loadFigmaPage(target, seedUrl);
+      } catch (_) {}
+      if (progress) {
+        progress.update({
+          sub: "\u6b63\u5728\u5feb\u901f\u8bfb\u53d6\u56e2\u961f\u9879\u76ee",
+          foot: `\u5df2\u68c0\u7d22 ${filesByKey.size} \u4e2a\u6587\u4ef6`
+        });
+      }
+      try {
+        const result = await fetchFigmaTeamProjectsAndFilesViaRest({ webContents: getFigmaScanTargetWebContents(target) }, teamIds, fuid);
+        debug({ stage: "rest-projects", teams: teamIds.length, links: ((result && result.links) || []).length, projects: ((result && result.projects) || []).length, details: result && result.debug });
+        for (const project of (result && result.projects) || []) enqueueFigmaProjectApiJobs([project], queue, seenPages, fuid);
+        if (result && result.links && result.links.length) {
+          mergeDiscoveredPage({ title: "\u6240\u6709\u9879\u76ee", url: seedUrl, links: result.links, candidates: [] }, filesByKey, queue, seenPages);
+        }
+      } catch (error) {
+        debug({ stage: "rest-projects-error", message: error && error.message ? error.message : String(error) });
+      }
+      if (filesByKey.size > 0) return;
+      for (const teamId of teamIds) {
+        try {
+          const result = await fetchFigmaTeamProjectsViaLiveGraph({ webContents: getFigmaScanTargetWebContents(target) }, teamId, fuid);
+          debug({ stage: "livegraph-team-projects", teamId, projects: ((result && result.projects) || []).length, details: result && result.debug });
+          enqueueFigmaProjectApiJobs((result && result.projects) || [], queue, seenPages, fuid);
+        } catch (error) {
+          debug({ stage: "livegraph-team-projects-error", teamId, message: error && error.message ? error.message : String(error) });
+        }
+      }
+    };
+    const scanVisibleFigmaPages = async () => {
+      const scannedUrls = new Set();
+      let visibleCount = 0;
       for (const contents of webContents.getAllWebContents()) {
         try {
           if (!contents || contents.isDestroyed() || contents.__FIGBOOST_SKIP_RENDERER_INJECTION__) continue;
-          if (!/^https:\/\/([^/]+\.)?figma\.com/i.test(contents.getURL())) continue;
-          if (/\/files\/(?:drafts|recent)\b/i.test(contents.getURL())) continue;
-          const page = await readFigmaPageLinks({ webContents: contents });
-          mergeDiscoveredPage(page, filesByKey, queue, seenPages);
+          const currentUrl = contents.getURL();
+          const normalizedUrl = toFigmaAbsoluteUrl(currentUrl);
+          if (!shouldReadVisibleFigmaPage(currentUrl) || !normalizedUrl || scannedUrls.has(normalizedUrl)) continue;
+          if (visibleCount >= 4 && !isFigmaProjectOverviewPage(normalizedUrl)) continue;
+          scannedUrls.add(normalizedUrl);
+          visibleCount += 1;
+          const page = await readFigmaPageLinksFast({ webContents: contents });
+          debug({ stage: "visible", url: currentUrl, pageUrl: page.url, links: (page.links || []).length, candidates: (page.candidates || []).length });
+          mergeDiscoveredPage(page, filesByKey, queue, seenPages, {
+            ignoreScanLinks: isFigmaProjectOverviewPage(page.url)
+          });
           enqueueFigmaProjectCandidates(page, queue, seenPages);
-          await scanActiveFigmaProjectCandidates(contents, page, filesByKey, queue, seenPages, progress);
-        } catch (_) {}
+        } catch (error) {
+          debug({ stage: "visible-error", message: error && error.message ? error.message : String(error) });
+        }
       }
-      while (queue.length && seenPages.size < maxPages) {
-        const job = queue.shift();
-        const pageUrl = typeof job === "string" ? job : job && job.url;
-        const clickText = typeof job === "object" && job ? job.clickText : "";
-        const pageMarker = clickText ? `${pageUrl}#${clickText}` : pageUrl;
-        if (!pageUrl || seenPages.has(pageMarker)) continue;
-        seenPages.add(pageMarker);
+    };
+    const processQueuedPage = async (scanTarget, job) => {
+      if (job && typeof job === "object" && job.liveGraphProject) {
+        const marker = `livegraph#${job.teamId}#${job.projectId}`;
+        if (seenPages.has(marker)) return;
+        seenPages.add(marker);
         if (progress) {
           progress.update({
-            sub: clickText ? "\u6b63\u5728\u6253\u5f00\u9879\u76ee\uff1a" + clickText : "\u6b63\u5728\u626b\u63cf\u9875\u9762\uff1a" + pageUrl,
+            sub: "\u6b63\u5728\u8bfb\u53d6\u9879\u76ee\u6587\u4ef6\uff1a" + (job.name || job.projectId),
             foot: `\u5df2\u68c0\u7d22 ${filesByKey.size} \u4e2a\u6587\u4ef6\uff0c${seenPages.size} \u4e2a\u9875\u9762`
           });
         }
-        const scanWindow = scanWindows[seenPages.size % scanWindows.length];
-        await loadFigmaPage(scanWindow, pageUrl);
-        if (clickText) {
-          const clicked = await clickFigmaPageCandidate(scanWindow, clickText);
-          if (!clicked) continue;
-          await sleep(900);
+        let contents = getFigmaScanTargetWebContents(scanTarget);
+        if (!contents) {
+          await loadFigmaPage(scanTarget, `https://www.figma.com/files/team/${job.teamId}/all-projects${fuid ? `?fuid=${encodeURIComponent(fuid)}` : ""}`);
+          contents = getFigmaScanTargetWebContents(scanTarget);
         }
-        let page;
+        if (!contents) return;
         try {
-          page = await readFigmaPageLinks(scanWindow);
-        } catch (_) {
-          continue;
+          const result = await fetchFigmaProjectFilesViaLiveGraph({ webContents: contents }, job, fuid);
+          const links = Array.isArray(result) ? result : (result && result.links) || [];
+          const page = {
+            title: job.name || "",
+            url: `https://www.figma.com/files/team/${job.teamId}/project/${job.projectId}${fuid ? `?fuid=${encodeURIComponent(fuid)}` : ""}`,
+            links,
+            candidates: []
+          };
+          debug({ stage: "livegraph-project", projectId: job.projectId, teamId: job.teamId, links: links.length, details: result && result.debug, files: filesByKey.size });
+          mergeDiscoveredPage(page, filesByKey, queue, seenPages);
+        } catch (error) {
+          debug({ stage: "livegraph-project-error", projectId: job.projectId, teamId: job.teamId, message: error && error.message ? error.message : String(error) });
         }
-        mergeDiscoveredPage(page, filesByKey, queue, seenPages);
-        const candidates = (page.candidates || [])
-          .filter((candidate) => isFigmaProjectCandidateText(candidate.text))
-          .slice(0, 40);
-        for (const candidate of candidates) {
-          if (seenPages.size >= maxPages) break;
-          const marker = `${pageUrl}#${candidate.text}`;
-          if (seenPages.has(marker)) continue;
-          seenPages.add(marker);
-          if (progress) {
-            progress.update({
-              sub: "\u6b63\u5728\u6253\u5f00\u9879\u76ee\uff1a" + candidate.text,
-              foot: `\u5df2\u68c0\u7d22 ${filesByKey.size} \u4e2a\u6587\u4ef6\uff0c${seenPages.size} \u4e2a\u9875\u9762`
-            });
-          }
-          await loadFigmaPage(scanWindow, pageUrl);
-          const clicked = await clickFigmaPageCandidate(scanWindow, candidate.text);
-          if (!clicked) continue;
-          await sleep(900);
-          let childPage;
+        return;
+      }
+      const pageUrl = typeof job === "string" ? job : job && job.url;
+      const clickText = typeof job === "object" && job ? job.clickText : "";
+      const clickCandidate = typeof job === "object" && job ? { text: job.clickText, rect: job.rect } : clickText;
+      const pageMarker = clickText ? `${pageUrl}#${clickText}` : pageUrl;
+      if (!pageUrl || seenPages.has(pageMarker)) return;
+      seenPages.add(pageMarker);
+      if (progress) {
+        progress.update({
+          sub: clickText ? "\u6b63\u5728\u6253\u5f00\u9879\u76ee\uff1a" + clickText : "\u6b63\u5728\u626b\u63cf\u9875\u9762\uff1a" + pageUrl,
+          foot: `\u5df2\u68c0\u7d22 ${filesByKey.size} \u4e2a\u6587\u4ef6\uff0c${seenPages.size} \u4e2a\u9875\u9762`
+        });
+      }
+      try {
+        await loadFigmaPage(scanTarget, pageUrl);
+      } catch (_) {
+        debug({ stage: "load-error", url: pageUrl });
+        return;
+      }
+      const contents = getFigmaScanTargetWebContents(scanTarget);
+      if (!contents) return;
+      if (clickText) {
+        const clicked = await clickFigmaPageCandidate({ webContents: contents }, clickCandidate);
+        debug({ stage: "click", url: pageUrl, clickText, clicked });
+        if (!clicked) return;
+        await sleep(900);
+      }
+      let page;
+      try {
+        page = await readFigmaPageLinksFast({ webContents: getFigmaScanTargetWebContents(scanTarget) || contents });
+      } catch (_) {
+        debug({ stage: "read-error", url: pageUrl, currentUrl: contents.getURL() });
+        return;
+      }
+      page.links = [...(page.links || []), ...drainCapturedFigmaLinks(scanTarget)];
+      enqueueFigmaProjectApiJobs(drainCapturedFigmaProjects(scanTarget), queue, seenPages, fuid);
+      if ((page.links || []).length === 0) {
+        const projectInfo = getFigmaProjectInfoFromUrl(page.url || contents.getURL());
+        if (projectInfo) {
           try {
-            childPage = await readFigmaPageLinks(scanWindow);
-          } catch (_) {
+            const result = await fetchFigmaProjectFilesViaLiveGraph({ webContents: getFigmaScanTargetWebContents(scanTarget) || contents }, projectInfo, fuid);
+            const links = Array.isArray(result) ? result : (result && result.links) || [];
+            page.links = links;
+            debug({ stage: "project-page-livegraph", projectId: projectInfo.projectId, teamId: projectInfo.teamId, links: links.length, details: result && result.debug, files: filesByKey.size });
+          } catch (error) {
+            debug({ stage: "project-page-livegraph-error", projectId: projectInfo.projectId, teamId: projectInfo.teamId, message: error && error.message ? error.message : String(error) });
+          }
+        }
+      }
+      if ((page.links || []).length === 0) {
+        const desktopProjectUrl = getFigmaDesktopProjectUrl(contents.getURL());
+        if (desktopProjectUrl && desktopProjectUrl !== pageUrl) {
+          try {
+            await loadFigmaPage(scanTarget, desktopProjectUrl);
+            await sleep(1000);
+            page = await readFigmaPageLinksFast({ webContents: getFigmaScanTargetWebContents(scanTarget) || contents });
+            page.links = [...(page.links || []), ...drainCapturedFigmaLinks(scanTarget)];
+            enqueueFigmaProjectApiJobs(drainCapturedFigmaProjects(scanTarget), queue, seenPages, fuid);
+            debug({ stage: "desktop-project", url: desktopProjectUrl, currentUrl: contents.getURL(), pageUrl: page.url, links: (page.links || []).length, candidates: (page.candidates || []).length });
+          } catch (error) {
+            debug({ stage: "desktop-project-error", url: desktopProjectUrl, message: error && error.message ? error.message : String(error) });
+          }
+        }
+      }
+      debug({
+        stage: "queued",
+        url: pageUrl,
+        currentUrl: contents.getURL(),
+        pageUrl: page.url,
+        clickText,
+        links: (page.links || []).length,
+        candidates: (page.candidates || []).length,
+        candidateTexts: (page.candidates || []).slice(0, 20).map((candidate) => ({ text: candidate.text, rect: candidate.rect, projectRow: candidate.projectRow })),
+        files: filesByKey.size
+      });
+      mergeDiscoveredPage(page, filesByKey, queue, seenPages, {
+        ignoreScanLinks: isFigmaProjectOverviewPage(page.url)
+      });
+      if (!getFigmaProjectInfoFromUrl(page.url)) enqueueFigmaProjectCandidates(page, queue, seenPages);
+    };
+    const processQueuedPages = async () => {
+      let activeJobs = 0;
+      const workers = scanTargets.map(async (scanTarget) => {
+        while (seenPages.size < maxPages && Date.now() < scanDeadline) {
+          const job = queue.shift();
+          if (!job) {
+            if (activeJobs === 0) return;
+            await sleep(150);
             continue;
           }
-          mergeDiscoveredPage(childPage, filesByKey, queue, seenPages);
+          activeJobs += 1;
+          try {
+            await processQueuedPage(scanTarget, job);
+          } finally {
+            activeJobs -= 1;
+          }
         }
+      });
+      await Promise.all(workers);
+    };
+    try {
+      await runFastProjectScan();
+      await scanVisibleFigmaPages();
+      await processQueuedPages();
+      if (settingsQueue.length && filesByKey.size === 0) {
+        enqueueFallbackScanPages();
+        await processQueuedPages();
       }
     } finally {
-      for (const scanWindow of scanWindows) {
-        if (!scanWindow.isDestroyed()) scanWindow.close();
-      }
+      for (const scanTarget of scanTargets) closeFigmaScanTarget(scanTarget);
       if (owner && !owner.isDestroyed()) owner.focus();
     }
     return Array.from(filesByKey.values()).sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
