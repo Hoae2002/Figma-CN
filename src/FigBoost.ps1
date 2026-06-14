@@ -32,6 +32,8 @@ $BackupFile = "app.asar.figma-zh-official-preload-original"
 $LicenseCommentTarget = "/*! Bundled license information:"
 $OfficialReleasesXmlUrl = "https://desktop.figma.com/win/releases.xml"
 $OfficialInstallerUrl = "https://desktop.figma.com/win/FigmaSetup.exe"
+$PatcherReleaseApiUrl = "https://api.github.com/repos/Hoae2002/Figma-CN/releases/latest"
+$PatcherReleaseAssetName = "FigBoost.exe"
 $EmbeddedPayloadFiles = @{}
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
@@ -241,6 +243,69 @@ function Get-FigmaInstallerVersionFromText {
   param([string]$Text)
   if ($Text -match 'Figma-(\d+\.\d+\.\d+)-full\.nupkg') { return $Matches[1] }
   return $null
+}
+
+function Get-PatcherReleaseVersionFromText {
+  param([string]$Text)
+  if ($Text -match 'v?(\d+\.\d+\.\d+)') { return $Matches[1] }
+  return $null
+}
+
+function Get-LatestPatcherRelease {
+  param([string]$ApiUrl = $PatcherReleaseApiUrl)
+  $headers = @{ "User-Agent" = "FigBoost/$PatcherVersion" }
+  $release = Invoke-RestMethod -Uri $ApiUrl -Headers $headers -UseBasicParsing -TimeoutSec 20
+  $version = Get-PatcherReleaseVersionFromText ([string]$release.tag_name)
+  if (-not $version) { $version = Get-PatcherReleaseVersionFromText ([string]$release.name) }
+  if (-not $version) { throw "无法从 GitHub Release 解析 FigBoost 版本号。" }
+
+  $asset = @($release.assets | Where-Object { $_.name -eq $PatcherReleaseAssetName } | Select-Object -First 1)
+  if (-not $asset -or -not $asset.browser_download_url) {
+    throw "GitHub Release 中未找到 $PatcherReleaseAssetName。"
+  }
+
+  return [pscustomobject]@{
+    Version = $version
+    Name = [string]$release.name
+    ReleaseUrl = [string]$release.html_url
+    DownloadUrl = [string]$asset.browser_download_url
+  }
+}
+
+function Check-PatcherUpdate {
+  param([string]$CurrentVersion = $PatcherVersion)
+  $release = Get-LatestPatcherRelease
+  if ((Compare-VersionString $release.Version $CurrentVersion) -gt 0) { return $release }
+  return $null
+}
+
+function Invoke-PatcherSelfUpdate {
+  param([object]$Release)
+  if (-not $Release -or -not $Release.DownloadUrl) { throw "缺少 FigBoost 更新下载地址。" }
+
+  $currentExe = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+  if (-not $currentExe -or -not (Test-Path -LiteralPath $currentExe)) { throw "找不到当前 FigBoost.exe 路径。" }
+
+  $tempExe = Join-Path ([System.IO.Path]::GetTempPath()) ("FigBoost-update-" + [Guid]::NewGuid().ToString("N") + ".exe")
+  Invoke-WebRequest -Uri $Release.DownloadUrl -OutFile $tempExe -UseBasicParsing -TimeoutSec 300
+  $downloaded = Get-Item -LiteralPath $tempExe -ErrorAction Stop
+  if ($downloaded.Length -le 0) { throw "下载到的 FigBoost.exe 为空。" }
+
+  $psExe = (Get-Command powershell.exe -ErrorAction Stop).Source
+  $pidValue = [System.Diagnostics.Process]::GetCurrentProcess().Id
+  $currentExeLiteral = $currentExe.Replace("'", "''")
+  $tempExeLiteral = $tempExe.Replace("'", "''")
+  $script = @"
+`$ErrorActionPreference = 'Stop'
+Wait-Process -Id $pidValue -ErrorAction SilentlyContinue
+Start-Sleep -Milliseconds 500
+Copy-Item -LiteralPath '$tempExeLiteral' -Destination '$currentExeLiteral' -Force
+Remove-Item -LiteralPath '$tempExeLiteral' -Force -ErrorAction SilentlyContinue
+Start-Process -FilePath '$currentExeLiteral'
+"@
+  $encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($script))
+  Start-Process -FilePath $psExe -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $encoded) -WindowStyle Hidden
+  [System.Windows.Forms.Application]::Exit()
 }
 
 function Get-OfficialLatestFigmaInstallerRelease {
@@ -1134,6 +1199,8 @@ function Invoke-SelfTest {
     if ((Compare-VersionString "126.4.10" "126.3.12") -le 0) { throw "Self-test version compare failed." }
     if ((Compare-VersionString "126.3.12" "126.4.10") -ge 0) { throw "Self-test version compare failed." }
     if ((Compare-VersionString "126.3.12" "126.3.12") -ne 0) { throw "Self-test version compare failed." }
+    if ((Get-PatcherReleaseVersionFromText "v0.3.6") -ne "0.3.6") { throw "Self-test patcher release tag parse failed." }
+    if ((Get-PatcherReleaseVersionFromText "FigBoost 0.3.7") -ne "0.3.7") { throw "Self-test patcher release name parse failed." }
     if ((Get-FigmaInstallerVersionFromText "PK Figma-126.4.11-full.nupkg") -ne "126.4.11") { throw "Self-test installer version parse failed." }
     $selectedRelease = Select-LatestFigmaRelease @(
       (New-FigmaReleaseInfo "126.3.12" "Figma 126.3.12" "msi" "feed"),
@@ -1374,11 +1441,23 @@ function Show-ErrorMessage {
   [System.Windows.Forms.MessageBox]::Show($Text, "FigBoost", "OK", "Error") | Out-Null
 }
 
+function Test-IsWindows11OrNewer {
+  try {
+    $currentVersion = Get-ItemProperty -LiteralPath "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion"
+    $buildText = if ($currentVersion.CurrentBuildNumber) { $currentVersion.CurrentBuildNumber } else { $currentVersion.CurrentBuild }
+    $build = [int]$buildText
+    return ($build -ge 22000)
+  } catch {
+    return ([Environment]::OSVersion.Version.Build -ge 22000)
+  }
+}
+
 function Show-Gui {
   Add-Type -AssemblyName System.Windows.Forms
   Add-Type -AssemblyName System.Drawing
   [System.Windows.Forms.Application]::EnableVisualStyles()
 
+  $isWindows11OrNewer = Test-IsWindows11OrNewer
   $form = New-Object System.Windows.Forms.Form
   $form.Text = "FigBoost v$PatcherVersion"
   $form.StartPosition = "CenterScreen"
@@ -1719,6 +1798,81 @@ function Show-Gui {
     $script:ValueUpdaterGuardState
   ))
 
+  if ($isWindows11OrNewer) {
+    $form.Width = 1000
+    $form.Height = 700
+    $form.MinimumSize = New-Object System.Drawing.Size(960, 680)
+    $header.Width = 1000
+
+    $currentGroup.Width = 946
+    $currentGroup.Height = 104
+    $script:ValueCurrentFigma.Width = 320
+    $script:ValueOfficialLatest.Left = 350
+    $script:ValueOfficialLatest.Width = 360
+    $script:ValueCurrentPatch.Left = 740
+    $script:ValueCurrentPatch.Width = 180
+    $script:ValueCurrentPath.Top = 66
+    $script:ValueCurrentPath.Width = 900
+
+    $labelApp.Top = 210
+    $labelApp.Width = 240
+    $labelApp.AutoSize = $true
+    $appInput.Panel.Top = 232
+    $appInput.Panel.Width = 690
+    $txtApp.Width = 658
+    $btnApplyAppPath.Left = 726
+    $btnApplyAppPath.Top = 232
+    $btnApplyAppPath.Width = 128
+    $btnBrowse.Left = 864
+    $btnBrowse.Top = 232
+
+    $labelRuntime.Top = 278
+    $labelRuntime.Width = 220
+    $labelRuntime.AutoSize = $true
+    $runtimeInput.Panel.Top = 300
+    $runtimeInput.Panel.Width = 836
+    $txtRuntime.Width = 804
+    $btnBrowseRuntime.Left = 864
+    $btnBrowseRuntime.Top = 300
+
+    $labelNotice.Top = 348
+    $labelNotice.Width = 900
+
+    $btnStatus.Left = 18
+    $btnStatus.Top = 384
+    $btnStatus.Width = 178
+    $btnInstall.Left = 210
+    $btnInstall.Top = 384
+    $btnInstall.Width = 150
+    $btnUninstall.Left = 374
+    $btnUninstall.Top = 384
+    $btnUninstall.Width = 150
+    $btnFeatureManager.Left = 538
+    $btnFeatureManager.Top = 384
+    $btnFeatureManager.Width = 190
+
+    $progressLabel.Top = 436
+    $progressLabel.Width = 946
+    $progressBar.Top = 456
+    $progressBar.Width = 946
+
+    $statusGroup.Top = 488
+    $statusGroup.Width = 946
+    $statusGroup.Height = 128
+    foreach ($control in $statusGroup.Controls) {
+      if ($control.Left -eq 145) { $control.Width = 650 }
+      if ($control.Left -eq 510) { $control.Left = 600; $control.Width = 300 }
+      if ($control.Left -eq 390) { $control.Left = 480 }
+    }
+
+    $workingArea = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+    $form.StartPosition = "Manual"
+    $form.Location = New-Object System.Drawing.Point(
+      ([Math]::Max($workingArea.Left, $workingArea.Left + [int](($workingArea.Width - $form.Width) / 2))),
+      ([Math]::Max($workingArea.Top, $workingArea.Top + [int](($workingArea.Height - $form.Height) / 2)))
+    )
+  }
+
   function Set-ProgressState {
     param([int]$Percent, [string]$Message)
     $value = [Math]::Max(0, [Math]::Min(100, $Percent))
@@ -1737,6 +1891,22 @@ function Show-Gui {
     $progressBar.Visible = $false
     $form.Refresh()
     [System.Windows.Forms.Application]::DoEvents()
+  }
+
+  function Prompt-PatcherUpdateIfAvailable {
+    try {
+      $release = Check-PatcherUpdate
+      if (-not $release) { return }
+
+      $message = "发现 FigBoost 新版本 v$($release.Version)，是否更新到最新版本？`r`n`r`n当前版本：v$PatcherVersion`r`n最新版本：v$($release.Version)"
+      $choice = [System.Windows.Forms.MessageBox]::Show($message, "FigBoost 自动更新", "YesNo", "Question")
+      if ($choice -ne "Yes") { return }
+
+      Set-ProgressState 35 "正在下载 FigBoost v$($release.Version)..."
+      Invoke-PatcherSelfUpdate $release
+    } catch {
+      Write-Log "FigBoost update check failed: $($_.Exception.Message)"
+    }
   }
 
   $runAction = {
@@ -2010,6 +2180,7 @@ function Show-Gui {
     } {
       param($result)
       Show-InfoMessage ("检测完成。`r`n`r`nFigma 路径：$($result.AppDir)`r`nFigma 版本：$($result.FigmaVersion)`r`n词库版本：v$($result.PayloadVersion)`r`n补丁状态：$(if ($result.Patched) { "已安装" } else { "未安装" })")
+      Prompt-PatcherUpdateIfAvailable
     } "检测失败" "正在检测当前版本..."
   })
   $btnFeatureManager.Add_Click({ Show-FeatureInstallDialog })

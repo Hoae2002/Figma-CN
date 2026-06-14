@@ -14,6 +14,25 @@ foreach ($relativePath in $jsFiles) {
   node --check (Join-Path $root $relativePath) | Out-Null
 }
 
+$figBoost = Get-Content -LiteralPath (Join-Path $root "src\FigBoost.ps1") -Raw
+$version = (Get-Content -LiteralPath (Join-Path $root "VERSION") -Raw).Trim()
+$build = Get-Content -LiteralPath (Join-Path $root "scripts\build.ps1") -Raw
+if ($figBoost -notmatch "\`$PatcherVersion = `"$([regex]::Escape($version))`"" -or $build -notmatch "\[string\]\`$Version = `"$([regex]::Escape($version))`"") {
+  throw "Patcher version must stay consistent across src, build script, and VERSION."
+}
+if (-not $figBoost.Contains("function Test-IsWindows11OrNewer") -or -not $figBoost.Contains("HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion") -or -not $figBoost.Contains("CurrentBuildNumber") -or -not $figBoost.Contains("[Environment]::OSVersion.Version.Build -ge 22000") -or -not $figBoost.Contains('$isWindows11OrNewer') -or -not $figBoost.Contains('if ($isWindows11OrNewer)')) {
+  throw "Main GUI must keep Windows 11 layout changes behind a Windows 11 build check."
+}
+if (-not $figBoost.Contains('$form.Width = 900') -or -not $figBoost.Contains('$form.Height = 650') -or -not $figBoost.Contains('$form.MinimumSize = New-Object System.Drawing.Size(860, 630)') -or -not $figBoost.Contains('$btnStatus.Top = 350')) {
+  throw "Windows 10 default layout dimensions must remain unchanged."
+}
+if (-not $figBoost.Contains('$form.Width = 1000') -or -not $figBoost.Contains('$form.Height = 700') -or -not $figBoost.Contains('$currentGroup.Height = 104') -or -not $figBoost.Contains('$btnInstall.Width = 150') -or -not $figBoost.Contains('$btnFeatureManager.Width = 190') -or -not $figBoost.Contains('$form.StartPosition = "Manual"') -or -not $figBoost.Contains('[System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea')) {
+  throw "Windows 11 layout must use roomier dimensions and button widths."
+}
+if (-not $figBoost.Contains("https://api.github.com/repos/Hoae2002/Figma-CN/releases/latest") -or -not $figBoost.Contains('$PatcherReleaseAssetName = "FigBoost.exe"') -or -not $figBoost.Contains("function Get-LatestPatcherRelease") -or -not $figBoost.Contains("browser_download_url") -or -not $figBoost.Contains("function Check-PatcherUpdate") -or -not $figBoost.Contains('Compare-VersionString $release.Version $CurrentVersion') -or -not $figBoost.Contains("function Invoke-PatcherSelfUpdate") -or -not $figBoost.Contains('$currentExeLiteral = $currentExe.Replace') -or -not $figBoost.Contains('Copy-Item -LiteralPath ''$tempExeLiteral'' -Destination ''$currentExeLiteral'' -Force') -or -not $figBoost.Contains("Prompt-PatcherUpdateIfAvailable")) {
+  throw "FigBoost self-update must use GitHub latest release, FigBoost.exe asset, version compare, and post-exit replacement."
+}
+
 $content = Get-Content -LiteralPath (Join-Path $root "payload\src\content\content.js") -Raw
 if ($content -notmatch "if \(!isFigBoostUpdateButtonEnabled\(\)\) return;") {
   throw "Update button observer must not start when the feature is disabled."
