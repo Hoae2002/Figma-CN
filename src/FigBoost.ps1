@@ -708,10 +708,22 @@ function Install-Feature {
 }
 
 function Uninstall-Feature {
-  param([string]$FeatureId, [string]$SelectedRuntimeDir)
+  param([string]$FeatureId, [string]$SelectedRuntimeDir, [string]$SelectedAppDir = "", [string[]]$ShortcutRoots = $null)
+  $appDir = ""
+  $restartAfterUninstall = $false
+  if ($SelectedAppDir) {
+    $appDir = Resolve-ManagedFigmaAppDir $SelectedRuntimeDir $SelectedAppDir
+    $restartAfterUninstall = Stop-FigmaForPatch $appDir -Force
+  }
   $config = Read-FeatureConfig $SelectedRuntimeDir
   $features = @($config.enabledFeatures | Where-Object { $_ -ne $FeatureId })
   Write-FeatureConfig $SelectedRuntimeDir $features | Out-Null
+  if ($appDir) {
+    Repair-FigmaShortcuts $appDir $ShortcutRoots
+    $status = Get-CompleteStatus $appDir $SelectedRuntimeDir
+    $status | Add-Member -NotePropertyName RestartedFigma -NotePropertyValue ($restartAfterUninstall -and (Start-FigmaClient $appDir)) -Force
+    return $status
+  }
 }
 
 function Get-FeatureInstallEmptySelectionMessage {
@@ -1770,12 +1782,10 @@ function Show-Gui {
       UninstallProgressText = "正在卸载附加功能..."
       UninstallFailurePrefix = "附加功能卸载失败"
       UninstallAction = {
-        Set-ProgressState 35 "正在关闭附加功能..."
-        Uninstall-Feature "auto-check-official-latest" $txtRuntime.Text
+        Set-ProgressState 35 "正在关闭 Figma 并卸载附加功能..."
         $current = Resolve-ManagedFigmaAppDir $txtRuntime.Text $txtApp.Text
-        Repair-FigmaShortcuts $current
-        if ($current) { return Get-CompleteStatus $current $txtRuntime.Text }
-        return $null
+        $txtApp.Text = $current
+        Uninstall-Feature "auto-check-official-latest" $txtRuntime.Text $current
       }
       UninstallSuccessMessage = {
         param($result)
