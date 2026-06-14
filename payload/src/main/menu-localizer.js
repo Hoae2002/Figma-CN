@@ -517,6 +517,19 @@
     };
   }
 
+  function parseFigBoostMenuBoundsFromUrl(url) {
+    try {
+      const params = new URL(url).searchParams;
+      const bounds = {};
+      for (const key of ["left", "top", "right", "bottom", "width", "height"]) {
+        bounds[key] = Number(params.get(key));
+      }
+      return bounds;
+    } catch (_) {
+      return null;
+    }
+  }
+
   function openFigBoostFeatureMenu(sender, bounds) {
     const owner = findOwnerWindowForWebContents(sender)
       || BrowserWindow.getFocusedWindow();
@@ -601,7 +614,7 @@
       if (/^figboost:\/\/open-feature-menu/i.test(url || "")) {
         if (event && event.preventDefault) event.preventDefault();
         const openMenu = global.__FIGBOOST_OPEN_FEATURE_MENU__;
-        if (typeof openMenu === "function") openMenu(contents);
+        if (typeof openMenu === "function") openMenu(contents, parseFigBoostMenuBoundsFromUrl(url));
         return true;
       }
       if (!/^figboost:\/\/check-official-update/i.test(url || "")) return false;

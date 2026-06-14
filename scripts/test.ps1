@@ -103,6 +103,9 @@ if ($main -notmatch 'ipcMain\.handle\("figboost:open-feature-menu"' -or $main -n
 if ($main -notmatch "findOwnerWindowForWebContents" -or $main -notmatch "window\.getBrowserViews\(\)" -or $main -notmatch "BrowserWindow\.getFocusedWindow\(\)" -or $main -notmatch "normalizeFigBoostMenuBounds" -or $main -notmatch "popupOptions\.x = point\.x" -or $main -notmatch "__FIGBOOST_ACTIVE_FEATURE_MENUS__" -or $main -notmatch "__FIGBOOST_OPEN_FEATURE_MENU__ = openFigBoostFeatureMenu" -or $main -notmatch "menu\.popup\(popupOptions\)") {
   throw "Native FigBoost feature menu must bind to the owning BrowserWindow and button position."
 }
+if ($main -notmatch "parseFigBoostMenuBoundsFromUrl" -or $main -notmatch "openMenu\(contents, parseFigBoostMenuBoundsFromUrl\(url\)\)") {
+  throw "Native FigBoost feature menu fallback URL must keep the button position."
+}
 
 $core = Get-Content -LiteralPath (Join-Path $root "payload\src\content\localizer-core.js") -Raw
 if ($core -notmatch "MAX_TRANSLATION_CACHE_SIZE") {
