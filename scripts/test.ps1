@@ -41,6 +41,9 @@ if ($content -notmatch "data-placement='titlebar'") {
 if ($content -notmatch "right:250px;top:0;border-left:solid 1px var\(--color-bordertranslucent\);border-right:solid 1px var\(--color-bordertranslucent\)") {
   throw "Update button titlebar placement must sit on the native titlebar button grid."
 }
+if ($content -notmatch "data-overlapped='true'\]\{visibility:hidden;pointer-events:none;\}" -or $content -notmatch "function syncTitlebarButtonVisibility\(wrap\)" -or $content -notmatch "document\.elementsFromPoint" -or $content -notmatch "window\.addEventListener\(`"resize`", schedule\);") {
+  throw "Update button titlebar placement must hide when it overlaps native controls."
+}
 if ($content -notmatch "SHOULD_INSTALL_UPDATE_BUTTON = IS_TEST_PAGE \|\| \(IS_TITLEBAR_PAGE && !IS_FIGMA_PAGE\)") {
   throw "Update button must not install inside figma.com content pages."
 }
