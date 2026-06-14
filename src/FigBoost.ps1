@@ -55,8 +55,15 @@ function Write-Log {
   param([string]$Message)
   if ($script:LogBox) {
     $script:LogBox.AppendText("[$(Get-Date -Format 'HH:mm:ss')] $Message`r`n")
-  } else {
+  } elseif ($SelfTest -or $Install -or $Uninstall -or $Status -or $CheckLatest -or $UpdateFigma) {
     Write-Host $Message
+  } else {
+    try {
+      $logDir = Join-Path $env:LOCALAPPDATA "FigBoost"
+      New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+      Add-Content -LiteralPath (Join-Path $logDir "FigBoost.log") -Value "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] $Message" -Encoding UTF8
+    } catch {
+    }
   }
 }
 

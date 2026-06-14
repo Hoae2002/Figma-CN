@@ -20,6 +20,12 @@ $build = Get-Content -LiteralPath (Join-Path $root "scripts\build.ps1") -Raw
 if ($figBoost -notmatch "\`$PatcherVersion = `"$([regex]::Escape($version))`"" -or $build -notmatch "\[string\]\`$Version = `"$([regex]::Escape($version))`"") {
   throw "Patcher version must stay consistent across src, build script, and VERSION."
 }
+if (-not $build.Contains("-noConsole")) {
+  throw "FigBoost.exe must be built without a console window."
+}
+if (-not $figBoost.Contains('Join-Path $env:LOCALAPPDATA "FigBoost"') -or -not $figBoost.Contains('Add-Content -LiteralPath (Join-Path $logDir "FigBoost.log")')) {
+  throw "GUI logs must go to a file instead of opening or writing to a console window."
+}
 if (-not $figBoost.Contains("function Test-IsWindows11OrNewer") -or -not $figBoost.Contains("HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion") -or -not $figBoost.Contains("CurrentBuildNumber") -or -not $figBoost.Contains("[Environment]::OSVersion.Version.Build -ge 22000") -or -not $figBoost.Contains('$isWindows11OrNewer') -or -not $figBoost.Contains('if ($isWindows11OrNewer)')) {
   throw "Main GUI must keep Windows 11 layout changes behind a Windows 11 build check."
 }
