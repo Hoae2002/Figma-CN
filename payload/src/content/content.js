@@ -98,7 +98,7 @@
       ".figboost-menu-button:focus{outline:0;}",
       ".figboost-menu-button:focus-visible{outline:1px solid #6a6a6a;outline-offset:-1px;}",
       ".figboost-menu-button:disabled{cursor:default;opacity:.55;}",
-      ".figboost-menu-button svg{width:13px;height:13px;display:block;stroke:currentColor;}",
+      ".figboost-menu-button svg{width:14px;height:14px;display:block;stroke:currentColor;}",
       ".figboost-menu-panel{box-sizing:border-box;position:absolute;top:34px;right:0;min-width:148px;padding:6px 0;border:1px solid rgba(0,0,0,.12);border-radius:6px;background:#fff;box-shadow:0 8px 24px rgba(0,0,0,.14);}",
       ".figboost-menu-wrap[data-placement='titlebar'] .figboost-menu-panel{top:44px;}",
       ".figboost-menu-panel[hidden]{display:none;}",

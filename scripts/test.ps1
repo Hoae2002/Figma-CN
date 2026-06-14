@@ -83,7 +83,7 @@ if ($content -notmatch "await FIGBOOST_MENU_ITEMS\[0\]\.run\(\);") {
 if ($content -notmatch "let titlebarUpdateBusy = false;" -or $content -match "button\.disabled = true" -or $content -notmatch 'button\.setAttribute\("aria-pressed", "false"\);') {
   throw "Update button titlebar busy state must not trigger disabled browser styles."
 }
-if ($content -notmatch "svg\{width:13px;height:13px" -or $content -notmatch 'stroke-width="1\.1"') {
+if ($content -notmatch "svg\{width:14px;height:14px" -or $content -notmatch 'stroke-width="1\.1"') {
   throw "Update button icon must be slightly larger with a lighter stroke."
 }
 
