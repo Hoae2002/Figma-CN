@@ -914,6 +914,17 @@
     await sleep(700);
   }
 
+  async function loadFigmaWebContents(contents, url) {
+    try {
+      await contents.loadURL(url);
+    } catch (_) {}
+    await sleep(900);
+  }
+
+  function isFigmaProjectCandidateText(text) {
+    return /\d+\s*(files?|文件)|团队|项目|文件夹|Teams?|Projects?|Folders?/i.test(String(text || ""));
+  }
+
   async function readFigmaPageLinks(window) {
     return window.webContents.executeJavaScript(`(async () => {
       const scrollTargets = () => {
@@ -1019,7 +1030,7 @@
 
   function enqueueFigmaProjectCandidates(page, queue, seenPages) {
     for (const candidate of page.candidates || []) {
-      if (!/\d+\s*(files?|文件)|团队|项目|文件夹|Teams?|Projects?|Folders?/i.test(candidate.text)) continue;
+      if (!isFigmaProjectCandidateText(candidate.text)) continue;
       const job = {
         url: page.url,
         clickText: candidate.text
@@ -1029,6 +1040,46 @@
         queue.push(job);
       }
     }
+  }
+
+  function shouldScanActiveFigmaProjects(url, page) {
+    const absoluteUrl = toFigmaAbsoluteUrl(url);
+    if (!absoluteUrl) return false;
+    if (/\/files\/(?:drafts|recent)\b/i.test(absoluteUrl)) return false;
+    if (/\/(?:file|design)\//i.test(absoluteUrl)) return false;
+    return (page.candidates || []).some((candidate) => isFigmaProjectCandidateText(candidate.text));
+  }
+
+  async function scanActiveFigmaProjectCandidates(contents, page, filesByKey, queue, seenPages, progress) {
+    if (!shouldScanActiveFigmaProjects(contents.getURL(), page)) return;
+    const originalUrl = contents.getURL();
+    const candidates = (page.candidates || [])
+      .filter((candidate) => isFigmaProjectCandidateText(candidate.text))
+      .slice(0, 80);
+    for (const candidate of candidates) {
+      const marker = `${originalUrl}#active#${candidate.text}`;
+      if (seenPages.has(marker)) continue;
+      seenPages.add(marker);
+      if (progress) {
+        progress.update({
+          sub: "\u6b63\u5728\u6253\u5f00\u9879\u76ee\uff1a" + candidate.text,
+          foot: `\u5df2\u68c0\u7d22 ${filesByKey.size} \u4e2a\u6587\u4ef6\uff0c${seenPages.size} \u4e2a\u9875\u9762`
+        });
+      }
+      await loadFigmaWebContents(contents, originalUrl);
+      const clicked = await clickFigmaPageCandidate({ webContents: contents }, candidate.text);
+      if (!clicked) continue;
+      await sleep(1200);
+      let childPage;
+      try {
+        childPage = await readFigmaPageLinks({ webContents: contents });
+      } catch (_) {
+        continue;
+      }
+      mergeDiscoveredPage(childPage, filesByKey, queue, seenPages);
+      enqueueFigmaProjectCandidates(childPage, queue, seenPages);
+    }
+    await loadFigmaWebContents(contents, originalUrl);
   }
 
   async function discoverFigmaFiles(progress) {
@@ -1049,7 +1100,6 @@
     };
     const queue = [
       "https://www.figma.com/files",
-      "https://www.figma.com/files/recent",
       "https://www.figma.com/files/team",
       "https://www.figma.com/files/projects"
     ];
@@ -1063,10 +1113,11 @@
         try {
           if (!contents || contents.isDestroyed() || contents.__FIGBOOST_SKIP_RENDERER_INJECTION__) continue;
           if (!/^https:\/\/([^/]+\.)?figma\.com/i.test(contents.getURL())) continue;
-          if (/\/files\/drafts\b/i.test(contents.getURL())) continue;
+          if (/\/files\/(?:drafts|recent)\b/i.test(contents.getURL())) continue;
           const page = await readFigmaPageLinks({ webContents: contents });
           mergeDiscoveredPage(page, filesByKey, queue, seenPages);
           enqueueFigmaProjectCandidates(page, queue, seenPages);
+          await scanActiveFigmaProjectCandidates(contents, page, filesByKey, queue, seenPages, progress);
         } catch (_) {}
       }
       while (queue.length && seenPages.size < maxPages) {
@@ -1097,7 +1148,7 @@
         }
         mergeDiscoveredPage(page, filesByKey, queue, seenPages);
         const candidates = (page.candidates || [])
-          .filter((candidate) => /\d+\s*(files?|文件)|团队|项目|文件夹|Teams?|Projects?|Folders?/i.test(candidate.text))
+          .filter((candidate) => isFigmaProjectCandidateText(candidate.text))
           .slice(0, 40);
         for (const candidate of candidates) {
           if (seenPages.size >= maxPages) break;

@@ -149,6 +149,9 @@ if ($main -notmatch "showInactive" -or $main -notmatch "createFigmaExportContext
 if ($main -match 'https://www\.figma\.com/files/drafts') {
   throw "Batch .fig export scan must not include Drafts pages."
 }
+if ($main -match 'https://www\.figma\.com/files/recent') {
+  throw "Batch .fig export scan must not include Recent pages."
+}
 if ($main -notmatch "function shouldReadVisibleFigmaPage" -or $main -notmatch "desktop_new_tab" -or $main -notmatch "webContents\.getAllWebContents\(\)" -or $main -notmatch "readFigmaPageLinks") {
   throw "Batch .fig export scan must read visible All Projects pages while filtering drafts, recent, and new-tab cache pages."
 }
