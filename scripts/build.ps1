@@ -45,6 +45,7 @@ try {
     -iconFile $iconFile `
     -STA `
     -noConsole `
+    -noOutput `
     -DPIAware
 } finally {
   Remove-Item -LiteralPath $generatedSource -Force -ErrorAction SilentlyContinue

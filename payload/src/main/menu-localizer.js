@@ -395,6 +395,57 @@
     }
   }
 
+  function showOfficialUpdateCheckingWindow() {
+    const owner = BrowserWindow.getFocusedWindow();
+    const progressWindow = new BrowserWindow({
+      width: 340,
+      height: 140,
+      parent: owner || undefined,
+      modal: Boolean(owner),
+      show: false,
+      resizable: false,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      title: "\u6b63\u5728\u68c0\u67e5\u66f4\u65b0",
+      backgroundColor: "#ffffff",
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true
+      }
+    });
+    progressWindow.setMenu(null);
+    progressWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body{margin:0;padding:24px 26px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei UI",sans-serif;background:#fff;color:#111;}
+    .title{font-size:16px;font-weight:600;margin-bottom:10px;}
+    .sub{font-size:13px;color:#555;margin-bottom:18px;}
+    .bar{height:4px;overflow:hidden;border-radius:999px;background:#e6e8ec;}
+    .bar:before{content:"";display:block;width:42%;height:100%;border-radius:999px;background:#1677ff;animation:move 1s ease-in-out infinite;}
+    @keyframes move{0%{transform:translateX(-105%);}100%{transform:translateX(245%);}}
+  </style>
+</head>
+<body>
+  <div class="title">&#27491;&#22312;&#26816;&#26597;&#26356;&#26032;</div>
+  <div class="sub">&#27491;&#22312;&#33719;&#21462; Figma &#23448;&#26041;&#26368;&#26032;&#29256;&#26412;&#65292;&#35831;&#31245;&#20505;&#8230;</div>
+  <div class="bar"></div>
+</body>
+</html>
+`)}`);
+    progressWindow.once("ready-to-show", () => {
+      if (!progressWindow.isDestroyed()) progressWindow.show();
+    });
+    return {
+      close() {
+        if (!progressWindow.isDestroyed()) progressWindow.close();
+      }
+    };
+  }
+
   async function checkOfficialUpdateManually() {
     const now = Date.now();
     if (global.__FIGMA_ZH_OFFICIAL_UPDATE_CHECKING__) {
@@ -409,11 +460,16 @@
     global.__FIGMA_ZH_OFFICIAL_UPDATE_CHECKING__ = true;
     global.__FIGMA_ZH_OFFICIAL_UPDATE_LAST_CHECK__ = now;
     const config = readFeatureConfig();
+    const checkingWindow = showOfficialUpdateCheckingWindow();
     try {
-      if (!isFeatureEnabled(config, "auto-check-official-latest")) return { disabled: true };
+      if (!isFeatureEnabled(config, "auto-check-official-latest")) {
+        checkingWindow.close();
+        return { disabled: true };
+      }
       const patcherPath = config && config.patcherPath;
       const runtimeDir = config && config.runtimeDir;
       if (!patcherPath || !runtimeDir || !fs.existsSync(patcherPath)) {
+        checkingWindow.close();
         await dialog.showMessageBox({
           type: "error",
           title: "检查更新失败",
@@ -426,6 +482,7 @@
       try {
         latestVersion = await getOfficialLatestVersion();
       } catch (error) {
+        checkingWindow.close();
         await dialog.showMessageBox({
           type: "error",
           title: "检查更新失败",
@@ -436,6 +493,7 @@
       }
       const currentVersion = app.getVersion();
       if (compareVersions(currentVersion, latestVersion) >= 0) {
+        checkingWindow.close();
         await dialog.showMessageBox({
           type: "info",
           title: "当前已是官方最新版",
@@ -443,6 +501,7 @@
         });
         return { latest: true };
       }
+      checkingWindow.close();
       const result = await dialog.showMessageBox({
         type: "question",
         buttons: ["更新", "稍后"],
@@ -470,6 +529,7 @@
       }
       return { updateStarted: true };
     } finally {
+      checkingWindow.close();
       global.__FIGMA_ZH_OFFICIAL_UPDATE_CHECKING__ = false;
     }
   }

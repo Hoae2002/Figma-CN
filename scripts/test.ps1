@@ -20,11 +20,14 @@ $build = Get-Content -LiteralPath (Join-Path $root "scripts\build.ps1") -Raw
 if ($figBoost -notmatch "\`$PatcherVersion = `"$([regex]::Escape($version))`"" -or $build -notmatch "\[string\]\`$Version = `"$([regex]::Escape($version))`"") {
   throw "Patcher version must stay consistent across src, build script, and VERSION."
 }
-if (-not $build.Contains("-noConsole")) {
+if (-not $build.Contains("-noConsole") -or -not $build.Contains("-noOutput")) {
   throw "FigBoost.exe must be built without a console window."
 }
 if (-not $figBoost.Contains('Join-Path $env:LOCALAPPDATA "FigBoost"') -or -not $figBoost.Contains('Add-Content -LiteralPath (Join-Path $logDir "FigBoost.log")')) {
   throw "GUI logs must go to a file instead of opening or writing to a console window."
+}
+if (-not $figBoost.Contains('$Host.Name -eq "ConsoleHost"') -or -not $figBoost.Contains('Write-Log "Self-test passed."')) {
+  throw "Compiled command-mode logs must not be shown as no-console message boxes."
 }
 if (-not $figBoost.Contains("function Test-IsWindows11OrNewer") -or -not $figBoost.Contains("HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion") -or -not $figBoost.Contains("CurrentBuildNumber") -or -not $figBoost.Contains("[Environment]::OSVersion.Version.Build -ge 22000") -or -not $figBoost.Contains('$isWindows11OrNewer') -or -not $figBoost.Contains('if ($isWindows11OrNewer)')) {
   throw "Main GUI must keep Windows 11 layout changes behind a Windows 11 build check."
@@ -139,6 +142,10 @@ if ($main -notmatch "parseFigBoostMenuBoundsFromUrl" -or $main -notmatch "openMe
 }
 if ($main -notmatch "dispatchFeatureMenuClosed" -or $main -notmatch "figboost:feature-menu-closed" -or $main -notmatch "if \(sender\) dispatchFeatureMenuClosed\(sender\)") {
   throw "Native FigBoost feature menu must notify the renderer when the popup closes."
+}
+
+if ($main -notmatch "function showOfficialUpdateCheckingWindow" -or $main -notmatch "\\u6b63\\u5728\\u68c0\\u67e5\\u66f4\\u65b0" -or $main -notmatch "const checkingWindow = showOfficialUpdateCheckingWindow\(\)" -or $main -notmatch "checkingWindow\.close\(\)") {
+  throw "Manual update check must show and close a checking progress dialog."
 }
 
 $core = Get-Content -LiteralPath (Join-Path $root "payload\src\content\localizer-core.js") -Raw

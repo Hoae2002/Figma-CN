@@ -55,7 +55,7 @@ function Write-Log {
   param([string]$Message)
   if ($script:LogBox) {
     $script:LogBox.AppendText("[$(Get-Date -Format 'HH:mm:ss')] $Message`r`n")
-  } elseif ($SelfTest -or $Install -or $Uninstall -or $Status -or $CheckLatest -or $UpdateFigma) {
+  } elseif (($SelfTest -or $Install -or $Uninstall -or $Status -or $CheckLatest -or $UpdateFigma) -and $Host.Name -eq "ConsoleHost") {
     Write-Host $Message
   } else {
     try {
@@ -1392,7 +1392,7 @@ function Invoke-SelfTest {
     if (-not $runtimeContentSource.Contains("figboost://check-official-update")) { throw "Self-test content payload does not include update fallback navigation." }
     $uninstallStatus = Uninstall-Patch $fakeAppDir $fakeRuntime -SkipProcessCheck
     if ($uninstallStatus.Patched) { throw "Self-test uninstall did not restore the original app.asar." }
-    Write-Host "Self-test passed."
+    Write-Log "Self-test passed."
   } finally {
     $env:LOCALAPPDATA = $originalLocalAppData
     Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
