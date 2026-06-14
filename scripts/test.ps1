@@ -59,7 +59,7 @@ if ($content -notmatch "\.figboost-menu-wrap\[data-placement='titlebar'\] \.figb
 if ($content -notmatch "border-radius:0") {
   throw "Update button hover radius must match the native titlebar ghost style."
 }
-if ($content -notmatch "background-color:var\(--color-bghovertransparent\)!important") {
+if ($content -notmatch "data-hover-suppressed='true'" -or $content -notmatch "background-color:var\(--color-bghovertransparent\)!important") {
   throw "Update button hover state must match the native titlebar caption button style."
 }
 if ($content -notmatch "\.figboost-menu-wrap\[data-placement='titlebar'\] \.figboost-menu-button:active,\.figboost-menu-wrap\[data-placement='titlebar'\] \.figboost-menu-button\[aria-expanded='true'\],\.figboost-menu-wrap\[data-placement='titlebar'\] \.figboost-menu-button\[aria-pressed='true'\]\{background-color:var\(--color-bgtransparent-secondary-hover\)!important;color:var\(--color-text\)!important;fill:var\(--color-text\)!important;--fpl-icon-color:var\(--color-text\)!important;\}") {
@@ -77,7 +77,7 @@ if ($content -notmatch "\.figboost-menu-button:focus-visible\{outline:1px solid 
 if ($content -match 'button\.setAttribute\("aria-pressed", "true"\)') {
   throw "Update button titlebar click must not leave a persistent selected highlight."
 }
-if ($content -notmatch "resetFigBoostButtonState\(button\)" -or $content -notmatch 'button\.blur\(\)' -or $content -notmatch 'figboost:feature-menu-closed') {
+if ($content -notmatch "resetFigBoostButtonState\(button\)" -or $content -notmatch 'button\.blur\(\)' -or $content -notmatch 'figboost:feature-menu-closed' -or $content -notmatch "suppressFigBoostButtonHover\(button\)" -or $content -notmatch "wrap\.dataset\.hoverSuppressed = `"true`"" -or $content -notmatch 'document\.addEventListener\("pointermove", release, true\)') {
   throw "Update button titlebar menu close must clear the button ghost state."
 }
 if ($content -notmatch "getFigBoostFeatureMenuBridge\(\)" -or $content -notmatch "getFigBoostMenuBounds\(button\)" -or $content -notmatch "bridge\(bounds\)" -or $content -notmatch "figboost://open-feature-menu") {
@@ -85,6 +85,9 @@ if ($content -notmatch "getFigBoostFeatureMenuBridge\(\)" -or $content -notmatch
 }
 if ($content -match "await bridge\(getFigBoostMenuBounds\(button\)\)") {
   throw "Update button titlebar click must not wait for the native menu to close."
+}
+if ($content -match "setTimeout\(\(\) => \{\s*resetFigBoostButtonState\(button\);") {
+  throw "Update button titlebar click must keep the pressed state until the native menu closes."
 }
 if ($content -notmatch "toggleFigBoostMenu\(wrap\);") {
   throw "Update button click must fall back to the shared DOM feature menu."

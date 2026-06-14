@@ -98,8 +98,8 @@
       ".figboost-menu-wrap[data-placement='titlebar'][data-overlapped='true']{visibility:hidden;pointer-events:none;}",
       ".figboost-menu-button{box-sizing:border-box;width:50px;height:37px;min-width:0;min-height:0;margin:0;padding:0;border:0;border-radius:0;background:transparent;color:#b6b6b6;display:flex;align-items:center;justify-content:center;cursor:pointer;font:inherit;line-height:0;appearance:none;-webkit-appearance:none;outline:0;box-shadow:none;transform:none;-webkit-app-region:no-drag;}",
       ".figboost-menu-wrap[data-placement='titlebar'] .figboost-menu-button{background-color:unset;display:flex;align-items:center;justify-content:center;width:50px;height:38px;-webkit-app-region:no-drag;color:var(--color-text-secondary);fill:var(--color-text-secondary);--fpl-icon-color:var(--color-text-secondary);pointer-events:bounding-box;cursor:default;}",
-      ".figboost-menu-button:hover,.figboost-menu-button[aria-expanded='true'],.figboost-menu-button[aria-pressed='true']{background:#424242;color:#d6d6d6;}",
-      ".figboost-menu-wrap[data-placement='titlebar'] .figboost-menu-button:hover,.figboost-menu-wrap[data-placement='titlebar'] .figboost-menu-button:focus-visible{background-color:var(--color-bghovertransparent)!important;color:var(--color-text)!important;fill:var(--color-text)!important;--fpl-icon-color:var(--color-text)!important;}",
+      ".figboost-menu-wrap:not([data-hover-suppressed='true']) .figboost-menu-button:hover,.figboost-menu-button[aria-expanded='true'],.figboost-menu-button[aria-pressed='true']{background:#424242;color:#d6d6d6;}",
+      ".figboost-menu-wrap[data-placement='titlebar']:not([data-hover-suppressed='true']) .figboost-menu-button:hover,.figboost-menu-wrap[data-placement='titlebar'] .figboost-menu-button:focus-visible{background-color:var(--color-bghovertransparent)!important;color:var(--color-text)!important;fill:var(--color-text)!important;--fpl-icon-color:var(--color-text)!important;}",
       ".figboost-menu-wrap[data-placement='titlebar'] .figboost-menu-button:active,.figboost-menu-wrap[data-placement='titlebar'] .figboost-menu-button[aria-expanded='true'],.figboost-menu-wrap[data-placement='titlebar'] .figboost-menu-button[aria-pressed='true']{background-color:var(--color-bgtransparent-secondary-hover)!important;color:var(--color-text)!important;fill:var(--color-text)!important;--fpl-icon-color:var(--color-text)!important;}",
       ".figboost-menu-button:active{background:#424242;color:#d6d6d6;box-shadow:none;transform:none;}",
       ".figboost-menu-button:focus{outline:0;}",
@@ -159,6 +159,25 @@
     button.setAttribute("aria-expanded", "false");
     button.setAttribute("aria-pressed", "false");
     button.blur();
+    suppressFigBoostButtonHover(button);
+  }
+
+  function suppressFigBoostButtonHover(button) {
+    const wrap = button.closest(".figboost-menu-wrap");
+    if (!wrap) return;
+    if (wrap.__figboostReleaseHoverSuppression) {
+      wrap.__figboostReleaseHoverSuppression();
+    }
+    wrap.dataset.hoverSuppressed = "true";
+    const release = () => {
+      delete wrap.dataset.hoverSuppressed;
+      document.removeEventListener("pointermove", release, true);
+      document.removeEventListener("keydown", release, true);
+      wrap.__figboostReleaseHoverSuppression = null;
+    };
+    wrap.__figboostReleaseHoverSuppression = release;
+    document.addEventListener("pointermove", release, true);
+    document.addEventListener("keydown", release, true);
   }
 
   function getFigBoostMenuBounds(button) {
@@ -283,9 +302,6 @@
         button.setAttribute("aria-expanded", "true");
         if (bridge) Promise.resolve(bridge(bounds)).catch(() => openFigBoostFeatureMenuFromTitlebar(bounds));
         else openFigBoostFeatureMenuFromTitlebar(bounds);
-        setTimeout(() => {
-          resetFigBoostButtonState(button);
-        }, 160);
         return;
       }
       toggleFigBoostMenu(wrap);
