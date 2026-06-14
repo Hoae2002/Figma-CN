@@ -689,6 +689,7 @@ function Test-FeatureInstalled {
 function Install-Feature {
   param([string]$FeatureId, [string]$SelectedAppDir, [string]$SelectedRuntimeDir, [string[]]$ShortcutRoots = $null)
   $appDir = Resolve-ManagedFigmaAppDir $SelectedRuntimeDir $SelectedAppDir
+  $restartAfterInstall = Stop-FigmaForPatch $appDir -Force
   $config = Read-FeatureConfig $SelectedRuntimeDir
   $features = @($config.enabledFeatures)
   if ($features -notcontains $FeatureId) { $features += $FeatureId }
@@ -697,9 +698,12 @@ function Install-Feature {
   $target = Resolve-Target $appDir
   $status = Get-PatchStatus $target $SelectedRuntimeDir
   if (-not $status.Patched -or -not $status.HasBuiltInUpdaterDisabled) {
-    return Install-Patch $appDir $SelectedRuntimeDir -Force -ShortcutRoots $ShortcutRoots
+    $status = Install-Patch $appDir $SelectedRuntimeDir -Force -SkipProcessCheck -ShortcutRoots $ShortcutRoots
+    $status.RestartedFigma = $restartAfterInstall -and (Start-FigmaClient $target.AppDir)
+    return $status
   }
   Repair-FigmaShortcuts $appDir $ShortcutRoots
+  $status | Add-Member -NotePropertyName RestartedFigma -NotePropertyValue ($restartAfterInstall -and (Start-FigmaClient $target.AppDir)) -Force
   return $status
 }
 
@@ -814,19 +818,54 @@ function Patch-Asar {
 
 function Assert-FigmaClosed {
   param([switch]$Force)
+  return Stop-FigmaForPatch "" -Force:$Force
+}
+
+function Stop-FigmaForPatch {
+  param([string]$AppDir, [switch]$Force)
   $running = Get-Process -Name "Figma" -ErrorAction SilentlyContinue
   if ($running) {
     if (-not $Force) {
       throw "Figma is running. Close Figma first, or enable Force close Figma."
     }
+    $targetExe = if ($AppDir) { Join-Path $AppDir "Figma.exe" } else { "" }
+    $restartAfterInstall = $false
+    foreach ($process in @($running)) {
+      try {
+        $processPath = $process.MainModule.FileName
+        if ((-not $targetExe) -or $processPath.Equals($targetExe, [StringComparison]::OrdinalIgnoreCase)) {
+          $restartAfterInstall = $true
+        }
+      } catch {
+        if (-not $targetExe) { $restartAfterInstall = $true }
+      }
+    }
     $running | Stop-Process -Force
+    return $restartAfterInstall
+  }
+  return $false
+}
+
+function Start-FigmaClient {
+  param([string]$AppDir)
+  if (-not $AppDir) { return $false }
+  $appExe = Join-Path $AppDir "Figma.exe"
+  if (-not (Test-Path -LiteralPath $appExe)) { return $false }
+  try {
+    Start-Process -FilePath $appExe -WorkingDirectory $AppDir | Out-Null
+    Write-Log "Restarted Figma client: $appExe"
+    return $true
+  } catch {
+    Write-Log "Failed to restart Figma client: $($_.Exception.Message)"
+    return $false
   }
 }
 
 function Install-Patch {
   param([string]$SelectedAppDir, [string]$SelectedRuntimeDir, [switch]$Force, [switch]$SkipProcessCheck, [string[]]$ShortcutRoots = $null)
-  if (-not $SkipProcessCheck) { Assert-FigmaClosed -Force:$Force }
   $appDir = Resolve-ManagedFigmaAppDir $SelectedRuntimeDir $SelectedAppDir
+  $restartAfterInstall = $false
+  if (-not $SkipProcessCheck) { $restartAfterInstall = Stop-FigmaForPatch $appDir -Force:$Force }
   $target = Resolve-Target $appDir
   if (-not (Test-Path -LiteralPath $target.BackupPath)) {
     Copy-Item -LiteralPath $target.AsarPath -Destination $target.BackupPath -Force
@@ -848,12 +887,13 @@ function Install-Patch {
   $status = Get-PatchStatus $target $SelectedRuntimeDir
   $status | Add-Member -NotePropertyName AlreadyPatched -NotePropertyValue ([bool]$result.AlreadyPatched) -Force
   Repair-FigmaShortcuts $target.AppDir $ShortcutRoots
+  $status | Add-Member -NotePropertyName RestartedFigma -NotePropertyValue ($restartAfterInstall -and (Start-FigmaClient $target.AppDir)) -Force
   return $status
 }
 
 function Uninstall-Patch {
   param([string]$SelectedAppDir, [string]$SelectedRuntimeDir, [switch]$Force, [switch]$SkipProcessCheck)
-  if (-not $SkipProcessCheck) { Assert-FigmaClosed -Force:$Force }
+  if (-not $SkipProcessCheck) { [void](Assert-FigmaClosed -Force:$Force) }
   $target = Resolve-Target (Resolve-ManagedFigmaAppDir $SelectedRuntimeDir $SelectedAppDir)
   if (-not (Test-Path -LiteralPath $target.BackupPath)) {
     throw "Backup not found: $($target.BackupPath)"
@@ -878,7 +918,7 @@ function Update-FigmaOfficial {
   }
 
   if ($Progress) { & $Progress 25 "正在关闭 Figma 客户端..." }
-  Assert-FigmaClosed -Force:$Force
+  [void](Assert-FigmaClosed -Force:$Force)
   $installerExt = [System.IO.Path]::GetExtension(([Uri]$release.InstallerUrl).AbsolutePath)
   if (-not $installerExt) { $installerExt = ".exe" }
   $installer = Join-Path ([System.IO.Path]::GetTempPath()) "FigmaSetup-official-latest$installerExt"
@@ -1936,7 +1976,7 @@ function Show-Gui {
         }
       } else {
         Set-ProgressState 45 "正在关闭 Figma 并复制客户端..."
-        Assert-FigmaClosed -Force
+        [void](Assert-FigmaClosed -Force)
         $sourceAppDir = Find-CurrentFigmaAppDir
         $selected = Move-FigmaAppDir $sourceAppDir $txtApp.Text $txtRuntime.Text
       }
