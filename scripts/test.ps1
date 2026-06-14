@@ -38,28 +38,28 @@ if ($content -notmatch "data-placement='tab'") {
 if ($content -notmatch "data-placement='titlebar'") {
   throw "Update button must include the titlebar fallback placement style."
 }
-if ($content -notmatch "right:234px;top:0") {
+if ($content -notmatch "right:234px;top:0;border-left:solid 1px var\(--color-bordertranslucent\)") {
   throw "Update button titlebar placement must sit on the native titlebar button grid."
 }
 if ($content -notmatch "SHOULD_INSTALL_UPDATE_BUTTON = IS_TEST_PAGE \|\| \(IS_TITLEBAR_PAGE && !IS_FIGMA_PAGE\)") {
   throw "Update button must not install inside figma.com content pages."
 }
-if ($content -notmatch "width:32px;height:37px;background:#383838") {
-  throw "Update button visual hit area must match the native titlebar hover cell."
+if ($content -notmatch "width:50px;height:38px") {
+  throw "Update button visual hit area must match the native titlebar caption button."
 }
 if ($content -notmatch "min-width:0;min-height:0") {
   throw "Update button must neutralize inherited button minimum sizes."
 }
-if ($content -notmatch "\.figboost-menu-wrap\[data-placement='titlebar'\] \.figboost-menu-button\{width:32px;height:37px;background:#383838;border-left:1px solid #4c4c4c;\}") {
-  throw "Update button titlebar placement must keep the native divider from the button on its left."
+if ($content -notmatch "\.figboost-menu-wrap\[data-placement='titlebar'\] \.figboost-menu-button\{background-color:unset;display:flex;align-items:center;justify-content:center;width:50px;height:38px;-webkit-app-region:no-drag;color:var\(--color-text-secondary\);fill:var\(--color-text-secondary\);--fpl-icon-color:var\(--color-text-secondary\);pointer-events:bounding-box;\}") {
+  throw "Update button titlebar placement must reuse the native caption button style."
 }
 if ($content -notmatch "border-radius:0") {
   throw "Update button hover radius must match the native titlebar ghost style."
 }
-if ($content -notmatch "background:#424242") {
-  throw "Update button hover state must match the native titlebar ghost style."
+if ($content -notmatch "background-color:var\(--color-bghovertransparent\)!important") {
+  throw "Update button hover state must match the native titlebar caption button style."
 }
-if ($content -notmatch "\.figboost-menu-wrap\[data-placement='titlebar'\] \.figboost-menu-button:hover,\.figboost-menu-wrap\[data-placement='titlebar'\] \.figboost-menu-button:active,\.figboost-menu-wrap\[data-placement='titlebar'\] \.figboost-menu-button\[aria-pressed='true'\]\{background:#424242!important;color:#d6d6d6!important;\}") {
+if ($content -notmatch "\.figboost-menu-wrap\[data-placement='titlebar'\] \.figboost-menu-button:active,\.figboost-menu-wrap\[data-placement='titlebar'\] \.figboost-menu-button\[aria-pressed='true'\]\{background-color:var\(--color-bgtransparent-secondary-hover\)!important;color:var\(--color-text\)!important;fill:var\(--color-text\)!important;--fpl-icon-color:var\(--color-text\)!important;\}") {
   throw "Update button titlebar states must override native/global button styles."
 }
 if ($content -notmatch "appearance:none;-webkit-appearance:none;outline:0;box-shadow:none;transform:none;-webkit-app-region:no-drag") {
