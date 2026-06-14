@@ -492,20 +492,57 @@
     ];
   }
 
+  function findOwnerWindowForWebContents(sender) {
+    if (!sender || !BrowserWindow) return null;
+
+    const directOwner = BrowserWindow.fromWebContents(sender);
+    if (directOwner) return directOwner;
+
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (window.webContents === sender) return window;
+      if (typeof window.getBrowserViews !== "function") continue;
+      if (window.getBrowserViews().some((view) => view.webContents === sender)) return window;
+    }
+    return null;
+  }
+
+  function normalizeFigBoostMenuBounds(bounds) {
+    if (!bounds || typeof bounds !== "object") return null;
+    const left = Number(bounds.left);
+    const bottom = Number(bounds.bottom);
+    if (!Number.isFinite(left) || !Number.isFinite(bottom)) return null;
+    return {
+      x: Math.max(0, Math.round(left)),
+      y: Math.max(0, Math.round(bottom))
+    };
+  }
+
+  function openFigBoostFeatureMenu(sender, bounds) {
+    const owner = findOwnerWindowForWebContents(sender)
+      || BrowserWindow.getFocusedWindow();
+    const point = normalizeFigBoostMenuBounds(bounds);
+    const menu = Menu.buildFromTemplate(buildFigBoostFeatureMenuTemplate());
+    const popupOptions = {};
+    if (owner) popupOptions.window = owner;
+    if (point) {
+      popupOptions.x = point.x;
+      popupOptions.y = point.y;
+    }
+    global.__FIGBOOST_ACTIVE_FEATURE_MENUS__.add(menu);
+    popupOptions.callback = () => {
+      global.__FIGBOOST_ACTIVE_FEATURE_MENUS__.delete(menu);
+    };
+    menu.popup(popupOptions);
+    return { ok: true };
+  }
+
   function registerFigBoostFeatureMenu() {
     if (!ipcMain || global.__FIGBOOST_FEATURE_MENU_IPC_REGISTERED__) return;
     global.__FIGBOOST_FEATURE_MENU_IPC_REGISTERED__ = true;
-    ipcMain.handle("figboost:open-feature-menu", (event) => {
-      const owner = BrowserWindow && event && event.sender
-        ? BrowserWindow.fromWebContents(event.sender)
-        : null;
-      const menu = Menu.buildFromTemplate(buildFigBoostFeatureMenuTemplate());
-      return new Promise((resolve) => {
-        menu.popup({
-          window: owner || BrowserWindow.getFocusedWindow() || undefined,
-          callback: () => resolve({ ok: true })
-        });
-      });
+    if (!global.__FIGBOOST_ACTIVE_FEATURE_MENUS__) global.__FIGBOOST_ACTIVE_FEATURE_MENUS__ = new Set();
+    global.__FIGBOOST_OPEN_FEATURE_MENU__ = openFigBoostFeatureMenu;
+    ipcMain.handle("figboost:open-feature-menu", (event, bounds) => {
+      return openFigBoostFeatureMenu(event && event.sender, bounds);
     });
   }
 

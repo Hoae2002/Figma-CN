@@ -154,6 +154,26 @@
     button.setAttribute("aria-expanded", nextHidden ? "false" : "true");
   }
 
+  function getFigBoostMenuBounds(button) {
+    const rect = button.getBoundingClientRect();
+    return {
+      left: Math.round(rect.left),
+      top: Math.round(rect.top),
+      right: Math.round(rect.right),
+      bottom: Math.round(rect.bottom),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height)
+    };
+  }
+
+  function openFigBoostFeatureMenuFromTitlebar(bounds) {
+    const params = new URLSearchParams();
+    for (const key of ["left", "top", "right", "bottom", "width", "height"]) {
+      params.set(key, String(bounds[key] || 0));
+    }
+    window.location.href = `figboost://open-feature-menu?${params.toString()}`;
+  }
+
   function ensureFigBoostMenuDismissHandlers() {
     if (window.__FIGBOOST_MENU_DISMISS_HANDLERS__) return;
     window.__FIGBOOST_MENU_DISMISS_HANDLERS__ = true;
@@ -250,16 +270,15 @@
     button.innerHTML = '<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="3.5" y="3" width="9" height="9.5" rx="1" stroke-width="0.9"/><path d="M6 1.8v2.4M10 1.8v2.4M5.8 6.2h4.4M5.8 8.6h2.7" stroke-width="0.9" stroke-linecap="round"/></svg>';
     button.addEventListener("click", async () => {
       if (host.placement === "titlebar") {
+        const bounds = getFigBoostMenuBounds(button);
         const bridge = getFigBoostFeatureMenuBridge();
-        if (bridge) {
-          button.setAttribute("aria-expanded", "true");
-          try {
-            await bridge();
-          } finally {
-            button.setAttribute("aria-expanded", "false");
-          }
-          return;
-        }
+        button.setAttribute("aria-expanded", "true");
+        if (bridge) Promise.resolve(bridge(bounds)).catch(() => openFigBoostFeatureMenuFromTitlebar(bounds));
+        else openFigBoostFeatureMenuFromTitlebar(bounds);
+        setTimeout(() => {
+          button.setAttribute("aria-expanded", "false");
+        }, 160);
+        return;
       }
       toggleFigBoostMenu(wrap);
     });

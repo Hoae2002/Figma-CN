@@ -77,8 +77,11 @@ if ($content -notmatch "\.figboost-menu-button:focus-visible\{outline:1px solid 
 if ($content -match 'button\.setAttribute\("aria-pressed", "true"\)') {
   throw "Update button titlebar click must not leave a persistent selected highlight."
 }
-if ($content -notmatch "getFigBoostFeatureMenuBridge\(\)" -or $content -notmatch "await bridge\(\);") {
-  throw "Update button titlebar placement must open the native feature menu bridge."
+if ($content -notmatch "getFigBoostFeatureMenuBridge\(\)" -or $content -notmatch "getFigBoostMenuBounds\(button\)" -or $content -notmatch "bridge\(bounds\)" -or $content -notmatch "figboost://open-feature-menu") {
+  throw "Update button titlebar placement must open the native feature menu bridge with button bounds."
+}
+if ($content -match "await bridge\(getFigBoostMenuBounds\(button\)\)") {
+  throw "Update button titlebar click must not wait for the native menu to close."
 }
 if ($content -notmatch "toggleFigBoostMenu\(wrap\);") {
   throw "Update button click must fall back to the shared DOM feature menu."
@@ -96,6 +99,9 @@ if ($content -notmatch "svg\{width:14px;height:14px" -or $content -notmatch 'str
 $main = Get-Content -LiteralPath (Join-Path $root "payload\src\main\menu-localizer.js") -Raw
 if ($main -notmatch 'ipcMain\.handle\("figboost:open-feature-menu"' -or $main -notmatch "Menu\.buildFromTemplate\(buildFigBoostFeatureMenuTemplate\(\)\)" -or $main -notmatch 'label: "检查更新"') {
   throw "Main process must expose a native FigBoost feature menu."
+}
+if ($main -notmatch "findOwnerWindowForWebContents" -or $main -notmatch "window\.getBrowserViews\(\)" -or $main -notmatch "BrowserWindow\.getFocusedWindow\(\)" -or $main -notmatch "normalizeFigBoostMenuBounds" -or $main -notmatch "popupOptions\.x = point\.x" -or $main -notmatch "__FIGBOOST_ACTIVE_FEATURE_MENUS__" -or $main -notmatch "__FIGBOOST_OPEN_FEATURE_MENU__ = openFigBoostFeatureMenu" -or $main -notmatch "menu\.popup\(popupOptions\)") {
+  throw "Native FigBoost feature menu must bind to the owning BrowserWindow and button position."
 }
 
 $core = Get-Content -LiteralPath (Join-Path $root "payload\src\content\localizer-core.js") -Raw
