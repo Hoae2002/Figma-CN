@@ -530,6 +530,15 @@
     }
   }
 
+  function dispatchFeatureMenuClosed(contents) {
+    try {
+      contents.executeJavaScript(
+        "window.dispatchEvent(new CustomEvent('figboost:feature-menu-closed'))",
+        true
+      ).catch(() => {});
+    } catch (_) {}
+  }
+
   function openFigBoostFeatureMenu(sender, bounds) {
     const owner = findOwnerWindowForWebContents(sender)
       || BrowserWindow.getFocusedWindow();
@@ -544,6 +553,7 @@
     global.__FIGBOOST_ACTIVE_FEATURE_MENUS__.add(menu);
     popupOptions.callback = () => {
       global.__FIGBOOST_ACTIVE_FEATURE_MENUS__.delete(menu);
+      if (sender) dispatchFeatureMenuClosed(sender);
     };
     menu.popup(popupOptions);
     return { ok: true };

@@ -142,7 +142,7 @@
     const button = wrap.querySelector(".figboost-menu-button");
     if (!panel || !button) return;
     panel.hidden = true;
-    button.setAttribute("aria-expanded", "false");
+    resetFigBoostButtonState(button);
   }
 
   function toggleFigBoostMenu(wrap) {
@@ -152,6 +152,13 @@
     const nextHidden = !panel.hidden;
     panel.hidden = nextHidden;
     button.setAttribute("aria-expanded", nextHidden ? "false" : "true");
+  }
+
+  function resetFigBoostButtonState(button) {
+    if (!button) return;
+    button.setAttribute("aria-expanded", "false");
+    button.setAttribute("aria-pressed", "false");
+    button.blur();
   }
 
   function getFigBoostMenuBounds(button) {
@@ -268,6 +275,7 @@
     button.setAttribute("aria-expanded", "false");
     button.setAttribute("aria-pressed", "false");
     button.innerHTML = '<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="3.5" y="3" width="9" height="9.5" rx="1" stroke-width="0.9"/><path d="M6 1.8v2.4M10 1.8v2.4M5.8 6.2h4.4M5.8 8.6h2.7" stroke-width="0.9" stroke-linecap="round"/></svg>';
+    window.addEventListener("figboost:feature-menu-closed", () => resetFigBoostButtonState(button));
     button.addEventListener("click", async () => {
       if (host.placement === "titlebar") {
         const bounds = getFigBoostMenuBounds(button);
@@ -276,7 +284,7 @@
         if (bridge) Promise.resolve(bridge(bounds)).catch(() => openFigBoostFeatureMenuFromTitlebar(bounds));
         else openFigBoostFeatureMenuFromTitlebar(bounds);
         setTimeout(() => {
-          button.setAttribute("aria-expanded", "false");
+          resetFigBoostButtonState(button);
         }, 160);
         return;
       }

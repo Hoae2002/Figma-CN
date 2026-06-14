@@ -77,6 +77,9 @@ if ($content -notmatch "\.figboost-menu-button:focus-visible\{outline:1px solid 
 if ($content -match 'button\.setAttribute\("aria-pressed", "true"\)') {
   throw "Update button titlebar click must not leave a persistent selected highlight."
 }
+if ($content -notmatch "resetFigBoostButtonState\(button\)" -or $content -notmatch 'button\.blur\(\)' -or $content -notmatch 'figboost:feature-menu-closed') {
+  throw "Update button titlebar menu close must clear the button ghost state."
+}
 if ($content -notmatch "getFigBoostFeatureMenuBridge\(\)" -or $content -notmatch "getFigBoostMenuBounds\(button\)" -or $content -notmatch "bridge\(bounds\)" -or $content -notmatch "figboost://open-feature-menu") {
   throw "Update button titlebar placement must open the native feature menu bridge with button bounds."
 }
@@ -105,6 +108,9 @@ if ($main -notmatch "findOwnerWindowForWebContents" -or $main -notmatch "window\
 }
 if ($main -notmatch "parseFigBoostMenuBoundsFromUrl" -or $main -notmatch "openMenu\(contents, parseFigBoostMenuBoundsFromUrl\(url\)\)") {
   throw "Native FigBoost feature menu fallback URL must keep the button position."
+}
+if ($main -notmatch "dispatchFeatureMenuClosed" -or $main -notmatch "figboost:feature-menu-closed" -or $main -notmatch "if \(sender\) dispatchFeatureMenuClosed\(sender\)") {
+  throw "Native FigBoost feature menu must notify the renderer when the popup closes."
 }
 
 $core = Get-Content -LiteralPath (Join-Path $root "payload\src\content\localizer-core.js") -Raw
