@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const { app, autoUpdater, dialog, ipcMain, Menu, BrowserWindow } = require("electron");
+  const { app, autoUpdater, dialog, ipcMain, Menu, BrowserWindow, webContents } = require("electron");
   const fs = require("fs");
   const https = require("https");
   const path = require("path");
@@ -546,6 +546,110 @@
     });
   }
 
+  let rendererPayloadCache = null;
+
+  function getRendererPayload() {
+    if (rendererPayloadCache !== null) return rendererPayloadCache;
+    const payloadPath = global.__FIGMA_ZH_RENDERER_PAYLOAD_PATH__
+      || path.join(getRuntimeDir(), "figma-zh-official-preload.js");
+    rendererPayloadCache = fs.readFileSync(payloadPath, "utf8");
+    return rendererPayloadCache;
+  }
+
+  function buildFigBoostRendererBridgeScript(showTitlebarButton) {
+    try {
+      if (!global.__FIGBOOST_FEATURE_ENABLED__
+        || !global.__FIGBOOST_FEATURE_ENABLED__("auto-check-official-latest")) {
+        return "";
+      }
+      return `(() => {
+        try {
+          window.__FIGBOOST_UPDATE_BUTTON_ENABLED__ = true;
+          ${showTitlebarButton ? "window.__FIGBOOST_TITLEBAR_BUTTON_ENABLED__ = true;" : ""}
+          const { ipcRenderer } = require("electron");
+          if (ipcRenderer && !window.__FIGBOOST_CHECK_OFFICIAL_UPDATE__) {
+            Object.defineProperty(window, "__FIGBOOST_CHECK_OFFICIAL_UPDATE__", {
+              value: () => ipcRenderer.invoke("figboost:check-official-update")
+            });
+          }
+          if (ipcRenderer && !window.__FIGBOOST_OPEN_FEATURE_MENU__) {
+            Object.defineProperty(window, "__FIGBOOST_OPEN_FEATURE_MENU__", {
+              value: (bounds) => ipcRenderer.invoke("figboost:open-feature-menu", bounds)
+            });
+          }
+        } catch (_) {
+          window.__FIGBOOST_UPDATE_BUTTON_ENABLED__ = true;
+          ${showTitlebarButton ? "window.__FIGBOOST_TITLEBAR_BUTTON_ENABLED__ = true;" : ""}
+        }
+      })();`;
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function dispatchUpdateCheckFinished(contents) {
+    try {
+      contents.executeJavaScript(
+        "window.dispatchEvent(new CustomEvent('figboost:update-check-finished'))",
+        true
+      ).catch(() => {});
+    } catch (_) {}
+  }
+
+  function handleFigBoostNavigation(contents, event, url) {
+    try {
+      if (/^figboost:\/\/open-feature-menu/i.test(url || "")) {
+        if (event && event.preventDefault) event.preventDefault();
+        const openMenu = global.__FIGBOOST_OPEN_FEATURE_MENU__;
+        if (typeof openMenu === "function") openMenu(contents);
+        return true;
+      }
+      if (!/^figboost:\/\/check-official-update/i.test(url || "")) return false;
+      if (event && event.preventDefault) event.preventDefault();
+      const checkUpdate = global.__FIGBOOST_CHECK_OFFICIAL_UPDATE__;
+      if (typeof checkUpdate === "function") {
+        Promise.resolve(checkUpdate()).finally(() => dispatchUpdateCheckFinished(contents));
+      } else {
+        dispatchUpdateCheckFinished(contents);
+      }
+      return true;
+    } catch (_) {
+      dispatchUpdateCheckFinished(contents);
+      return true;
+    }
+  }
+
+  function injectRendererPayload(contents) {
+    if (!contents || contents.__FIGBOOST_RENDERER_INJECTED__) return;
+    contents.__FIGBOOST_RENDERER_INJECTED__ = true;
+    contents.on("will-navigate", (event, url) => handleFigBoostNavigation(contents, event, url));
+    if (contents.setWindowOpenHandler) {
+      contents.setWindowOpenHandler(({ url }) => (
+        handleFigBoostNavigation(contents, null, url) ? { action: "deny" } : { action: "allow" }
+      ));
+    }
+    const run = () => {
+      try {
+        const url = contents.getURL();
+        const isFigmaPage = /^https:\/\/([^/]+\.)?figma\.com/i.test(url);
+        const bridge = buildFigBoostRendererBridgeScript(!isFigmaPage);
+        const payload = getRendererPayload();
+        contents.executeJavaScript(bridge + payload, true).catch(() => {});
+      } catch (_) {}
+    };
+    setTimeout(run, 0);
+    setTimeout(run, 1000);
+    contents.on("dom-ready", run);
+    contents.on("did-finish-load", run);
+  }
+
+  function registerRendererInjection() {
+    if (!webContents || global.__FIGBOOST_RENDERER_INJECTION_REGISTERED__) return;
+    global.__FIGBOOST_RENDERER_INJECTION_REGISTERED__ = true;
+    app.on("web-contents-created", (_, contents) => injectRendererPayload(contents));
+    webContents.getAllWebContents().forEach(injectRendererPayload);
+  }
+
   if (!global.__FIGMA_ZH_MENU_LOCALIZER__) {
     global.__FIGMA_ZH_MENU_LOCALIZER__ = true;
     const buildFromTemplate = Menu.buildFromTemplate.bind(Menu);
@@ -564,6 +668,7 @@
     hookBuiltInUpdateChecks();
     registerManualOfficialUpdateCheck();
     registerFigBoostFeatureMenu();
+    registerRendererInjection();
     app.whenReady().then(scheduleLocalize).catch(() => {});
     app.on("browser-window-created", scheduleLocalize);
     app.on("browser-window-focus", scheduleLocalize);

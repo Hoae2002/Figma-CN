@@ -445,7 +445,7 @@ function Build-MainHook {
   $marker = ConvertTo-JsString $PatchMarker
   $payload = ConvertTo-JsString $payloadPath
   $mainPayload = ConvertTo-JsString $mainPayloadPath
-  return ";(()=>{const M=$marker;try{const E=require(""electron""),F=require(""fs""),R=require(""path""),P=$payload,Q=$mainPayload;try{global.__FIGMA_ZH_RUNTIME_DIR__=R.dirname(Q);F.existsSync(Q)&&eval(F.readFileSync(Q,""utf8""))}catch(e){}let C;function p(){return C||(C=F.readFileSync(P,""utf8""))}function b(t){try{if(!global.__FIGBOOST_FEATURE_ENABLED__||!global.__FIGBOOST_FEATURE_ENABLED__(""auto-check-official-latest""))return"""";return ""(()=>{try{window.__FIGBOOST_UPDATE_BUTTON_ENABLED__=true;""+(t?""window.__FIGBOOST_TITLEBAR_BUTTON_ENABLED__=true;"":"""")+""const{ipcRenderer}=require('electron');if(ipcRenderer&&!window.__FIGBOOST_CHECK_OFFICIAL_UPDATE__)Object.defineProperty(window,'__FIGBOOST_CHECK_OFFICIAL_UPDATE__',{value:()=>ipcRenderer.invoke('figboost:check-official-update')})}catch(e){window.__FIGBOOST_UPDATE_BUTTON_ENABLED__=true;""+(t?""window.__FIGBOOST_TITLEBAR_BUTTON_ENABLED__=true;"":"""")+""}})();""}catch(e){return""""}}function d(w){try{w.executeJavaScript(""window.dispatchEvent(new CustomEvent('figboost:update-check-finished'))"",true).catch(()=>{})}catch(e){}}function h(w,e,u){try{if(/^figboost:\/\/open-feature-menu/i.test(u||"""")){e&&e.preventDefault&&e.preventDefault();let f=global.__FIGBOOST_OPEN_FEATURE_MENU__;if(typeof f===""function"")f(w);return!0}if(!/^figboost:\/\/check-official-update/i.test(u||""""))return!1;e&&e.preventDefault&&e.preventDefault();let f=global.__FIGBOOST_CHECK_OFFICIAL_UPDATE__;if(typeof f===""function"")Promise.resolve(f()).finally(()=>d(w));else d(w);return!0}catch(x){d(w);return!0}}function j(w){if(!w||w._fz)return;w._fz=1;w.on(""will-navigate"",(e,u)=>h(w,e,u));if(w.setWindowOpenHandler)w.setWindowOpenHandler(({url})=>h(w,null,url)?{action:""deny""}:{action:""allow""});const r=()=>{try{let u=w.getURL(),f=/^https:\/\/([^\/]+\.)?figma\.com/i.test(u),s=b(!f);s&&w.executeJavaScript(s+p(),true).catch(()=>{})}catch(e){}};setTimeout(r,0);setTimeout(r,1000);w.on(""dom-ready"",r);w.on(""did-finish-load"",r)}E.app.on(""web-contents-created"",(_,w)=>j(w));E.webContents.getAllWebContents().forEach(j)}catch(e){}})();"
+  return ";(()=>{const M=$marker;try{const F=require(""fs""),R=require(""path""),P=$payload,Q=$mainPayload;global.__FIGMA_ZH_RUNTIME_DIR__=R.dirname(Q);global.__FIGMA_ZH_RENDERER_PAYLOAD_PATH__=P;F.existsSync(Q)&&eval(F.readFileSync(Q,""utf8""))}catch(e){}})();"
 }
 
 function Disable-BuiltInUpdaterInMain {
@@ -1249,11 +1249,13 @@ function Invoke-SelfTest {
     if ($runtimeMainSource.Contains('"second-instance"')) { throw "Self-test runtime still checks updates on second instance." }
     if (-not $runtimeMainSource.Contains("figboost:check-official-update")) { throw "Self-test runtime does not register manual update IPC." }
     if (-not $runtimeMainSource.Contains("figboost:open-feature-menu")) { throw "Self-test runtime does not register feature menu IPC." }
-    if (-not $featureUpgradeHook.Contains("figboost:\/\/check-official-update")) { throw "Self-test hook does not handle manual update fallback navigation." }
-    if (-not $featureUpgradeHook.Contains("figboost:\/\/open-feature-menu")) { throw "Self-test hook does not handle feature menu fallback navigation." }
-    if (-not $featureUpgradeHook.Contains("__FIGBOOST_OPEN_FEATURE_MENU__")) { throw "Self-test hook does not expose feature menu bridge." }
-    if (-not $featureUpgradeHook.Contains("__FIGBOOST_UPDATE_BUTTON_ENABLED__")) { throw "Self-test hook does not enable update button injection." }
-    if (-not $featureUpgradeHook.Contains("__FIGBOOST_TITLEBAR_BUTTON_ENABLED__")) { throw "Self-test hook does not enable titlebar button injection." }
+    if (-not $featureUpgradeHook.Contains("__FIGMA_ZH_RENDERER_PAYLOAD_PATH__")) { throw "Self-test hook does not pass renderer payload path." }
+    $featureUpgradeMainPayload = Build-MainPayload
+    if (-not $featureUpgradeMainPayload.Contains("figboost:\/\/check-official-update")) { throw "Self-test main payload does not handle manual update fallback navigation." }
+    if (-not $featureUpgradeMainPayload.Contains("figboost:\/\/open-feature-menu")) { throw "Self-test main payload does not handle feature menu fallback navigation." }
+    if (-not $featureUpgradeMainPayload.Contains("__FIGBOOST_OPEN_FEATURE_MENU__")) { throw "Self-test main payload does not expose feature menu bridge." }
+    if (-not $featureUpgradeMainPayload.Contains("__FIGBOOST_UPDATE_BUTTON_ENABLED__")) { throw "Self-test main payload does not enable update button injection." }
+    if (-not $featureUpgradeMainPayload.Contains("__FIGBOOST_TITLEBAR_BUTTON_ENABLED__")) { throw "Self-test main payload does not enable titlebar button injection." }
     if (-not $runtimeMainSource.Contains("autoUpdater")) { throw "Self-test runtime does not guard built-in updater." }
     if (-not $runtimeMainSource.Contains("shouldSuppressBuiltInUpdateCheck")) { throw "Self-test runtime does not include downgrade suppression." }
     if (-not $runtimeMainSource.Contains('"-ShowProgress"')) { throw "Self-test runtime update launch does not request progress UI." }
