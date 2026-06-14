@@ -62,7 +62,7 @@ if ($content -notmatch "border-radius:0") {
 if ($content -notmatch "background-color:var\(--color-bghovertransparent\)!important") {
   throw "Update button hover state must match the native titlebar caption button style."
 }
-if ($content -notmatch "\.figboost-menu-wrap\[data-placement='titlebar'\] \.figboost-menu-button:active,\.figboost-menu-wrap\[data-placement='titlebar'\] \.figboost-menu-button\[aria-pressed='true'\]\{background-color:var\(--color-bgtransparent-secondary-hover\)!important;color:var\(--color-text\)!important;fill:var\(--color-text\)!important;--fpl-icon-color:var\(--color-text\)!important;\}") {
+if ($content -notmatch "\.figboost-menu-wrap\[data-placement='titlebar'\] \.figboost-menu-button:active,\.figboost-menu-wrap\[data-placement='titlebar'\] \.figboost-menu-button\[aria-expanded='true'\],\.figboost-menu-wrap\[data-placement='titlebar'\] \.figboost-menu-button\[aria-pressed='true'\]\{background-color:var\(--color-bgtransparent-secondary-hover\)!important;color:var\(--color-text\)!important;fill:var\(--color-text\)!important;--fpl-icon-color:var\(--color-text\)!important;\}") {
   throw "Update button titlebar states must override native/global button styles."
 }
 if ($content -notmatch "appearance:none;-webkit-appearance:none;outline:0;box-shadow:none;transform:none;-webkit-app-region:no-drag") {
@@ -77,17 +77,25 @@ if ($content -notmatch "\.figboost-menu-button:focus-visible\{outline:1px solid 
 if ($content -match 'button\.setAttribute\("aria-pressed", "true"\)') {
   throw "Update button titlebar click must not leave a persistent selected highlight."
 }
-if ($content -notmatch "if \(host\.placement === `"titlebar`"\)") {
-  throw "Update button titlebar placement must not open a clipped dropdown menu."
+if ($content -notmatch "getFigBoostFeatureMenuBridge\(\)" -or $content -notmatch "await bridge\(\);") {
+  throw "Update button titlebar placement must open the native feature menu bridge."
 }
-if ($content -notmatch "await FIGBOOST_MENU_ITEMS\[0\]\.run\(\);") {
-  throw "Update button titlebar click must run the update check directly."
+if ($content -notmatch "toggleFigBoostMenu\(wrap\);") {
+  throw "Update button click must fall back to the shared DOM feature menu."
 }
-if ($content -notmatch "let titlebarUpdateBusy = false;" -or $content -match "button\.disabled = true" -or $content -notmatch 'button\.setAttribute\("aria-pressed", "false"\);') {
-  throw "Update button titlebar busy state must not trigger disabled browser styles."
+if ($content -match "titlebarUpdateBusy" -or $content -match "await FIGBOOST_MENU_ITEMS\[0\]\.run\(\);" -or $content -match "button\.disabled = true") {
+  throw "Update button titlebar click must not bypass the feature menu or trigger disabled browser styles."
+}
+if ($content -notmatch "\.figboost-menu-wrap\[data-placement='titlebar'\] \.figboost-menu-panel\{top:44px;right:0;min-width:168px;padding:6px 0;border:1px solid rgba\(255,255,255,\.08\);border-radius:10px;background:#252525;color:#f1f1f1;box-shadow:0 10px 28px rgba\(0,0,0,\.35\);\}") {
+  throw "Update button titlebar menu must use a dark feature selection popup."
 }
 if ($content -notmatch "svg\{width:14px;height:14px" -or $content -notmatch 'stroke-width="0\.9"') {
   throw "Update button icon must be slightly larger with a lighter stroke."
+}
+
+$main = Get-Content -LiteralPath (Join-Path $root "payload\src\main\menu-localizer.js") -Raw
+if ($main -notmatch 'ipcMain\.handle\("figboost:open-feature-menu"' -or $main -notmatch "Menu\.buildFromTemplate\(buildFigBoostFeatureMenuTemplate\(\)\)" -or $main -notmatch 'label: "检查更新"') {
+  throw "Main process must expose a native FigBoost feature menu."
 }
 
 $core = Get-Content -LiteralPath (Join-Path $root "payload\src\content\localizer-core.js") -Raw

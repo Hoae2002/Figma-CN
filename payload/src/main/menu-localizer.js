@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const { app, autoUpdater, dialog, ipcMain, Menu } = require("electron");
+  const { app, autoUpdater, dialog, ipcMain, Menu, BrowserWindow } = require("electron");
   const fs = require("fs");
   const https = require("https");
   const path = require("path");
@@ -481,6 +481,34 @@
     ipcMain.handle("figboost:check-official-update", () => checkOfficialUpdateManually());
   }
 
+  function buildFigBoostFeatureMenuTemplate() {
+    return [
+      {
+        label: "检查更新",
+        click: () => {
+          checkOfficialUpdateManually();
+        }
+      }
+    ];
+  }
+
+  function registerFigBoostFeatureMenu() {
+    if (!ipcMain || global.__FIGBOOST_FEATURE_MENU_IPC_REGISTERED__) return;
+    global.__FIGBOOST_FEATURE_MENU_IPC_REGISTERED__ = true;
+    ipcMain.handle("figboost:open-feature-menu", (event) => {
+      const owner = BrowserWindow && event && event.sender
+        ? BrowserWindow.fromWebContents(event.sender)
+        : null;
+      const menu = Menu.buildFromTemplate(buildFigBoostFeatureMenuTemplate());
+      return new Promise((resolve) => {
+        menu.popup({
+          window: owner || BrowserWindow.getFocusedWindow() || undefined,
+          callback: () => resolve({ ok: true })
+        });
+      });
+    });
+  }
+
   if (!global.__FIGMA_ZH_MENU_LOCALIZER__) {
     global.__FIGMA_ZH_MENU_LOCALIZER__ = true;
     const buildFromTemplate = Menu.buildFromTemplate.bind(Menu);
@@ -498,6 +526,7 @@
     hookAboutPanelOptions();
     hookBuiltInUpdateChecks();
     registerManualOfficialUpdateCheck();
+    registerFigBoostFeatureMenu();
     app.whenReady().then(scheduleLocalize).catch(() => {});
     app.on("browser-window-created", scheduleLocalize);
     app.on("browser-window-focus", scheduleLocalize);

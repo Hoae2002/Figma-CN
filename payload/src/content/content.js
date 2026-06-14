@@ -49,6 +49,12 @@
       : null;
   }
 
+  function getFigBoostFeatureMenuBridge() {
+    return typeof window.__FIGBOOST_OPEN_FEATURE_MENU__ === "function"
+      ? window.__FIGBOOST_OPEN_FEATURE_MENU__
+      : null;
+  }
+
   function isFigBoostUpdateButtonEnabled() {
     return Boolean(window.__FIGBOOST_UPDATE_BUTTON_ENABLED__ || getFigBoostUpdateBridge() || window.__FIGMA_ZH_TEST_UPDATE_BUTTON__);
   }
@@ -94,18 +100,20 @@
       ".figboost-menu-wrap[data-placement='titlebar'] .figboost-menu-button{background-color:unset;display:flex;align-items:center;justify-content:center;width:50px;height:38px;-webkit-app-region:no-drag;color:var(--color-text-secondary);fill:var(--color-text-secondary);--fpl-icon-color:var(--color-text-secondary);pointer-events:bounding-box;cursor:default;}",
       ".figboost-menu-button:hover,.figboost-menu-button[aria-expanded='true'],.figboost-menu-button[aria-pressed='true']{background:#424242;color:#d6d6d6;}",
       ".figboost-menu-wrap[data-placement='titlebar'] .figboost-menu-button:hover,.figboost-menu-wrap[data-placement='titlebar'] .figboost-menu-button:focus-visible{background-color:var(--color-bghovertransparent)!important;color:var(--color-text)!important;fill:var(--color-text)!important;--fpl-icon-color:var(--color-text)!important;}",
-      ".figboost-menu-wrap[data-placement='titlebar'] .figboost-menu-button:active,.figboost-menu-wrap[data-placement='titlebar'] .figboost-menu-button[aria-pressed='true']{background-color:var(--color-bgtransparent-secondary-hover)!important;color:var(--color-text)!important;fill:var(--color-text)!important;--fpl-icon-color:var(--color-text)!important;}",
+      ".figboost-menu-wrap[data-placement='titlebar'] .figboost-menu-button:active,.figboost-menu-wrap[data-placement='titlebar'] .figboost-menu-button[aria-expanded='true'],.figboost-menu-wrap[data-placement='titlebar'] .figboost-menu-button[aria-pressed='true']{background-color:var(--color-bgtransparent-secondary-hover)!important;color:var(--color-text)!important;fill:var(--color-text)!important;--fpl-icon-color:var(--color-text)!important;}",
       ".figboost-menu-button:active{background:#424242;color:#d6d6d6;box-shadow:none;transform:none;}",
       ".figboost-menu-button:focus{outline:0;}",
       ".figboost-menu-button:focus-visible{outline:1px solid #6a6a6a;outline-offset:-1px;}",
       ".figboost-menu-button:disabled{cursor:default;opacity:.55;}",
       ".figboost-menu-button svg{width:14px;height:14px;display:block;stroke:currentColor;}",
       ".figboost-menu-panel{box-sizing:border-box;position:absolute;top:34px;right:0;min-width:148px;padding:6px 0;border:1px solid rgba(0,0,0,.12);border-radius:6px;background:#fff;box-shadow:0 8px 24px rgba(0,0,0,.14);}",
-      ".figboost-menu-wrap[data-placement='titlebar'] .figboost-menu-panel{top:44px;}",
+      ".figboost-menu-wrap[data-placement='titlebar'] .figboost-menu-panel{top:44px;right:0;min-width:168px;padding:6px 0;border:1px solid rgba(255,255,255,.08);border-radius:10px;background:#252525;color:#f1f1f1;box-shadow:0 10px 28px rgba(0,0,0,.35);}",
       ".figboost-menu-panel[hidden]{display:none;}",
       ".figboost-menu-item{box-sizing:border-box;width:100%;min-height:28px;padding:6px 12px;border:0;background:transparent;color:#222;text-align:left;font:12px/16px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;white-space:nowrap;cursor:pointer;}",
       ".figboost-menu-item:hover,.figboost-menu-item:focus{background:rgba(0,0,0,.06);outline:0;}",
-      ".figboost-menu-item:disabled{cursor:default;opacity:.55;background:transparent;}"
+      ".figboost-menu-item:disabled{cursor:default;opacity:.55;background:transparent;}",
+      ".figboost-menu-wrap[data-placement='titlebar'] .figboost-menu-item{min-height:32px;padding:7px 14px;color:#f1f1f1;}",
+      ".figboost-menu-wrap[data-placement='titlebar'] .figboost-menu-item:hover,.figboost-menu-wrap[data-placement='titlebar'] .figboost-menu-item:focus{background:#333;color:#fff;}"
     ].join("");
     document.head.appendChild(style);
     return true;
@@ -240,20 +248,18 @@
     button.setAttribute("aria-expanded", "false");
     button.setAttribute("aria-pressed", "false");
     button.innerHTML = '<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="3.5" y="3" width="9" height="9.5" rx="1" stroke-width="0.9"/><path d="M6 1.8v2.4M10 1.8v2.4M5.8 6.2h4.4M5.8 8.6h2.7" stroke-width="0.9" stroke-linecap="round"/></svg>';
-    let titlebarUpdateBusy = false;
     button.addEventListener("click", async () => {
       if (host.placement === "titlebar") {
-        if (titlebarUpdateBusy) return;
-        titlebarUpdateBusy = true;
-        try {
-          await FIGBOOST_MENU_ITEMS[0].run();
-        } catch (error) {
-          window.alert(`${FIGBOOST_MENU_ITEMS[0].label}失败：${error && error.message ? error.message : String(error)}`);
-        } finally {
-          titlebarUpdateBusy = false;
-          button.setAttribute("aria-pressed", "false");
+        const bridge = getFigBoostFeatureMenuBridge();
+        if (bridge) {
+          button.setAttribute("aria-expanded", "true");
+          try {
+            await bridge();
+          } finally {
+            button.setAttribute("aria-expanded", "false");
+          }
+          return;
         }
-        return;
       }
       toggleFigBoostMenu(wrap);
     });
