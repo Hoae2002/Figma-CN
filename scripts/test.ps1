@@ -111,7 +111,7 @@ if ($content -notmatch "resetFigBoostButtonState\(button\)" -or $content -notmat
 if ($content -notmatch "getFigBoostFeatureMenuBridge\(\)" -or $content -notmatch "getFigBoostMenuBounds\(button\)" -or $content -notmatch "bridge\(bounds\)" -or $content -notmatch "figboost://open-feature-menu") {
   throw "Update button titlebar placement must open the native feature menu bridge with button bounds."
 }
-if ($content -notmatch "getFigBoostBulkExportBridge\(\)" -or $content -notmatch "bulk-export-files" -or $content -notmatch "批量导出画板文件") {
+if ($content -notmatch "getFigBoostBulkExportBridge\(\)" -or $content -notmatch "bulk-export-files" -or $content -notmatch "批量导出画板文件" -or $content -notmatch "visible: \(\) => Boolean\(getFigBoostBulkExportBridge\(\)") {
   throw "Update button fallback menu must expose batch file export."
 }
 if ($content -match "await bridge\(getFigBoostMenuBounds\(button\)\)") {
@@ -137,11 +137,14 @@ $main = Get-Content -LiteralPath (Join-Path $root "payload\src\main\menu-localiz
 if ($main -notmatch 'ipcMain\.handle\("figboost:open-feature-menu"' -or $main -notmatch "Menu\.buildFromTemplate\(buildFigBoostFeatureMenuTemplate\(\)\)" -or $main -notmatch 'label: "检查更新"') {
   throw "Main process must expose a native FigBoost feature menu."
 }
-if ($main -notmatch 'figboost:bulk-export-files' -or $main -notmatch '\\u6279\\u91cf\\u5bfc\\u51fa\\u753b\\u677f\\u6587\\u4ef6\.\.\.' -or $main -notmatch "function bulkExportFigmaFiles" -or $main -notmatch "createTimestampExportDir" -or $main -notmatch "showOpenDialog" -or $main -notmatch "failed\.push") {
+if ($figBoost -notmatch 'Id = "bulk-export-figma-files"' -or $figBoost -notmatch 'Install-Feature "bulk-export-figma-files"' -or $figBoost -notmatch 'Uninstall-Feature "bulk-export-figma-files"') {
+  throw "Feature manager must expose install/uninstall for board scan and batch export."
+}
+if ($main -notmatch 'figboost:bulk-export-files' -or $main -notmatch '\\u6279\\u91cf\\u5bfc\\u51fa\\u753b\\u677f\\u6587\\u4ef6\.\.\.' -or $main -notmatch "function bulkExportFigmaFiles" -or $main -notmatch "createTimestampExportDir" -or $main -notmatch "showOpenDialog" -or $main -notmatch "failed\.push" -or $main -notmatch 'isFigBoostFeatureEnabled\("bulk-export-figma-files"\)') {
   throw "Native FigBoost feature menu must include batch .fig export with timestamp folder, path selection, and failure summary."
 }
-if ($main -notmatch "function showBulkExportSelectionWindow" -or $main -notmatch "selectAll" -or $main -notmatch "selectNone" -or $main -notmatch "keys: Array\.from\(selected\)" -or $main -notmatch "getFigmaPageCategory" -or $main -notmatch "categories") {
-  throw "Batch .fig export must show a categorized selectable file list with select-all controls."
+if ($main -notmatch "function showBulkExportSelectionWindow" -or $main -notmatch "selectAll" -or $main -notmatch "selectNone" -or $main -notmatch "keys: Array\.from\(selected\)" -or $main -notmatch "getFigmaPageCategory" -or $main -notmatch "projectPath" -or $main -notmatch "collapsed" -or $main -notmatch "\\\\u25b6") {
+  throw "Batch .fig export must show a project-categorized selectable file list with select-all and collapse controls."
 }
 if ($main -notmatch "showInactive" -or $main -notmatch "createFigmaExportContext" -or $main -notmatch "moveExportWindowToBackground" -or $main -notmatch 'postMessageToActiveWebBinding\("' -or $main -notmatch "save-as" -or $main -notmatch "maxPages = 90" -or $main -notmatch "scanTargets") {
   throw "Batch .fig export must reduce foreground disruption, expand scanning, and reuse a background export context."
@@ -164,10 +167,13 @@ if ($main -notmatch "recents-and-sharing\|deleted\|trash\|community" -or $main -
 if ($main -notmatch 'editorType === "design" \|\| editorType === 0' -or $main -match 'editorType === undefined \|\| editorType === null \|\| editorType === "design"') {
   throw "Batch .fig export scan must not treat unknown editor types as Figma Design files."
 }
+if ($main -notmatch "const isDesign = editorType === `"design`" \|\| editorType === 0;" -or $main -notmatch "projectPathFromPage" -or $main -notmatch "collectSnapshot" -or $main -notmatch "for \(let index = 0; index < 14") {
+  throw "Batch .fig export fast page scan must accumulate scrolled project/file rows and keep only design files."
+}
 if ($main -notmatch "function createFigmaScanTarget" -or $main -notmatch "openInBackground: false" -or $main -notmatch "figboost-bulk-scan" -or $main -notmatch "activeJobs" -or $main -notmatch "getFigmaScanTargetWebContents" -or $main -notmatch "scanDeadline" -or $main -notmatch "function isExpectedFigmaScanUrl") {
   throw "Batch .fig export scan must use real Figma background windows and parallel queue workers."
 }
-if ($main -notmatch "function shouldReadVisibleFigmaPage" -or $main -notmatch "desktop_new_tab" -or $main -notmatch "team_id" -or $main -notmatch "webContents\.getAllWebContents\(\)" -or $main -notmatch "shouldReadVisibleFigmaPage\(currentUrl\)" -or $main -notmatch "readFigmaPageLinksFast" -or $main -notmatch "\\u6587\\u4ef6" -or $main -notmatch "elementFromPoint\(point\.x, point\.y\)") {
+if ($main -notmatch "function shouldReadVisibleFigmaPage" -or $main -notmatch "desktop_new_tab" -or $main -notmatch "team_id" -or $main -notmatch "project_id" -or $main -notmatch "webContents\.getAllWebContents\(\)" -or $main -notmatch "shouldReadVisibleFigmaPage\(currentUrl\)" -or $main -notmatch "readFigmaPageLinksFast" -or $main -notmatch "\\u6587\\u4ef6" -or $main -notmatch "elementFromPoint\(point\.x, point\.y\)") {
   throw "Batch .fig export scan must read visible All Projects pages while filtering drafts, recent, and new-tab cache pages."
 }
 if ($main -notmatch "function waitForDownloadToPath" -or $main -notmatch 'session\.once\("will-download"' -or $main -notmatch "item\.setSavePath\(targetPath\)" -or $main -notmatch "function openFigmaFileInDesktop" -or $main -notmatch "Open File URL From Clipboard" -or $main -notmatch "function withSaveDialogTarget" -or $main -notmatch "dialog\.showSaveDialog = async" -or $main -notmatch "function triggerFigmaSaveLocalCopy" -or $main -notmatch "Save Local Copy" -or $main -match "function findSaveLocalCopyMenuItem" -or $main -match "clickFigmaMainMenu") {

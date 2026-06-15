@@ -585,6 +585,12 @@ function Get-FeatureConfigPath {
   return (Join-Path $RuntimeDir $FeatureConfigFile)
 }
 
+function ConvertTo-JsonSafePath {
+  param([string]$Value)
+  if (-not $Value) { return "" }
+  return $Value.Replace("\", "/")
+}
+
 function Read-FeatureConfig {
   param([string]$RuntimeDir)
   $path = Get-FeatureConfigPath $RuntimeDir
@@ -598,8 +604,8 @@ function Read-FeatureConfig {
   }
   return [pscustomobject]@{
     enabledFeatures = @()
-    patcherPath = Get-PatcherExecutablePath
-    runtimeDir = $RuntimeDir
+    patcherPath = ConvertTo-JsonSafePath (Get-PatcherExecutablePath)
+    runtimeDir = ConvertTo-JsonSafePath $RuntimeDir
     preferredAppDir = ""
   }
 }
@@ -610,9 +616,9 @@ function Write-FeatureConfig {
   $current = Read-FeatureConfig $RuntimeDir
   $config = [pscustomobject]@{
     enabledFeatures = @($EnabledFeatures | Sort-Object -Unique)
-    patcherPath = Get-PatcherExecutablePath
-    runtimeDir = $RuntimeDir
-    preferredAppDir = [string]$current.preferredAppDir
+    patcherPath = ConvertTo-JsonSafePath (Get-PatcherExecutablePath)
+    runtimeDir = ConvertTo-JsonSafePath $RuntimeDir
+    preferredAppDir = ConvertTo-JsonSafePath ([string]$current.preferredAppDir)
   }
   [System.IO.File]::WriteAllText((Get-FeatureConfigPath $RuntimeDir), ($config | ConvertTo-Json -Depth 6), $Utf8NoBom)
   return $config
@@ -1940,7 +1946,7 @@ function Show-Gui {
     [pscustomobject]@{
       Id = "auto-check-official-latest"
       Title = "在 Figma 顶部显示 FigBoost 菜单"
-      Description = "在 Figma 界面顶部显示 FigBoost 入口；菜单中可检查官方最新版，也可批量导出当前账号可见的画板文件。"
+      Description = "在 Figma 界面顶部显示 FigBoost 入口；菜单中可检查官方最新版，也可作为其他附加功能的入口。"
       ProgressText = "正在安装 FigBoost 菜单功能..."
       FailurePrefix = "附加功能安装失败"
       Action = {
@@ -1954,7 +1960,7 @@ function Show-Gui {
       IsInstalled = { Test-FeatureInstalled $txtRuntime.Text "auto-check-official-latest" }
       SuccessMessage = {
         param($result)
-        return "附加功能已安装。`r`n`r`n之后打开 Figma 时，顶部会显示 FigBoost 入口；打开菜单即可检查官方最新版，也可批量导出当前账号可见的画板文件。`r`n补丁状态：$(if ($result.Patched) { "已安装" } else { "未安装" })"
+        return "附加功能已安装。`r`n`r`n之后打开 Figma 时，顶部会显示 FigBoost 入口；打开菜单即可检查官方最新版。`r`n补丁状态：$(if ($result.Patched) { "已安装" } else { "未安装" })"
       }
       UninstallProgressText = "正在卸载附加功能..."
       UninstallFailurePrefix = "附加功能卸载失败"
@@ -1968,6 +1974,41 @@ function Show-Gui {
         param($result)
         $patchState = if ($result) { "`r`n补丁状态：$(if ($result.Patched) { "已安装" } else { "未安装" })" } else { "" }
         return "附加功能已卸载。`r`n`r`n之后打开 Figma 时不再显示 FigBoost 入口；汉化补丁不受影响。$patchState"
+      }
+    },
+    [pscustomobject]@{
+      Id = "bulk-export-figma-files"
+      Title = "检索画板与批量导出"
+      Description = "在 FigBoost 菜单中增加批量导出画板文件入口；可检索当前账号可见的团队项目文件，并按项目勾选导出本地 .fig 副本。"
+      ProgressText = "正在安装检索画板与批量导出功能..."
+      FailurePrefix = "附加功能安装失败"
+      Action = {
+        Set-ProgressState 35 "正在写入功能配置..."
+        $current = Resolve-ManagedFigmaAppDir $txtRuntime.Text $txtApp.Text
+        $txtApp.Text = $current
+        Set-ProgressState 55 "正在确保 FigBoost 菜单入口已启用..."
+        Install-Feature "auto-check-official-latest" $current $txtRuntime.Text | Out-Null
+        Set-ProgressState 75 "正在启用批量导出功能..."
+        Install-Feature "bulk-export-figma-files" $current $txtRuntime.Text
+        return Get-CompleteStatus $current $txtRuntime.Text
+      }
+      IsInstalled = { Test-FeatureInstalled $txtRuntime.Text "bulk-export-figma-files" }
+      SuccessMessage = {
+        param($result)
+        return "附加功能已安装。`r`n`r`n之后打开 Figma 顶部 FigBoost 菜单，即可使用批量导出画板文件。`r`n补丁状态：$(if ($result.Patched) { "已安装" } else { "未安装" })"
+      }
+      UninstallProgressText = "正在卸载检索画板与批量导出功能..."
+      UninstallFailurePrefix = "附加功能卸载失败"
+      UninstallAction = {
+        Set-ProgressState 35 "正在关闭 Figma 并卸载批量导出功能..."
+        $current = Resolve-ManagedFigmaAppDir $txtRuntime.Text $txtApp.Text
+        $txtApp.Text = $current
+        Uninstall-Feature "bulk-export-figma-files" $txtRuntime.Text $current
+      }
+      UninstallSuccessMessage = {
+        param($result)
+        $patchState = if ($result) { "`r`n补丁状态：$(if ($result.Patched) { "已安装" } else { "未安装" })" } else { "" }
+        return "附加功能已卸载。`r`n`r`n之后打开 Figma 顶部 FigBoost 菜单时，不再显示批量导出画板文件；汉化补丁不受影响。$patchState"
       }
     }
   )

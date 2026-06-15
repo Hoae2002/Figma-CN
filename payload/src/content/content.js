@@ -78,6 +78,7 @@
       label: "批量导出画板文件...",
       busyLabel: "导出中...",
       title: "检索并批量导出当前账号可见的 Figma 文件",
+      visible: () => Boolean(getFigBoostBulkExportBridge() || window.__FIGMA_ZH_TEST__),
       run: runBulkExportFiles
     }
   ];
@@ -344,6 +345,7 @@
     panel.setAttribute("role", "menu");
     panel.setAttribute("aria-label", "FigBoost");
     for (const item of FIGBOOST_MENU_ITEMS) {
+      if (item.visible && !item.visible()) continue;
       const menuItem = document.createElement("button");
       menuItem.className = "figboost-menu-item";
       menuItem.dataset.figboostMenuItem = item.id;

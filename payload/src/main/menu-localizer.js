@@ -278,6 +278,19 @@
 
   global.__FIGBOOST_FEATURE_ENABLED__ = (featureId) => isFeatureEnabled(readFeatureConfig(), featureId);
 
+  function isFigBoostFeatureEnabled(featureId) {
+    return !!(global.__FIGBOOST_FEATURE_ENABLED__
+      && global.__FIGBOOST_FEATURE_ENABLED__(featureId));
+  }
+
+  function writeBulkExportDebug(entry) {
+    try {
+      const logPath = path.join(app.getPath("userData"), "FigBoost-bulk-export-debug.log");
+      const line = JSON.stringify(Object.assign({ time: new Date().toISOString() }, entry)) + "\n";
+      fs.appendFileSync(logPath, line, "utf8");
+    } catch (_) {}
+  }
+
   function getText(url) {
     return new Promise((resolve, reject) => {
       const request = https.get(url, { timeout: 20000 }, (response) => {
@@ -642,6 +655,8 @@
   }
 
   function getFigmaFileCategory(file) {
+    const projectPath = cleanDiscoveredFileName(file && file.projectPath);
+    if (projectPath) return projectPath;
     const categories = Array.isArray(file && file.categories) ? file.categories.filter(Boolean) : [];
     if (categories.length) return categories[0];
     const source = String(file && file.sourceUrl || "");
@@ -678,6 +693,7 @@
       name: file.name,
       url: file.url,
       category: getFigmaFileCategory(file),
+      projectPath: file.projectPath || "",
       sourceUrl: file.sourceUrl || ""
     }));
     selectionWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`
@@ -700,6 +716,7 @@
     .list{flex:1;overflow:auto;padding:12px 18px 18px}
     .group{margin:0 0 12px;background:#fff;border:1px solid #e6e8ec;border-radius:8px;overflow:hidden}
     .group-title{display:flex;align-items:center;gap:8px;padding:10px 12px;background:#fbfcfe;border-bottom:1px solid #edf0f4;font-size:13px;font-weight:650}
+    .toggle{width:18px;height:18px;border:0;background:transparent;padding:0;color:#42526b;font-size:12px;line-height:18px;cursor:pointer}
     .row{display:grid;grid-template-columns:28px 1fr;gap:8px;align-items:center;padding:9px 12px;border-top:1px solid #f0f2f5}
     .row:first-of-type{border-top:none}
     .name{font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -730,6 +747,7 @@
     const files = ${JSON.stringify(safeFiles)};
     let selected = new Set(files.map((file) => file.key));
     let filterText = "";
+    const collapsed = new Set();
     const byCategory = () => files.reduce((map, file) => {
       if (filterText && !file.name.toLowerCase().includes(filterText)) return map;
       const group = file.category || "\\u5176\\u4ed6";
@@ -750,6 +768,14 @@
         group.className = "group";
         const title = document.createElement("div");
         title.className = "group-title";
+        const toggle = document.createElement("button");
+        toggle.className = "toggle";
+        toggle.textContent = collapsed.has(category) ? "\\u25b6" : "\\u25bc";
+        toggle.title = collapsed.has(category) ? "\\u5c55\\u5f00" : "\\u6536\\u8d77";
+        toggle.onclick = () => {
+          collapsed.has(category) ? collapsed.delete(category) : collapsed.add(category);
+          render();
+        };
         const groupCheck = document.createElement("input");
         groupCheck.type = "checkbox";
         groupCheck.checked = groupFiles.every((file) => selected.has(file.key));
@@ -758,10 +784,11 @@
           for (const file of groupFiles) groupCheck.checked ? selected.add(file.key) : selected.delete(file.key);
           render();
         };
+        title.appendChild(toggle);
         title.appendChild(groupCheck);
         title.appendChild(document.createTextNode(category + " (" + groupFiles.length + ")"));
         group.appendChild(title);
-        for (const file of groupFiles) {
+        if (!collapsed.has(category)) for (const file of groupFiles) {
           const row = document.createElement("label");
           row.className = "row";
           const check = document.createElement("input");
@@ -778,7 +805,7 @@
           name.textContent = file.name || "Untitled";
           const url = document.createElement("div");
           url.className = "url";
-          url.textContent = file.sourceUrl || file.url;
+          url.textContent = file.url || file.sourceUrl;
           info.appendChild(name);
           info.appendChild(url);
           row.appendChild(check);
@@ -840,6 +867,17 @@
     return key || "Untitled";
   }
 
+  function getFigmaFilePathForEditorType(editorType) {
+    const value = typeof editorType === "string" ? editorType.toLowerCase() : editorType;
+    if (value === "design" || value === 0) return "design";
+    if (value === "whiteboard" || value === "figjam" || value === "board" || value === 1) return "board";
+    if (value === "slides" || value === "slide" || value === 2) return "slides";
+    if (value === "make" || value === 4) return "make";
+    if (value === "buzz" || value === 5) return "buzz";
+    if (value === "site" || value === "sites" || value === 3) return "site";
+    return "";
+  }
+
   function toFigmaAbsoluteUrl(href) {
     try {
       const url = new URL(href, "https://www.figma.com");
@@ -866,16 +904,18 @@
   function extractFigmaFileLink(href, label, sourceUrl, sourceTitle) {
     const url = toFigmaAbsoluteUrl(href);
     if (!url) return null;
-    const match = /^https:\/\/www\.figma\.com\/(?:file|design)\/([A-Za-z0-9]+)(?:\/([^?#]+))?/i.exec(url);
+    const match = /^https:\/\/www\.figma\.com\/(?:file|design|board|slides|make|buzz|site)\/([A-Za-z0-9]+)(?:\/([^?#]+))?/i.exec(url);
     if (!match) return null;
     const name = cleanDiscoveredFileName(label) || getFileNameFromUrlSlug(match[2], match[1]);
     if (name === match[1] && isFigmaProjectOverviewPage(sourceUrl)) return null;
-    const category = getFigmaPageCategory(sourceUrl, sourceTitle);
+    const projectPath = cleanDiscoveredFileName(sourceTitle);
+    const category = projectPath || getFigmaPageCategory(sourceUrl, sourceTitle);
     return {
       key: match[1],
       name,
       url,
       sourceUrl,
+      projectPath,
       categories: [category]
     };
   }
@@ -887,11 +927,12 @@
 
   function shouldScanFigmaPage(href) {
     const url = toFigmaAbsoluteUrl(href);
-    if (!url) return false;
-    try {
-      const parsed = new URL(url);
-      if (!parsed.pathname.startsWith("/files")) return false;
-      if (/\/(?:file|design)\//i.test(parsed.pathname)) return false;
+      if (!url) return false;
+      try {
+        const parsed = new URL(url);
+        if (/\/desktop_new_tab\b/i.test(parsed.pathname) && parsed.searchParams.get("project_id") && parsed.searchParams.get("team_id")) return true;
+        if (!parsed.pathname.startsWith("/files")) return false;
+        if (/\/(?:file|design)\//i.test(parsed.pathname)) return false;
       if (/\/files\/(?:drafts|recent|feed)\b/i.test(parsed.pathname)) return false;
       if (/recents-and-sharing|deleted|trash|community/i.test(parsed.pathname)) return false;
       return true;
@@ -986,7 +1027,7 @@
   function appendCapturedFigmaLinksFromValue(value, links, depth = 0) {
     if (!value || depth > 8) return;
     if (typeof value === "string") {
-      const matches = value.match(/(?:https:\/\/www\.figma\.com)?\/(?:file|design)\/[A-Za-z0-9]{16,128}(?:\/[^"'<>\\\s]*)?/g) || [];
+      const matches = value.match(/(?:https:\/\/www\.figma\.com)?\/design\/[A-Za-z0-9]{16,128}(?:\/[^"'<>\\\s]*)?/g) || [];
       for (const match of matches) links.push({ href: match, label: "" });
       return;
     }
@@ -997,7 +1038,7 @@
     if (typeof value !== "object") return;
     const key = value.key || value.fileKey || value.file_key || value.figFileKey || value.fig_file_key;
     const name = value.name || value._name || value.title || value.fileName || value.file_name;
-    const editorType = value.editorType || value.editor_type;
+    const editorType = value.editorType !== undefined ? value.editorType : (value.editor_type !== undefined ? value.editor_type : value._editorTypeRaw);
     const isDesign = editorType === "design" || editorType === 0;
     const cleanName = cleanDiscoveredFileName(name);
     if (typeof key === "string" && /^[A-Za-z0-9]{16,128}$/.test(key) && isDesign && cleanName && cleanName !== key) {
@@ -1020,9 +1061,10 @@
     const id = value.id || value.projectId || value.project_id;
     const teamId = nextTeamId;
     const name = value.name || value.path || value.title;
+    const fileCount = value.fileCount !== undefined ? value.fileCount : (value.file_count !== undefined ? value.file_count : value.numFiles);
     const hasProjectShape = value.filesPartial || value.files || value.fileCount !== undefined || value.folderId !== undefined || value.touchedAt !== undefined || value.teamId !== undefined || value.team_id !== undefined;
     if (id && teamId && name && !value.key && hasProjectShape) {
-      projects.push({ projectId: String(id), teamId: String(teamId), name: cleanDiscoveredFileName(name) });
+      projects.push({ projectId: String(id), teamId: String(teamId), name: cleanDiscoveredFileName(name), expectedFileCount: Number.isFinite(Number(fileCount)) ? Number(fileCount) : null });
     }
     for (const item of Object.values(value)) appendCapturedFigmaProjectsFromValue(item, projects, depth + 1, nextTeamId);
   }
@@ -1217,11 +1259,11 @@
           element.getAttribute("title"),
           visibleText(element)
         ].filter(Boolean).join(" ");
-        for (const attribute of Array.from(element.attributes || [])) {
-          const value = String(attribute.value || "");
-          const matches = value.match(/(?:https:\\/\\/www\\.figma\\.com)?\\/(?:file|design)\\/[A-Za-z0-9]{16,128}(?:\\/[^"'<>\\s]*)?/g) || [];
-          for (const match of matches) addLink(match, label);
-        }
+          for (const attribute of Array.from(element.attributes || [])) {
+            const value = String(attribute.value || "");
+            const matches = value.match(/(?:https:\\/\\/www\\.figma\\.com)?\\/design\\/[A-Za-z0-9]{16,128}(?:\\/[^"'<>\\s]*)?/g) || [];
+            for (const match of matches) addLink(match, label);
+          }
       });
       return {
         title: document.title || "",
@@ -1249,10 +1291,19 @@
         const style = window.getComputedStyle(element);
         return rect.width > 80 && rect.height > 24 && style.visibility !== "hidden" && style.display !== "none";
       };
+      const projectPathFromPage = () => {
+        const parts = (document.title || "").split(/\\s[-|]\\s/).map((part) => part.trim()).filter(Boolean);
+        const title = parts[0] || "";
+        if (title && !/^Figma$/i.test(title) && !/All projects|Drafts|Recent|Community|\\u6240\\u6709\\u9879\\u76ee|\\u8349\\u7a3f|\\u6700\\u8fd1|\\u793e\\u533a/i.test(title)) return title;
+        const heading = Array.from(document.querySelectorAll("h1,h2,[role='heading']"))
+          .map((element) => visibleText(element))
+          .find((text) => text && text.length < 90 && !/Figma|\\u6240\\u6709\\u9879\\u76ee|All projects/i.test(text));
+        return heading || "";
+      };
       const appendFileLinksFromValue = (value, values, depth = 0) => {
         if (!value || depth > 8) return;
         if (typeof value === "string") {
-          if (/(?:https:\\/\\/www\\.figma\\.com)?\\/(?:file|design)\\/[A-Za-z0-9]{16,128}/.test(value)) values.push(value);
+          if (/(?:https:\\/\\/www\\.figma\\.com)?\\/design\\/[A-Za-z0-9]{16,128}/.test(value)) values.push(value);
           return;
         }
         if (Array.isArray(value)) {
@@ -1262,7 +1313,9 @@
         if (typeof value === "object") {
           const fileKey = value.key || value.file_key || value.fileKey;
           const name = (value.name || value._name || value.title || value.fileName || value.file_name || "").trim();
-          if (fileKey && typeof fileKey === "string" && /^[A-Za-z0-9]{16,128}$/.test(fileKey) && name && name !== fileKey) {
+          const editorType = value.editorType !== undefined ? value.editorType : (value.editor_type !== undefined ? value.editor_type : value._editorTypeRaw);
+          const isDesign = editorType === "design" || editorType === 0;
+          if (fileKey && typeof fileKey === "string" && /^[A-Za-z0-9]{16,128}$/.test(fileKey) && name && name !== fileKey && isDesign) {
             values.push({ href: "https://www.figma.com/design/" + fileKey, label: name });
           }
           for (const item of Object.values(value)) appendFileLinksFromValue(item, values, depth + 1);
@@ -1273,7 +1326,7 @@
         for (const script of Array.from(document.querySelectorAll("script"))) {
           const text = script.textContent || "";
           if (!text || (!text.includes("/design/") && !text.includes("/file/") && !text.includes("file_key"))) continue;
-          const matches = text.match(/(?:https:\\/\\/www\\.figma\\.com)?\\/(?:file|design)\\/[A-Za-z0-9]{16,128}(?:\\/[^"'<>\\s]*)?/g) || [];
+          const matches = text.match(/(?:https:\\/\\/www\\.figma\\.com)?\\/design\\/[A-Za-z0-9]{16,128}(?:\\/[^"'<>\\s]*)?/g) || [];
           values.push(...matches);
           const jsonMatches = text.match(/\\{[^<]{20,200000}\\}/g) || [];
           for (const match of jsonMatches.slice(0, 12)) {
@@ -1282,87 +1335,148 @@
         }
         return values;
       };
-      for (let index = 0; index < 5; index += 1) {
-        for (const target of scrollTargets()) target.scrollTop = Math.min(target.scrollHeight, target.scrollTop + Math.max(700, target.clientHeight || 700));
-        window.scrollTo(0, Math.min(document.body ? document.body.scrollHeight : 0, window.scrollY + 900));
-        await new Promise((resolve) => setTimeout(resolve, 120));
-      }
+      const links = [];
       const candidates = [];
+      const seenHrefs = new Set();
       const seenTexts = new Set();
+      const pageProjectPath = projectPathFromPage();
+      const addLink = (href, label, options = {}) => {
+        if (!href) return;
+        const normalized = typeof href === "object" ? href.href : href;
+        if (!normalized || seenHrefs.has(normalized)) return;
+        seenHrefs.add(normalized);
+        links.push(typeof href === "object"
+          ? Object.assign({ projectPath: pageProjectPath, sourceTitle: pageProjectPath }, href)
+          : { href, label: label || "", projectPath: options.projectPath || pageProjectPath, sourceTitle: options.projectPath || pageProjectPath });
+      };
       const addCandidate = (element, text, options = {}) => {
         const value = String(text || "").replace(/\\s+/g, " ").trim();
         if (!value || value.length > 220 || seenTexts.has(value)) return;
         const clickable = element.closest("a[href],button,[role='button'],[tabindex]") || element;
         const rect = options.rect || clickable.getBoundingClientRect();
+        const href = options.href || clickable.href || clickable.getAttribute("href") || element.href || element.getAttribute("href") || "";
         seenTexts.add(value);
+        const countMatch = value.match(/(\\d+)\\s*(?:files?|\\u6587\\u4ef6)/i);
         candidates.push({
           text: value,
-          href: clickable.href || clickable.getAttribute("href") || element.href || element.getAttribute("href") || "",
+          href,
           rect: { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 },
+          fileCount: countMatch ? Number(countMatch[1]) : (Number.isFinite(options.fileCount) ? options.fileCount : null),
           projectRow: Boolean(options.projectRow)
         });
       };
-      const textElements = Array.from(document.querySelectorAll("a[href],button,[role='button'],[tabindex],div,li,span,p"));
-      const visibleElements = textElements.filter((element) => isVisible(element));
-      const fileCountPattern = /^\\d+\\s*(files?|\\u6587\\u4ef6)$/i;
-      for (const countElement of visibleElements) {
-        const countText = visibleText(countElement);
-        if (!fileCountPattern.test(countText)) continue;
-        const countRect = countElement.getBoundingClientRect();
-        const rowCenter = countRect.top + countRect.height / 2;
-        const titleCandidates = visibleElements
-          .map((element) => ({ element, text: visibleText(element), rect: element.getBoundingClientRect() }))
-          .filter((item) => {
-            if (!item.text || item.text.length > 80 || fileCountPattern.test(item.text)) return false;
-            if (/^(Open|Star|Name|Files|Updated|Project|Share|All projects|Drafts|Recent|Community|Resources|Trash|Admin|Starred|\\u6253\\u5f00|\\u661f\\u5f62|\\u540d\\u79f0|\\u6587\\u4ef6|\\u5df2\\u66f4\\u65b0|\\u9879\\u76ee|\\u5206\\u4eab|\\u6240\\u6709\\u9879\\u76ee|\\u8349\\u7a3f|\\u6700\\u8fd1|\\u793e\\u533a|\\u8d44\\u6e90|\\u56de\\u6536\\u7ad9|\\u7ba1\\u7406|\\u5df2\\u52a0\\u661f\\u6807)$/i.test(item.text)) return false;
-            const sameRow = rowCenter >= item.rect.top - 8 && rowCenter <= item.rect.bottom + 8;
-            return sameRow && item.rect.left < countRect.left - 30;
-          })
-          .sort((left, right) => right.rect.left - left.rect.left);
-        const title = titleCandidates[0];
-        if (title) {
-          const rect = title.rect;
-          addCandidate(title.element, title.text, {
-            projectRow: true,
-            rect: { left: rect.left, top: rect.top, width: Math.min(Math.max(rect.width, 160), 260), height: rect.height }
-          });
-        }
-      }
-      const candidatePattern = /(\\d+\\s*(files?|\\u6587\\u4ef6)|\\u8349\\u7a3f|\\u6700\\u8fd1|\\u6240\\u6709\\u9879\\u76ee|\\u56e2\\u961f|\\u9879\\u76ee|\\u6587\\u4ef6\\u5939|All projects|Drafts|Recent|Teams?|Projects?|Folders?)/i;
-      Array.from(document.querySelectorAll("a[href],button,[role='button'],[tabindex],div,li")).forEach((element) => {
-        if (!isVisible(element)) return;
-        const text = visibleText(element);
-        if (!text || text.length > 220 || seenTexts.has(text) || !candidatePattern.test(text)) return;
-        addCandidate(element, text);
-      });
-      const links = [];
-      const seenHrefs = new Set();
-      const addLink = (href, label) => {
-        if (!href || seenHrefs.has(href)) return;
-        seenHrefs.add(href);
-        links.push(typeof href === "object" ? href : { href, label: label || "" });
+      const getProjectHref = (href) => {
+        const value = String(href || "");
+        if (!value) return "";
+        try {
+          const absolute = new URL(value, location.href).href;
+          const parsed = new URL(absolute);
+          if (/^\\/files\\/team\\/[^/]+\\/project\\/\\d+\\b/i.test(parsed.pathname)) return absolute;
+          if (/^\\/desktop_new_tab\\b/i.test(parsed.pathname) && parsed.searchParams.get("project_id") && parsed.searchParams.get("team_id")) return absolute;
+        } catch (_) {}
+        return "";
       };
-      Array.from(document.querySelectorAll("a[href]")).forEach((link) => addLink(link.href, [
-        link.getAttribute("aria-label"),
-        link.getAttribute("title"),
-        link.textContent
-      ].filter(Boolean).join(" ")));
-      for (const item of extractStateLinks()) addLink(item);
-      Array.from(document.querySelectorAll("*")).forEach((element) => {
-        const label = [
-          element.getAttribute("aria-label"),
-          element.getAttribute("title"),
-          visibleText(element)
-        ].filter(Boolean).join(" ");
-        for (const attribute of Array.from(element.attributes || [])) {
-          const value = String(attribute.value || "");
-          const matches = value.match(/(?:https:\\/\\/www\\.figma\\.com)?\\/(?:file|design)\\/[A-Za-z0-9]{16,128}(?:\\/[^"'<>\\s]*)?/g) || [];
-          for (const match of matches) addLink(match, label);
+      const findProjectHrefForRow = (titleElement, rowCenter, countRect) => {
+        const anchors = Array.from(document.querySelectorAll("a[href]"))
+          .map((link) => ({ link, rect: link.getBoundingClientRect(), href: getProjectHref(link.href || link.getAttribute("href")) }))
+          .filter((item) => item.href && item.rect.width > 0 && item.rect.height > 0)
+          .filter((item) => {
+            const sameRow = rowCenter >= item.rect.top - 16 && rowCenter <= item.rect.bottom + 16;
+            const leftOfCount = item.rect.left < countRect.left - 20;
+            return sameRow && leftOfCount;
+          })
+          .sort((left, right) => {
+            const leftDistance = Math.abs((left.rect.top + left.rect.height / 2) - rowCenter);
+            const rightDistance = Math.abs((right.rect.top + right.rect.height / 2) - rowCenter);
+            return leftDistance - rightDistance || right.rect.left - left.rect.left;
+          });
+        if (anchors[0]) return anchors[0].href;
+        let node = titleElement;
+        for (let depth = 0; node && depth < 6; depth += 1, node = node.parentElement) {
+          if (node.querySelector) {
+            const link = Array.from(node.querySelectorAll("a[href]")).map((item) => getProjectHref(item.href || item.getAttribute("href"))).find(Boolean);
+            if (link) return link;
+          }
+          const ownHref = getProjectHref(node.href || (node.getAttribute && node.getAttribute("href")));
+          if (ownHref) return ownHref;
         }
-      });
+        return "";
+      };
+      const fileCountPattern = /^\\d+\\s*(files?|\\u6587\\u4ef6)$/i;
+      const collectSnapshot = () => {
+        const textElements = Array.from(document.querySelectorAll("a[href],button,[role='button'],[tabindex],div,li,span,p"));
+        const visibleElements = textElements.filter((element) => isVisible(element));
+        for (const countElement of visibleElements) {
+          const countText = visibleText(countElement);
+          if (!fileCountPattern.test(countText)) continue;
+          const countRect = countElement.getBoundingClientRect();
+          const rowCenter = countRect.top + countRect.height / 2;
+          const titleCandidates = visibleElements
+            .map((element) => ({ element, text: visibleText(element), rect: element.getBoundingClientRect() }))
+            .filter((item) => {
+              if (!item.text || item.text.length > 80 || fileCountPattern.test(item.text)) return false;
+              if (/^(Open|Star|Name|Files|Updated|Project|Share|All projects|Drafts|Recent|Community|Resources|Trash|Admin|Starred|\\u6253\\u5f00|\\u661f\\u5f62|\\u540d\\u79f0|\\u6587\\u4ef6|\\u5df2\\u66f4\\u65b0|\\u9879\\u76ee|\\u5206\\u4eab|\\u6240\\u6709\\u9879\\u76ee|\\u8349\\u7a3f|\\u6700\\u8fd1|\\u793e\\u533a|\\u8d44\\u6e90|\\u56de\\u6536\\u7ad9|\\u7ba1\\u7406|\\u5df2\\u52a0\\u661f\\u6807)$/i.test(item.text)) return false;
+              const sameRow = rowCenter >= item.rect.top - 8 && rowCenter <= item.rect.bottom + 8;
+              return sameRow && item.rect.left < countRect.left - 30;
+            })
+            .sort((left, right) => right.rect.left - left.rect.left);
+          const title = titleCandidates[0];
+          if (title) {
+            const rect = title.rect;
+            const href = findProjectHrefForRow(title.element, rowCenter, countRect);
+            addCandidate(title.element, title.text, {
+              projectRow: true,
+              fileCount: parseInt(countText, 10),
+              href,
+              rect: { left: rect.left, top: rect.top, width: Math.min(Math.max(rect.width, 160), 260), height: rect.height }
+            });
+          }
+        }
+        const candidatePattern = /(\\d+\\s*(files?|\\u6587\\u4ef6)|\\u8349\\u7a3f|\\u6700\\u8fd1|\\u6240\\u6709\\u9879\\u76ee|\\u56e2\\u961f|\\u9879\\u76ee|\\u6587\\u4ef6\\u5939|All projects|Drafts|Recent|Teams?|Projects?|Folders?)/i;
+        Array.from(document.querySelectorAll("a[href],button,[role='button'],[tabindex],div,li")).forEach((element) => {
+          if (!isVisible(element)) return;
+          const text = visibleText(element);
+          if (!text || text.length > 220 || seenTexts.has(text) || !candidatePattern.test(text)) return;
+          addCandidate(element, text);
+        });
+        Array.from(document.querySelectorAll("a[href]")).forEach((link) => addLink(link.href, [
+          link.getAttribute("aria-label"),
+          link.getAttribute("title"),
+          link.textContent
+        ].filter(Boolean).join(" ")));
+        Array.from(document.querySelectorAll("*")).forEach((element) => {
+          const label = [
+            element.getAttribute("aria-label"),
+            element.getAttribute("title"),
+            visibleText(element)
+          ].filter(Boolean).join(" ");
+          for (const attribute of Array.from(element.attributes || [])) {
+            const value = String(attribute.value || "");
+            const matches = value.match(/(?:https:\\/\\/www\\.figma\\.com)?\\/design\\/[A-Za-z0-9]{16,128}(?:\\/[^"'<>\\s]*)?/g) || [];
+            for (const match of matches) addLink(match, label);
+          }
+        });
+      };
+      let lastSignature = "";
+      let stableCount = 0;
+      for (let index = 0; index < 14 && stableCount < 3; index += 1) {
+        collectSnapshot();
+        const targets = scrollTargets();
+        const before = targets.map((target) => target.scrollTop + ":" + target.scrollHeight).join("|") + ":" + window.scrollY;
+        for (const target of targets) target.scrollTop = Math.min(target.scrollHeight, target.scrollTop + Math.max(720, target.clientHeight || 720));
+        window.scrollTo(0, Math.min(document.body ? document.body.scrollHeight : 0, window.scrollY + 900));
+        await new Promise((resolve) => setTimeout(resolve, 110));
+        const signature = before + "#" + links.length + "#" + candidates.length;
+        if (signature === lastSignature) stableCount += 1;
+        else stableCount = 0;
+        lastSignature = signature;
+      }
+      collectSnapshot();
+      for (const item of extractStateLinks()) addLink(item);
       return {
         title: document.title || "",
         url: location.href,
+        projectPath: pageProjectPath,
         links,
         candidates
       };
@@ -1395,10 +1509,23 @@
       };
       if (point && Number.isFinite(point.x) && Number.isFinite(point.y)) {
         const elementAtPoint = document.elementFromPoint(point.x, point.y);
-        if (clickElement(elementAtPoint)) return true;
+        const pointText = visibleText(elementAtPoint && (elementAtPoint.closest("a[href],button,[role='button'],[tabindex],div,li") || elementAtPoint));
+        if (pointText === targetText || (pointText && targetText && pointText.includes(targetText))) {
+          if (clickElement(elementAtPoint)) return true;
+        }
+        if (elementAtPoint) {
+          elementAtPoint.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window, clientX: point.x, clientY: point.y }));
+          elementAtPoint.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window, clientX: point.x, clientY: point.y }));
+          elementAtPoint.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window, clientX: point.x, clientY: point.y }));
+          return true;
+        }
       }
       const candidates = Array.from(document.querySelectorAll("a[href],button,[role='button'],[tabindex],div,li"))
-        .filter((element) => isVisible(element) && visibleText(element) === targetText);
+        .filter((element) => {
+          const text = visibleText(element);
+          return isVisible(element) && (text === targetText || (text && targetText && text.includes(targetText)));
+        })
+        .sort((left, right) => visibleText(left).length - visibleText(right).length);
       return clickElement(candidates[0]);
     })();`, true);
   }
@@ -1417,17 +1544,18 @@
         if (!project) return;
         const projectId = project.id || project.projectId || project.project_id;
         const name = clean(project.name || project.path || project.title);
+        const fileCount = project.fileCount !== undefined ? project.fileCount : (project.file_count !== undefined ? project.file_count : project.numFiles);
         if (!projectId || !name) return;
         const marker = teamId + ":" + projectId;
         if (seenProjects.has(marker)) return;
         seenProjects.add(marker);
-        projects.push({ teamId: String(teamId), projectId: String(projectId), name });
+        projects.push({ teamId: String(teamId), projectId: String(projectId), name, expectedFileCount: Number.isFinite(Number(fileCount)) ? Number(fileCount) : null });
       };
       const addFile = (project, file) => {
         if (!file) return;
         const key = file.key || file.fileKey || file.file_key || file.figFileKey || file.fig_file_key;
         const name = clean(file.name || file._name || file.title || file.fileName || file.file_name);
-        const editorType = file.editorType || file.editor_type;
+        const editorType = file.editorType !== undefined ? file.editorType : (file.editor_type !== undefined ? file.editor_type : file._editorTypeRaw);
         const isDesign = editorType === "design" || editorType === 0 || /(?:^|[?&])type=design(?:&|$)/i.test(String(file.url || ""));
         if (!key || !/^[A-Za-z0-9]{16,128}$/.test(String(key)) || !name || name === key || !isDesign || seenFiles.has(key)) return;
         seenFiles.add(key);
@@ -1435,6 +1563,7 @@
           href: "https://www.figma.com/design/" + key,
           label: name,
           sourceTitle: project && project.name || "",
+          projectPath: project && project.name || "",
           sourceUrl: project && project.teamId && project.projectId
             ? "https://www.figma.com/files/team/" + project.teamId + "/project/" + project.projectId + (fuid ? "?fuid=" + encodeURIComponent(fuid) : "")
             : ""
@@ -1543,8 +1672,12 @@
         }
         const id = value.id || value.projectId || value.project_id;
         const name = value.name || value.path || value.title;
+        const fileCount = value.fileCount !== undefined ? value.fileCount : (value.file_count !== undefined ? value.file_count : value.numFiles);
         const hasProjectShape = value.filesPartial || value.files || value.fileCount !== undefined || value.folderId !== undefined || value.touchedAt !== undefined || value.teamId !== undefined || value.team_id !== undefined;
-        if (id && name && !value.key && hasProjectShape) addProject(id, name, nextTeamId);
+        if (id && name && !value.key && hasProjectShape) {
+          addProject(id, name, nextTeamId);
+          if (projects.length) projects[projects.length - 1].expectedFileCount = Number.isFinite(Number(fileCount)) ? Number(fileCount) : projects[projects.length - 1].expectedFileCount || null;
+        }
         for (const item of Object.values(value)) visit(item, depth + 1, nextTeamId);
       };
       const tokenResponse = await fetch("/api/desktop/livegraph_client/page_load_token", {
@@ -1627,12 +1760,27 @@
       const links = [];
       const debug = { messages: 0, auth: false, types: {}, errors: [], samples: [] };
       const seen = new Set();
+      const getFilePathForEditorType = (editorType) => {
+        const value = typeof editorType === "string" ? editorType.toLowerCase() : editorType;
+        if (value === "design" || value === 0) return "design";
+        if (value === "whiteboard" || value === "figjam" || value === "board" || value === 1) return "board";
+        if (value === "slides" || value === "slide" || value === 2) return "slides";
+        if (value === "site" || value === "sites" || value === 3) return "site";
+        if (value === "make" || value === 4) return "make";
+        if (value === "buzz" || value === 5) return "buzz";
+        return "";
+      };
       const addFile = (key, name, editorType) => {
         if (!key || seen.has(key)) return;
-        const isDesign = editorType === "design" || editorType === 0;
-        if (!isDesign || !name || name === key) return;
+        const path = getFilePathForEditorType(editorType);
+        if (!path || !name || name === key) return;
         seen.add(key);
-        links.push({ href: "https://www.figma.com/design/" + key, label: name || key });
+        links.push({
+          href: "https://www.figma.com/" + path + "/" + key,
+          label: name || key,
+          sourceTitle: project.name || "",
+          projectPath: project.name || ""
+        });
       };
       const visit = (value, depth = 0) => {
         if (!value || depth > 10) return;
@@ -1643,7 +1791,7 @@
         if (typeof value !== "object") return;
         const key = value.key || value.fileKey || value.file_key || value.figFileKey || value.fig_file_key;
         const name = value.name || value._name || value.title || value.fileName || value.file_name;
-        const editorType = value.editorType || value.editor_type;
+        const editorType = value.editorType !== undefined ? value.editorType : (value.editor_type !== undefined ? value.editor_type : value._editorTypeRaw);
         if (typeof key === "string" && /^[A-Za-z0-9]{16,128}$/.test(key)) addFile(key, name, editorType);
         for (const item of Object.values(value)) visit(item, depth + 1);
       };
@@ -1688,8 +1836,8 @@
             debug.messages += 1;
             const type = message && (message.messageType || message.type || message.kind || "unknown");
             debug.types[type] = (debug.types[type] || 0) + 1;
-            if (type !== "authSuccess" && debug.samples.length < 2) {
-              debug.samples.push(JSON.stringify(message).slice(0, 1200));
+            if (type !== "authSuccess" && debug.samples.length < 6) {
+              debug.samples.push(JSON.stringify(message).slice(0, 3000));
             }
             if (message && message.messageType === "viewSubscriptionFailed") {
               debug.errors.push(message.errorCode || "viewSubscriptionFailed");
@@ -1697,20 +1845,28 @@
             visit(message);
             if (message && message.messageType === "authSuccess") {
               debug.auth = true;
-              socket.send(JSON.stringify({
-                messageType: "subscribe",
-                viewName: "PaginatedFilesByProjectAndEditorTypeView",
-                viewHash: "12538ad8aff56662ba6ff07961c818952541681a8fecf9b7edf1beebf4ad26c4",
-                loadType: "initial",
-                args: {
-                  projectId,
-                  editorType: 0,
-                  firstPageSize: 500,
-                  sortColumn: "updatedAt",
-                  sortType: "desc"
-                },
-                traceId: "figboost-" + projectId + "-" + Date.now()
-              }));
+              const sortVariants = [
+                { sortColumn: "updatedAt", sortType: "DESC" },
+                { sortColumn: "createdAt", sortType: "DESC" },
+                { sortColumn: "name", sortType: "ASC" }
+              ];
+              const editorTypes = [0, 1, 2, 3, 4, 5];
+              for (const editorType of editorTypes) for (const variant of sortVariants) {
+                socket.send(JSON.stringify({
+                  messageType: "subscribe",
+                  viewName: "PaginatedFilesByProjectAndEditorTypeView",
+                  viewHash: "12538ad8aff56662ba6ff07961c818952541681a8fecf9b7edf1beebf4ad26c4",
+                  loadType: "initial",
+                  args: {
+                    projectId,
+                    editorType,
+                    firstPageSize: 500,
+                    sortColumn: variant.sortColumn,
+                    sortType: variant.sortType
+                  },
+                  traceId: "figboost-" + projectId + "-" + editorType + "-" + variant.sortColumn + "-" + Date.now()
+                }));
+              }
             }
             markMessage();
           } catch (error) {
@@ -1725,14 +1881,19 @@
   }
 
   function mergeDiscoveredPage(page, filesByKey, queue, seenPages, options = {}) {
+    const initialSize = filesByKey.size;
     for (const link of page.links || []) {
-      const file = options.ignoreFileLinks ? null : extractFigmaFileLink(link.href, link.label, link.sourceUrl || page.url, link.sourceTitle || page.title);
+      const sourceTitle = link.projectPath
+        || link.sourceTitle
+        || (isFigmaProjectOverviewPage(page.url) ? "" : (page.projectPath || page.title));
+      const file = options.ignoreFileLinks ? null : extractFigmaFileLink(link.href, link.label, link.sourceUrl || page.url, sourceTitle);
       if (file) {
         if (!filesByKey.has(file.key)) {
           filesByKey.set(file.key, file);
         } else {
           const existing = filesByKey.get(file.key);
           existing.categories = Array.from(new Set([...(existing.categories || []), ...(file.categories || [])]));
+          if (!existing.projectPath && file.projectPath) existing.projectPath = file.projectPath;
         }
         continue;
       }
@@ -1740,6 +1901,7 @@
       const nextPage = shouldScanFigmaPage(link.href) ? toFigmaAbsoluteUrl(link.href) : null;
       if (nextPage && !seenPages.has(nextPage) && !queue.includes(nextPage)) queue.push(nextPage);
     }
+    return filesByKey.size - initialSize;
   }
 
   function enqueueFigmaProjectCandidates(page, queue, seenPages) {
@@ -1749,14 +1911,22 @@
       if (!candidate.projectRow) continue;
       if (!candidate.projectRow && !isFigmaProjectCandidateText(candidate.text)) continue;
       const href = shouldScanFigmaPage(candidate.href) ? toFigmaAbsoluteUrl(candidate.href) : "";
-      const job = href || {
+      if (!href) continue;
+      const projectInfo = href ? getFigmaProjectInfoFromUrl(href) : null;
+      const job = projectInfo ? Object.assign({}, projectInfo, {
+        liveGraphProject: true,
+        name: candidate.text,
+        expectedFileCount: Number.isFinite(candidate.fileCount) ? candidate.fileCount : null
+      }) : href || {
         url: page.url,
         clickText: candidate.text,
         rect: candidate.rect,
+        expectedFileCount: Number.isFinite(candidate.fileCount) ? candidate.fileCount : null,
         projectRow: candidate.projectRow
       };
-      const marker = typeof job === "string" ? job : `${job.url}#${job.clickText}`;
+      const marker = job && job.liveGraphProject ? `livegraph#${job.teamId}#${job.projectId}` : (typeof job === "string" ? job : `${job.url}#${job.clickText}`);
       const queued = queue.some((item) => {
+        if (item && job && item.liveGraphProject && job.liveGraphProject) return item.teamId === job.teamId && item.projectId === job.projectId;
         if (typeof item === "string" || typeof job === "string") return item === job;
         return item && item.url === job.url && item.clickText === job.clickText;
       });
@@ -1766,13 +1936,15 @@
     }
   }
 
-  function enqueueFigmaProjectApiJobs(projects, queue, seenPages, fuid) {
+  function enqueueFigmaProjectApiJobs(projects, queue, seenPages, fuid, allowedTeamIds = []) {
     for (const project of projects || []) {
+      if (allowedTeamIds.length && !allowedTeamIds.includes(String(project.teamId || ""))) continue;
       const job = {
         liveGraphProject: true,
         projectId: project.projectId,
         teamId: project.teamId,
         name: project.name || project.projectId,
+        expectedFileCount: Number.isFinite(Number(project.expectedFileCount)) ? Number(project.expectedFileCount) : null,
         fuid
       };
       const marker = `livegraph#${job.teamId}#${job.projectId}`;
@@ -1884,6 +2056,26 @@
     return teamIds;
   }
 
+  function getFigmaVisibleTeamIds() {
+    const teamIds = [];
+    const pushTeamId = (value) => {
+      const teamId = String(value || "").trim();
+      if (teamId && /^\d+$/.test(teamId) && !teamIds.includes(teamId)) teamIds.push(teamId);
+    };
+    for (const contents of webContents.getAllWebContents()) {
+      try {
+        if (!contents || contents.isDestroyed() || contents.__FIGBOOST_SKIP_RENDERER_INJECTION__) continue;
+        const url = toFigmaAbsoluteUrl(contents.getURL());
+        if (!url) continue;
+        const parsed = new URL(url);
+        const pathMatch = /\/files\/team\/([^/?#]+)/i.exec(parsed.pathname);
+        if (pathMatch) pushTeamId(pathMatch[1]);
+        pushTeamId(parsed.searchParams.get("team_id"));
+      } catch (_) {}
+    }
+    return teamIds;
+  }
+
   function getFigmaCurrentUserId() {
     try {
       const settingsPath = path.join(app.getPath("appData"), "Figma", "settings.json");
@@ -1899,6 +2091,7 @@
     if (!absoluteUrl) return "";
     try {
       const parsed = new URL(absoluteUrl);
+      if (/\/desktop_new_tab\b/i.test(parsed.pathname) && parsed.searchParams.get("project_id")) return absoluteUrl;
       const match = /^\/files\/team\/([^/]+)\/project\/(\d+)/i.exec(parsed.pathname);
       if (!match) return "";
       const fuid = parsed.searchParams.get("fuid") || getFigmaCurrentUserId();
@@ -1918,6 +2111,13 @@
     try {
       const parsed = new URL(absoluteUrl);
       const match = /^\/files\/team\/([^/]+)\/project\/(\d+)/i.exec(parsed.pathname);
+      if (!match && /\/desktop_new_tab\b/i.test(parsed.pathname) && parsed.searchParams.get("project_id")) {
+        return {
+          teamId: parsed.searchParams.get("team_id") || "",
+          projectId: parsed.searchParams.get("project_id"),
+          name: ""
+        };
+      }
       if (!match) return null;
       return {
         teamId: match[1],
@@ -1931,8 +2131,20 @@
 
   async function discoverFigmaFiles(progress) {
     const owner = BrowserWindow.getFocusedWindow();
-    const settingsQueue = getFigmaFileBrowserUrlsFromSettings();
-    const teamIds = getFigmaTeamIdsFromSettings();
+    const visibleTeamIds = getFigmaVisibleTeamIds();
+    const configuredTeamIds = getFigmaTeamIdsFromSettings();
+    const teamIds = visibleTeamIds.length ? visibleTeamIds : configuredTeamIds;
+    const settingsQueue = getFigmaFileBrowserUrlsFromSettings().filter((url) => {
+      if (!visibleTeamIds.length) return true;
+      try {
+        const parsed = new URL(toFigmaAbsoluteUrl(url));
+        const pathMatch = /\/files\/team\/([^/?#]+)/i.exec(parsed.pathname);
+        const teamId = pathMatch && pathMatch[1] || parsed.searchParams.get("team_id") || "";
+        return !teamId || visibleTeamIds.includes(teamId);
+      } catch (_) {
+        return true;
+      }
+    });
     const fallbackQueue = [
       "https://www.figma.com/files",
       "https://www.figma.com/files/team"
@@ -1945,7 +2157,8 @@
     const maxPages = 90;
     const scanDeadline = Date.now() + 58000;
     const fuid = getFigmaCurrentUserId();
-    const debug = () => {};
+    try { fs.writeFileSync(path.join(app.getPath("userData"), "FigBoost-bulk-export-debug.log"), "", "utf8"); } catch (_) {}
+    const debug = (entry) => writeBulkExportDebug(Object.assign({ scope: "discover" }, entry || {}));
     const enqueueFallbackScanPages = () => {
       for (const url of fallbackQueue) {
         if (!seenPages.has(url) && !queue.includes(url)) queue.push(url);
@@ -1958,6 +2171,37 @@
       try {
         await loadFigmaPage(target, seedUrl);
       } catch (_) {}
+      await sleep(1200);
+      let seedPage = { candidates: [] };
+      try {
+        const contents = getFigmaScanTargetWebContents(target);
+        if (contents) seedPage = await readFigmaPageLinksFast({ webContents: contents });
+      } catch (error) {
+        debug({ stage: "seed-page-error", message: error && error.message ? error.message : String(error) });
+      }
+      {
+        const seedProjectRows = (seedPage.candidates || [])
+          .filter((candidate) => candidate.projectRow)
+          .map((candidate) => ({
+            name: cleanDiscoveredFileName(candidate.text),
+            fileCount: Number.isFinite(candidate.fileCount) ? candidate.fileCount : null
+          }))
+          .filter((item) => item.name);
+        const seedProjectNames = new Set(seedProjectRows.map((item) => item.name));
+        const capturedProjects = drainCapturedFigmaProjects(target);
+        drainCapturedFigmaLinks(target);
+        const visibleProjects = seedProjectNames.size
+          ? capturedProjects.filter((project) => seedProjectNames.has(cleanDiscoveredFileName(project.name)))
+          : capturedProjects;
+        debug({
+          stage: "seed-capture",
+          pageProjects: seedProjectRows.length,
+          capturedProjects: capturedProjects.length,
+          queuedProjects: visibleProjects.length,
+          projects: visibleProjects.map((project) => ({ name: project.name, projectId: project.projectId, expectedFileCount: project.expectedFileCount })).slice(0, 20)
+        });
+        enqueueFigmaProjectApiJobs(visibleProjects, queue, seenPages, fuid, teamIds);
+      }
       if (progress) {
         progress.update({
           sub: "\u6b63\u5728\u5feb\u901f\u8bfb\u53d6\u56e2\u961f\u9879\u76ee",
@@ -1967,7 +2211,7 @@
       try {
         const result = await fetchFigmaTeamProjectsAndFilesViaRest({ webContents: getFigmaScanTargetWebContents(target) }, teamIds, fuid);
         debug({ stage: "rest-projects", teams: teamIds.length, links: ((result && result.links) || []).length, projects: ((result && result.projects) || []).length, details: result && result.debug });
-        for (const project of (result && result.projects) || []) enqueueFigmaProjectApiJobs([project], queue, seenPages, fuid);
+        for (const project of (result && result.projects) || []) enqueueFigmaProjectApiJobs([project], queue, seenPages, fuid, teamIds);
         if (result && result.links && result.links.length) {
           mergeDiscoveredPage({ title: "\u6240\u6709\u9879\u76ee", url: seedUrl, links: result.links, candidates: [] }, filesByKey, queue, seenPages);
         }
@@ -1979,7 +2223,7 @@
         try {
           const result = await fetchFigmaTeamProjectsViaLiveGraph({ webContents: getFigmaScanTargetWebContents(target) }, teamId, fuid);
           debug({ stage: "livegraph-team-projects", teamId, projects: ((result && result.projects) || []).length, details: result && result.debug });
-          enqueueFigmaProjectApiJobs((result && result.projects) || [], queue, seenPages, fuid);
+          enqueueFigmaProjectApiJobs((result && result.projects) || [], queue, seenPages, fuid, teamIds);
         } catch (error) {
           debug({ stage: "livegraph-team-projects-error", teamId, message: error && error.message ? error.message : String(error) });
         }
@@ -2000,6 +2244,7 @@
           const page = await readFigmaPageLinksFast({ webContents: contents });
           debug({ stage: "visible", url: currentUrl, pageUrl: page.url, links: (page.links || []).length, candidates: (page.candidates || []).length });
           mergeDiscoveredPage(page, filesByKey, queue, seenPages, {
+            ignoreFileLinks: isFigmaProjectOverviewPage(page.url),
             ignoreScanLinks: isFigmaProjectOverviewPage(page.url)
           });
           enqueueFigmaProjectCandidates(page, queue, seenPages);
@@ -2013,31 +2258,52 @@
         const marker = `livegraph#${job.teamId}#${job.projectId}`;
         if (seenPages.has(marker)) return;
         seenPages.add(marker);
+        const projectUrl = `https://www.figma.com/files/team/${job.teamId}/project/${job.projectId}${fuid ? `?fuid=${encodeURIComponent(fuid)}` : ""}`;
         if (progress) {
           progress.update({
             sub: "\u6b63\u5728\u8bfb\u53d6\u9879\u76ee\u6587\u4ef6\uff1a" + (job.name || job.projectId),
             foot: `\u5df2\u68c0\u7d22 ${filesByKey.size} \u4e2a\u6587\u4ef6\uff0c${seenPages.size} \u4e2a\u9875\u9762`
           });
         }
-        let contents = getFigmaScanTargetWebContents(scanTarget);
-        if (!contents) {
-          await loadFigmaPage(scanTarget, `https://www.figma.com/files/team/${job.teamId}/all-projects${fuid ? `?fuid=${encodeURIComponent(fuid)}` : ""}`);
-          contents = getFigmaScanTargetWebContents(scanTarget);
-        }
-        if (!contents) return;
+        let liveGraphAdded = 0;
         try {
-          const result = await fetchFigmaProjectFilesViaLiveGraph({ webContents: contents }, job, fuid);
-          const links = Array.isArray(result) ? result : (result && result.links) || [];
-          const page = {
-            title: job.name || "",
-            url: `https://www.figma.com/files/team/${job.teamId}/project/${job.projectId}${fuid ? `?fuid=${encodeURIComponent(fuid)}` : ""}`,
-            links,
-            candidates: []
-          };
-          debug({ stage: "livegraph-project", projectId: job.projectId, teamId: job.teamId, links: links.length, details: result && result.debug, files: filesByKey.size });
-          mergeDiscoveredPage(page, filesByKey, queue, seenPages);
+          const contents = getFigmaScanTargetWebContents(scanTarget);
+          if (contents) {
+            const result = await fetchFigmaProjectFilesViaLiveGraph({ webContents: contents }, job, fuid);
+            const links = Array.isArray(result) ? result : (result && result.links) || [];
+            const page = {
+              title: job.name || "",
+              url: projectUrl,
+              links,
+              candidates: [],
+              projectPath: job.name || job.projectId,
+              sourceTitle: job.name || job.projectId
+            };
+            liveGraphAdded = mergeDiscoveredPage(page, filesByKey, queue, seenPages);
+            debug({ stage: "livegraph-project", projectId: job.projectId, teamId: job.teamId, links: links.length, added: liveGraphAdded, details: result && result.debug, files: filesByKey.size });
+            const expected = Number.isFinite(job.expectedFileCount) ? job.expectedFileCount : null;
+            if (liveGraphAdded > 0 && (!expected || links.length >= expected)) return;
+          }
         } catch (error) {
           debug({ stage: "livegraph-project-error", projectId: job.projectId, teamId: job.teamId, message: error && error.message ? error.message : String(error) });
+        }
+        try {
+          await loadFigmaPage(scanTarget, projectUrl);
+          await sleep(1200);
+          const contents = getFigmaScanTargetWebContents(scanTarget);
+          const page = contents
+            ? await readFigmaPageLinksFast({ webContents: contents })
+            : { title: job.name || "", url: projectUrl, links: [], candidates: [] };
+          page.projectPath = job.name || page.projectPath || job.projectId;
+          page.sourceTitle = page.projectPath;
+          page.links = [...(page.links || []), ...drainCapturedFigmaLinks(scanTarget)];
+          enqueueFigmaProjectApiJobs(drainCapturedFigmaProjects(scanTarget), queue, seenPages, fuid, teamIds);
+          debug({ stage: "project-page-load", projectId: job.projectId, teamId: job.teamId, url: projectUrl, currentUrl: contents && contents.getURL(), links: (page.links || []).length, candidates: (page.candidates || []).length, files: filesByKey.size });
+          const added = mergeDiscoveredPage(page, filesByKey, queue, seenPages);
+          const expected = Number.isFinite(job.expectedFileCount) ? job.expectedFileCount : null;
+          if (added > 0 && (!expected || added + liveGraphAdded >= expected)) return;
+        } catch (error) {
+          debug({ stage: "project-page-load-error", projectId: job.projectId, teamId: job.teamId, message: error && error.message ? error.message : String(error) });
         }
         return;
       }
@@ -2046,6 +2312,14 @@
       const clickCandidate = typeof job === "object" && job ? { text: job.clickText, rect: job.rect } : clickText;
       const pageMarker = clickText ? `${pageUrl}#${clickText}` : pageUrl;
       if (!pageUrl || seenPages.has(pageMarker)) return;
+      const directProjectInfo = !clickText ? getFigmaProjectInfoFromUrl(pageUrl) : null;
+      if (directProjectInfo) {
+        const marker = `livegraph#${directProjectInfo.teamId}#${directProjectInfo.projectId}`;
+        if (!seenPages.has(marker)) {
+          await processQueuedPage(scanTarget, Object.assign({ liveGraphProject: true, fuid }, directProjectInfo));
+          return;
+        }
+      }
       seenPages.add(pageMarker);
       if (progress) {
         progress.update({
@@ -2070,19 +2344,21 @@
       let page;
       try {
         page = await readFigmaPageLinksFast({ webContents: getFigmaScanTargetWebContents(scanTarget) || contents });
+        if (clickText) page.projectPath = clickText;
       } catch (_) {
         debug({ stage: "read-error", url: pageUrl, currentUrl: contents.getURL() });
         return;
       }
       page.links = [...(page.links || []), ...drainCapturedFigmaLinks(scanTarget)];
-      enqueueFigmaProjectApiJobs(drainCapturedFigmaProjects(scanTarget), queue, seenPages, fuid);
-      if ((page.links || []).length === 0) {
+      enqueueFigmaProjectApiJobs(drainCapturedFigmaProjects(scanTarget), queue, seenPages, fuid, teamIds);
+      {
         const projectInfo = getFigmaProjectInfoFromUrl(page.url || contents.getURL());
         if (projectInfo) {
+          if (!projectInfo.name && clickText) projectInfo.name = clickText;
           try {
             const result = await fetchFigmaProjectFilesViaLiveGraph({ webContents: getFigmaScanTargetWebContents(scanTarget) || contents }, projectInfo, fuid);
             const links = Array.isArray(result) ? result : (result && result.links) || [];
-            page.links = links;
+            page.links = [...(page.links || []), ...links];
             debug({ stage: "project-page-livegraph", projectId: projectInfo.projectId, teamId: projectInfo.teamId, links: links.length, details: result && result.debug, files: filesByKey.size });
           } catch (error) {
             debug({ stage: "project-page-livegraph-error", projectId: projectInfo.projectId, teamId: projectInfo.teamId, message: error && error.message ? error.message : String(error) });
@@ -2096,8 +2372,9 @@
             await loadFigmaPage(scanTarget, desktopProjectUrl);
             await sleep(1000);
             page = await readFigmaPageLinksFast({ webContents: getFigmaScanTargetWebContents(scanTarget) || contents });
+            if (clickText) page.projectPath = clickText;
             page.links = [...(page.links || []), ...drainCapturedFigmaLinks(scanTarget)];
-            enqueueFigmaProjectApiJobs(drainCapturedFigmaProjects(scanTarget), queue, seenPages, fuid);
+            enqueueFigmaProjectApiJobs(drainCapturedFigmaProjects(scanTarget), queue, seenPages, fuid, teamIds);
             debug({ stage: "desktop-project", url: desktopProjectUrl, currentUrl: contents.getURL(), pageUrl: page.url, links: (page.links || []).length, candidates: (page.candidates || []).length });
           } catch (error) {
             debug({ stage: "desktop-project-error", url: desktopProjectUrl, message: error && error.message ? error.message : String(error) });
@@ -2112,10 +2389,11 @@
         clickText,
         links: (page.links || []).length,
         candidates: (page.candidates || []).length,
-        candidateTexts: (page.candidates || []).slice(0, 20).map((candidate) => ({ text: candidate.text, rect: candidate.rect, projectRow: candidate.projectRow })),
+        candidateTexts: (page.candidates || []).slice(0, 20).map((candidate) => ({ text: candidate.text, href: candidate.href, fileCount: candidate.fileCount, rect: candidate.rect, projectRow: candidate.projectRow })),
         files: filesByKey.size
       });
       mergeDiscoveredPage(page, filesByKey, queue, seenPages, {
+        ignoreFileLinks: isFigmaProjectOverviewPage(page.url),
         ignoreScanLinks: isFigmaProjectOverviewPage(page.url)
       });
       if (!getFigmaProjectInfoFromUrl(page.url)) enqueueFigmaProjectCandidates(page, queue, seenPages);
@@ -2211,9 +2489,11 @@
       };
       const onDownload = (_, item) => {
         try {
+          writeBulkExportDebug({ scope: "export", stage: "will-download", targetPath });
           item.setSavePath(targetPath);
           item.once("done", (_event, state) => {
             cleanup();
+            writeBulkExportDebug({ scope: "export", stage: "download-done", state, targetPath });
             if (state === "completed") resolve();
             else reject(new Error(`\u4e0b\u8f7d\u672c\u5730\u526f\u672c\u5931\u8d25\uff1a${state}`));
           });
@@ -2224,6 +2504,7 @@
       };
       timer = setTimeout(() => {
         cleanup();
+        writeBulkExportDebug({ scope: "export", stage: "download-timeout", targetPath });
         reject(new Error("\u7b49\u5f85 Figma \u672c\u5730\u526f\u672c\u4e0b\u8f7d\u8d85\u65f6"));
       }, timeoutMs);
       session.once("will-download", onDownload);
@@ -2309,7 +2590,7 @@
   }
 
   function getFigmaFileKey(url) {
-    const match = /\/(?:file|design)\/([A-Za-z0-9]+)/.exec(String(url || ""));
+    const match = /\/(?:file|design|board|slides|make|buzz|site)\/([A-Za-z0-9]+)/.exec(String(url || ""));
     return match && match[1];
   }
 
@@ -2317,7 +2598,7 @@
     if (!fileKey) return null;
     return webContents.getAllWebContents().find((contents) => {
       if (!contents || contents.isDestroyed()) return false;
-      return contents.getURL().includes(`/file/${fileKey}`) || contents.getURL().includes(`/design/${fileKey}`);
+      return /\/(?:file|design|board|slides|make|buzz|site)\//.test(contents.getURL()) && contents.getURL().includes(`/${fileKey}`);
     }) || null;
   }
 
@@ -2346,7 +2627,7 @@
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
       const active = getActiveWebContentsFromExportContext(exportContext);
-      if (active && (active.getURL().includes(`/file/${fileKey}`) || active.getURL().includes(`/design/${fileKey}`)) && !active.isLoading()) {
+      if (active && /\/(?:file|design|board|slides|make|buzz|site)\//.test(active.getURL()) && active.getURL().includes(`/${fileKey}`) && !active.isLoading()) {
         return active;
       }
       await sleep(500);
@@ -2388,25 +2669,42 @@
   }
 
   async function triggerFigmaSaveLocalCopy(owner, exportContext) {
-    if (exportContext && exportContext.desktopWindow && typeof exportContext.desktopWindow.postMessageToActiveWebBinding === "function") {
-      exportContext.desktopWindow.postMessageToActiveWebBinding("handleAction", "save-as", "os-menu");
+    const previous = BrowserWindow.getFocusedWindow();
+    const target = owner && !owner.isDestroyed() ? owner : null;
+    try {
+      if (target) {
+        try { target.focus(); } catch (_) {}
+        await sleep(250);
+      }
+      clickMenuItem([
+        /Save Local Copy/i,
+        /\u4fdd\u5b58\u672c\u5730\u526f\u672c/i
+      ], target || owner, "\u627e\u4e0d\u5230 Figma \u7684\u201c\u4fdd\u5b58\u672c\u5730\u526f\u672c\u201d\u547d\u4ee4");
       return;
+    } catch (error) {
+      if (exportContext && exportContext.desktopWindow && typeof exportContext.desktopWindow.postMessageToActiveWebBinding === "function") {
+        exportContext.desktopWindow.postMessageToActiveWebBinding("handleAction", "save-as", "os-menu");
+        return;
+      }
+      throw error;
+    } finally {
+      if (previous && !previous.isDestroyed() && previous !== target) {
+        try { previous.focus(); } catch (_) {}
+      }
     }
-    clickMenuItem([
-      /Save Local Copy/i,
-      /\u4fdd\u5b58\u672c\u5730\u526f\u672c/i
-    ], owner, "\u627e\u4e0d\u5230 Figma \u7684\u201c\u4fdd\u5b58\u672c\u5730\u526f\u672c\u201d\u547d\u4ee4");
   }
 
   async function exportFigmaFileLocalCopy(file, targetPath, exportContext) {
     const owner = BrowserWindow.getFocusedWindow();
     const opened = await openFigmaFileInDesktop(owner, file.url, exportContext);
     await withSaveDialogTarget(targetPath, async () => {
-      const download = waitForDownloadToPath(opened.contents, targetPath, 300000);
+      writeBulkExportDebug({ scope: "export", stage: "trigger", name: file.name, url: file.url, targetPath });
+      const download = waitForDownloadToPath(opened.contents, targetPath, 120000);
       await triggerFigmaSaveLocalCopy(opened.owner, opened.exportContext);
       await download;
     });
-    await waitForStableFile(targetPath, 300000);
+    await waitForStableFile(targetPath, 120000);
+    writeBulkExportDebug({ scope: "export", stage: "completed", name: file.name, targetPath });
   }
 
   async function bulkExportFigmaFiles() {
@@ -2509,21 +2807,26 @@
   }
 
   function buildFigBoostFeatureMenuTemplate() {
-    return [
+    const template = [
       {
         label: "检查更新",
         click: () => {
           checkOfficialUpdateManually();
         }
-      },
-      { type: "separator" },
-      {
-        label: "\u6279\u91cf\u5bfc\u51fa\u753b\u677f\u6587\u4ef6...",
-        click: () => {
-          bulkExportFigmaFiles();
-        }
       }
     ];
+    if (isFigBoostFeatureEnabled("bulk-export-figma-files")) {
+      template.push(
+        { type: "separator" },
+        {
+          label: "\u6279\u91cf\u5bfc\u51fa\u753b\u677f\u6587\u4ef6...",
+          click: () => {
+            bulkExportFigmaFiles();
+          }
+        }
+      );
+    }
+    return template;
   }
 
   function findOwnerWindowForWebContents(sender) {
@@ -2634,7 +2937,7 @@
               value: (bounds) => ipcRenderer.invoke("figboost:open-feature-menu", bounds)
             });
           }
-          if (ipcRenderer && !window.__FIGBOOST_BULK_EXPORT_FILES__) {
+          if (${isFigBoostFeatureEnabled("bulk-export-figma-files") ? "true" : "false"} && ipcRenderer && !window.__FIGBOOST_BULK_EXPORT_FILES__) {
             Object.defineProperty(window, "__FIGBOOST_BULK_EXPORT_FILES__", {
               value: () => ipcRenderer.invoke("figboost:bulk-export-files")
             });
@@ -2668,6 +2971,10 @@
       }
       if (/^figboost:\/\/bulk-export-files/i.test(url || "")) {
         if (event && event.preventDefault) event.preventDefault();
+        if (!isFigBoostFeatureEnabled("bulk-export-figma-files")) {
+          dispatchUpdateCheckFinished(contents);
+          return true;
+        }
         const bulkExport = global.__FIGBOOST_BULK_EXPORT_FILES__;
         if (typeof bulkExport === "function") {
           Promise.resolve(bulkExport()).finally(() => dispatchUpdateCheckFinished(contents));
