@@ -152,6 +152,12 @@ if ($main -notmatch "function showBulkExportSelectionWindow" -or $main -notmatch
 if ($main -notmatch "showInactive" -or $main -notmatch "createFigmaExportContext" -or $main -notmatch "moveExportWindowToBackground" -or $main -notmatch 'postMessageToActiveWebBinding\("' -or $main -notmatch "save-as" -or $main -notmatch "maxPages = 90" -or $main -notmatch "scanTargets") {
   throw "Batch .fig export must reduce foreground disruption, expand scanning, and reuse a background export context."
 }
+if ($main -notmatch "function suppressUtilityWindowMenuBar" -or $main -notmatch "setMenuBarVisibility\(false\)" -or $main -notmatch "progressWindow\.on\(`"show`"" -or $main -notmatch "selectionWindow\.on\(`"show`"") {
+  throw "Batch .fig export utility windows must hide the native menu bar after showing."
+}
+if ($main -notmatch "function formatDuration" -or $main -notmatch "startedAt: exportStartedAt" -or -not $main.Contains('\\u5df2\\u7528\\u65f6') -or -not $main.Contains('\u5bfc\u51fa\u8017\u65f6') -or $main -notmatch "durationMs: exportDurationMs") {
+  throw "Batch .fig export must show elapsed time and report final duration."
+}
 if ($main -match 'https://www\.figma\.com/files/drafts') {
   throw "Batch .fig export scan must not include Drafts pages."
 }
@@ -170,6 +176,9 @@ if ($main -notmatch "recents-and-sharing\|deleted\|trash\|community" -or $main -
 if ($main -notmatch 'editorType === "design" \|\| editorType === 0' -or $main -match 'editorType === undefined \|\| editorType === null \|\| editorType === "design"') {
   throw "Batch .fig export scan must not treat unknown editor types as Figma Design files."
 }
+if ($main -notmatch "path !== `"design`"" -or -not $main.Contains('/(?:file|design)\/([A-Za-z0-9]+)')) {
+  throw "Batch .fig export must filter non-Design file types before exporting local .fig copies."
+}
 if ($main -notmatch "const isDesign = editorType === `"design`" \|\| editorType === 0;" -or $main -notmatch "projectPathFromPage" -or $main -notmatch "collectSnapshot" -or $main -notmatch "for \(let index = 0; index < 14") {
   throw "Batch .fig export fast page scan must accumulate scrolled project/file rows and keep only design files."
 }
@@ -181,6 +190,9 @@ if ($main -notmatch "function shouldReadVisibleFigmaPage" -or $main -notmatch "d
 }
 if ($main -notmatch "function waitForDownloadToPath" -or $main -notmatch 'session\.once\("will-download"' -or $main -notmatch "item\.setSavePath\(targetPath\)" -or $main -notmatch "function openFigmaFileInDesktop" -or $main -notmatch "Open File URL From Clipboard" -or $main -notmatch "function withSaveDialogTarget" -or $main -notmatch "dialog\.showSaveDialog = async" -or $main -notmatch "function triggerFigmaSaveLocalCopy" -or $main -notmatch "Save Local Copy" -or $main -match "function findSaveLocalCopyMenuItem" -or $main -match "clickFigmaMainMenu") {
   throw "Batch .fig export must open real Figma tabs, invoke native Save Local Copy, and intercept the save/download path."
+}
+if ($main -notmatch "postMessageToActiveWebBinding\(`"handleAction`", `"save-as`", `"os-menu`"\)" -or $main -notmatch "let exportContext = createFigmaExportContext\(owner\)" -or $main -notmatch "exportContext = createFigmaExportContext\(owner\)" -or $main -notmatch "stage: `"file-failed`"") {
+  throw "Batch .fig export must trigger background save directly and rebuild the export context after failures."
 }
 if ($main -notmatch "findOwnerWindowForWebContents" -or $main -notmatch "window\.getBrowserViews\(\)" -or $main -notmatch "BrowserWindow\.getFocusedWindow\(\)" -or $main -notmatch "normalizeFigBoostMenuBounds" -or $main -notmatch "popupOptions\.x = point\.x" -or $main -notmatch "__FIGBOOST_ACTIVE_FEATURE_MENUS__" -or $main -notmatch "__FIGBOOST_OPEN_FEATURE_MENU__ = openFigBoostFeatureMenu" -or $main -notmatch "menu\.popup\(popupOptions\)") {
   throw "Native FigBoost feature menu must bind to the owning BrowserWindow and button position."

@@ -11,6 +11,8 @@ Capture the complete virtual desktop first. Do not rely on cropped window screen
 
 Use cropped screenshots only as secondary evidence after a full-screen capture has been saved and inspected.
 
+Never hard-code a 1080p capture size. On 2K, 4K, scaled, or multi-monitor desktops, use the actual virtual screen bounds. If the primary display is 2K, the screenshot must be 2K-sized unless the virtual desktop dimensions are larger because of multiple monitors.
+
 ## Windows Workflow
 
 1. Bring the target window to the foreground and wait briefly for rendering.
@@ -19,6 +21,7 @@ Use cropped screenshots only as secondary evidence after a full-screen capture h
 4. Inspect the PNG with `view_image` before making a claim.
 5. Use the full-screen image and the target window rect to calculate click coordinates. Redo the full-screen capture after each important click.
 6. If the screenshot dimensions do not match the virtual screen dimensions, treat the capture as invalid and retake it.
+7. If `VirtualScreen.Width` or `VirtualScreen.Height` is greater than 1920x1080, explicitly verify that the saved PNG uses those larger dimensions. Do not downscale it for inspection or evidence.
 
 PowerShell pattern:
 
@@ -34,7 +37,13 @@ $graphics.CopyFromScreen($bounds.Left, $bounds.Top, 0, 0, $bitmap.Size)
 $bitmap.Save($out, [System.Drawing.Imaging.ImageFormat]::Png)
 $graphics.Dispose()
 $bitmap.Dispose()
-$out
+[pscustomobject]@{
+  Path = $out
+  Left = $bounds.Left
+  Top = $bounds.Top
+  Width = $bounds.Width
+  Height = $bounds.Height
+}
 ```
 
 ## Evidence Standard
@@ -42,6 +51,7 @@ $out
 For desktop UI verification, final handoff should state:
 
 - the full-screen screenshot path;
+- the captured width and height, especially on 2K or larger displays;
 - what was visible or missing in that screenshot;
 - the click coordinates used, if a click was part of the verification;
 - any blocker that prevented a full-screen screenshot or real-client proof.

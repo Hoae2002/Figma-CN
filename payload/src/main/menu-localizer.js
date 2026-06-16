@@ -582,10 +582,27 @@
       : dialog.showOpenDialog(options);
   }
 
+  function suppressUtilityWindowMenuBar(window) {
+    if (!window || window.isDestroyed()) return;
+    try { window.setMenu(null); } catch (_) {}
+    try { if (typeof window.removeMenu === "function") window.removeMenu(); } catch (_) {}
+    try { if (typeof window.setAutoHideMenuBar === "function") window.setAutoHideMenuBar(true); } catch (_) {}
+    try { if (typeof window.setMenuBarVisibility === "function") window.setMenuBarVisibility(false); } catch (_) {}
+  }
+
+  function formatDuration(milliseconds) {
+    const totalSeconds = Math.max(0, Math.floor(Number(milliseconds || 0) / 1000));
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    const pad = (value) => String(value).padStart(2, "0");
+    return hours ? `${hours}:${pad(minutes)}:${pad(seconds)}` : `${pad(minutes)}:${pad(seconds)}`;
+  }
+
   function createBulkExportProgressWindow(owner) {
     const progressWindow = new BrowserWindow({
       width: 520,
-      height: 220,
+      height: 238,
       useContentSize: true,
       parent: undefined,
       modal: false,
@@ -603,8 +620,9 @@
       }
     });
     progressWindow.webContents.__FIGBOOST_SKIP_RENDERER_INJECTION__ = true;
-    progressWindow.setMenu(null);
-    if (typeof progressWindow.removeMenu === "function") progressWindow.removeMenu();
+    suppressUtilityWindowMenuBar(progressWindow);
+    progressWindow.on("show", () => suppressUtilityWindowMenuBar(progressWindow));
+    progressWindow.on("focus", () => suppressUtilityWindowMenuBar(progressWindow));
     progressWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`
 <!doctype html>
 <html>
@@ -617,6 +635,7 @@
     .sub{font-size:14px;line-height:22px;color:#4a5568;margin-bottom:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
     .bar{height:5px;overflow:hidden;border-radius:999px;background:#e6e8ec;margin-bottom:16px;}
     .bar:before{content:"";display:block;width:42%;height:100%;border-radius:999px;background:#1677ff;animation:move 1s ease-in-out infinite;}
+    .time{font-size:12px;line-height:18px;color:#42526b;margin-bottom:6px;}
     .foot{font-size:12px;line-height:18px;color:#718096;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
     @keyframes move{0%{transform:translateX(-105%);}100%{transform:translateX(245%);}}
   </style>
@@ -625,10 +644,32 @@
   <div class="title" id="title">&#27491;&#22312;&#26816;&#32034;&#30011;&#26495;&#25991;&#20214;</div>
   <div class="sub" id="sub">&#27491;&#22312;&#20351;&#29992;&#24403;&#21069; Figma &#30331;&#24405;&#20250;&#35805;&#25195;&#25551;&#21487;&#35265;&#25991;&#20214;&#8230;</div>
   <div class="bar"></div>
+  <div class="time" id="time"></div>
   <div class="foot" id="foot">&#35831;&#31245;&#20505;</div>
   <script>
+    let startedAt = 0;
+    const pad = (value) => String(value).padStart(2, "0");
+    const formatDuration = (milliseconds) => {
+      const totalSeconds = Math.max(0, Math.floor(Number(milliseconds || 0) / 1000));
+      const hours = Math.floor(totalSeconds / 3600);
+      const minutes = Math.floor((totalSeconds % 3600) / 60);
+      const seconds = totalSeconds % 60;
+      return hours ? hours + ":" + pad(minutes) + ":" + pad(seconds) : pad(minutes) + ":" + pad(seconds);
+    };
+    const refreshElapsed = () => {
+      const target = document.getElementById("time");
+      if (!target) return;
+      target.textContent = startedAt ? "\\u5df2\\u7528\\u65f6\\uff1a" + formatDuration(Date.now() - startedAt) : "";
+    };
+    setInterval(refreshElapsed, 1000);
     window.setFigBoostExportStatus = function (payload) {
       if (!payload) return;
+      if (payload.startedAt) startedAt = payload.startedAt;
+      if (payload.elapsedLabel !== undefined) {
+        document.getElementById("time").textContent = payload.elapsedLabel;
+      } else {
+        refreshElapsed();
+      }
       if (payload.title) document.getElementById("title").textContent = payload.title;
       if (payload.sub) document.getElementById("sub").textContent = payload.sub;
       if (payload.foot) document.getElementById("foot").textContent = payload.foot;
@@ -638,11 +679,14 @@
 </html>
 `)}`);
     progressWindow.once("ready-to-show", () => {
-      if (!progressWindow.isDestroyed()) progressWindow.show();
+      if (progressWindow.isDestroyed()) return;
+      suppressUtilityWindowMenuBar(progressWindow);
+      progressWindow.show();
     });
     return {
       update(payload) {
         if (progressWindow.isDestroyed()) return;
+        suppressUtilityWindowMenuBar(progressWindow);
         progressWindow.webContents.executeJavaScript(
           `window.setFigBoostExportStatus(${JSON.stringify(payload || {})})`,
           true
@@ -685,8 +729,9 @@
       }
     });
     selectionWindow.webContents.__FIGBOOST_SKIP_RENDERER_INJECTION__ = true;
-    selectionWindow.setMenu(null);
-    if (typeof selectionWindow.removeMenu === "function") selectionWindow.removeMenu();
+    suppressUtilityWindowMenuBar(selectionWindow);
+    selectionWindow.on("show", () => suppressUtilityWindowMenuBar(selectionWindow));
+    selectionWindow.on("focus", () => suppressUtilityWindowMenuBar(selectionWindow));
     const safeFiles = files.map((file, index) => ({
       index,
       key: file.key,
@@ -827,7 +872,9 @@
 </html>
 `)}`);
     selectionWindow.once("ready-to-show", () => {
-      if (!selectionWindow.isDestroyed()) selectionWindow.show();
+      if (selectionWindow.isDestroyed()) return;
+      suppressUtilityWindowMenuBar(selectionWindow);
+      selectionWindow.show();
     });
     while (!selectionWindow.isDestroyed()) {
       const result = await selectionWindow.webContents.executeJavaScript("window.__FIGBOOST_SELECTION_RESULT__ || null", true).catch(() => null);
@@ -904,7 +951,7 @@
   function extractFigmaFileLink(href, label, sourceUrl, sourceTitle) {
     const url = toFigmaAbsoluteUrl(href);
     if (!url) return null;
-    const match = /^https:\/\/www\.figma\.com\/(?:file|design|board|slides|make|buzz|site)\/([A-Za-z0-9]+)(?:\/([^?#]+))?/i.exec(url);
+    const match = /^https:\/\/www\.figma\.com\/(?:file|design)\/([A-Za-z0-9]+)(?:\/([^?#]+))?/i.exec(url);
     if (!match) return null;
     const name = cleanDiscoveredFileName(label) || getFileNameFromUrlSlug(match[2], match[1]);
     if (name === match[1] && isFigmaProjectOverviewPage(sourceUrl)) return null;
@@ -1773,7 +1820,7 @@
       const addFile = (key, name, editorType) => {
         if (!key || seen.has(key)) return;
         const path = getFilePathForEditorType(editorType);
-        if (!path || !name || name === key) return;
+        if (path !== "design" || !name || name === key) return;
         seen.add(key);
         links.push({
           href: "https://www.figma.com/" + path + "/" + key,
@@ -2645,7 +2692,7 @@
       });
       moveExportWindowToBackground(exportContext.browserWindow, owner);
       const contents = await waitForExportContextFileWebContents(exportContext, fileUrl, 90000);
-      await sleep(2500);
+      await sleep(800);
       return { owner: exportContext.browserWindow || owner, contents, exportContext };
     }
     const previousClipboard = clipboard.readText();
@@ -2664,11 +2711,16 @@
       owner.show();
       owner.focus();
     }
-    await sleep(3000);
+    await sleep(1200);
     return { owner, contents };
   }
 
   async function triggerFigmaSaveLocalCopy(owner, exportContext) {
+    if (exportContext && exportContext.desktopWindow && typeof exportContext.desktopWindow.postMessageToActiveWebBinding === "function") {
+      exportContext.desktopWindow.postMessageToActiveWebBinding("handleAction", "save-as", "os-menu");
+      await sleep(100);
+      return;
+    }
     const previous = BrowserWindow.getFocusedWindow();
     const target = owner && !owner.isDestroyed() ? owner : null;
     try {
@@ -2682,10 +2734,6 @@
       ], target || owner, "\u627e\u4e0d\u5230 Figma \u7684\u201c\u4fdd\u5b58\u672c\u5730\u526f\u672c\u201d\u547d\u4ee4");
       return;
     } catch (error) {
-      if (exportContext && exportContext.desktopWindow && typeof exportContext.desktopWindow.postMessageToActiveWebBinding === "function") {
-        exportContext.desktopWindow.postMessageToActiveWebBinding("handleAction", "save-as", "os-menu");
-        return;
-      }
       throw error;
     } finally {
       if (previous && !previous.isDestroyed() && previous !== target) {
@@ -2750,25 +2798,40 @@
       const usedPaths = new Set();
       const succeeded = [];
       const failed = [];
-      const exportContext = createFigmaExportContext(owner);
+      const exportStartedAt = Date.now();
+      let exportContext = createFigmaExportContext(owner);
       const exportProgress = createBulkExportProgressWindow(owner);
       try {
         for (let index = 0; index < files.length; index += 1) {
           const file = files[index];
           const targetPath = getUniqueExportPath(exportDir, file.name, usedPaths);
+          const fileStartedAt = Date.now();
           exportProgress.update({
             title: "\u6b63\u5728\u6279\u91cf\u5bfc\u51fa",
             sub: `${index + 1}/${files.length} ${file.name}`,
+            startedAt: exportStartedAt,
             foot: exportDir
           });
           try {
             await exportFigmaFileLocalCopy(file, targetPath, exportContext);
-            succeeded.push({ file, targetPath });
+            succeeded.push({ file, targetPath, durationMs: Date.now() - fileStartedAt });
           } catch (error) {
             failed.push({
               file,
+              error: error && error.message ? error.message : String(error),
+              durationMs: Date.now() - fileStartedAt
+            });
+            writeBulkExportDebug({
+              scope: "export",
+              stage: "file-failed",
+              name: file.name,
+              durationMs: Date.now() - fileStartedAt,
               error: error && error.message ? error.message : String(error)
             });
+            if (index + 1 < files.length) {
+              try { exportContext.close(); } catch (_) {}
+              exportContext = createFigmaExportContext(owner);
+            }
           }
         }
       } finally {
@@ -2776,14 +2839,15 @@
         exportProgress.close();
       }
       progress.close();
+      const exportDurationMs = Date.now() - exportStartedAt;
       const failedDetail = failed.slice(0, 8).map((entry) => `${entry.file.name}: ${entry.error}`).join("\n");
       await showMessageBoxForOwner(owner, {
         type: failed.length ? "warning" : "info",
         title: "\u6279\u91cf\u5bfc\u51fa\u5b8c\u6210",
         message: `\u6210\u529f ${succeeded.length} \u4e2a\uff0c\u5931\u8d25 ${failed.length} \u4e2a\u3002`,
-        detail: `\u5bfc\u51fa\u76ee\u5f55\uff1a${exportDir}${failedDetail ? "\n\n\u5931\u8d25\u6587\u4ef6\uff1a\n" + failedDetail : ""}`
+        detail: `\u5bfc\u51fa\u76ee\u5f55\uff1a${exportDir}\n\u5bfc\u51fa\u8017\u65f6\uff1a${formatDuration(exportDurationMs)}${failedDetail ? "\n\n\u5931\u8d25\u6587\u4ef6\uff1a\n" + failedDetail : ""}`
       });
-      return { ok: true, exportDir, succeeded: succeeded.length, failed: failed.length };
+      return { ok: true, exportDir, succeeded: succeeded.length, failed: failed.length, durationMs: exportDurationMs };
     } catch (error) {
       progress.close();
       await showMessageBoxForOwner(owner, {
