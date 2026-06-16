@@ -332,7 +332,13 @@
         const bounds = getFigBoostMenuBounds(button);
         const bridge = getFigBoostFeatureMenuBridge();
         button.setAttribute("aria-expanded", "true");
-        if (bridge) Promise.resolve(bridge(bounds)).catch(() => openFigBoostFeatureMenuFromTitlebar(bounds));
+        if (bridge) {
+          Promise.resolve(bridge(bounds))
+            .then((result) => {
+              if (result && result.ok === false) toggleFigBoostMenu(wrap);
+            })
+            .catch(() => openFigBoostFeatureMenuFromTitlebar(bounds));
+        }
         else openFigBoostFeatureMenuFromTitlebar(bounds);
         return;
       }

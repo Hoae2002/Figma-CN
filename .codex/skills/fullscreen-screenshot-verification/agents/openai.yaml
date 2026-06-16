@@ -1,0 +1,4 @@
+interface:
+  display_name: "Fullscreen Screenshot Verification"
+  short_description: "Capture full-screen evidence for UI verification."
+  default_prompt: "Use $fullscreen-screenshot-verification to verify a desktop UI flow with full-screen screenshots."

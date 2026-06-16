@@ -2829,18 +2829,52 @@
     return template;
   }
 
+  function isUsableFigBoostWindow(window) {
+    return Boolean(window && (typeof window.isDestroyed !== "function" || !window.isDestroyed()));
+  }
+
+  function getBrowserWindowFromWebContents(contents) {
+    if (!contents || !BrowserWindow) return null;
+    try {
+      if (typeof contents.getOwnerBrowserWindow === "function") {
+        const owner = contents.getOwnerBrowserWindow();
+        if (isUsableFigBoostWindow(owner)) return owner;
+      }
+    } catch (_) {}
+    try {
+      const owner = BrowserWindow.fromWebContents(contents);
+      if (isUsableFigBoostWindow(owner)) return owner;
+    } catch (_) {}
+    return null;
+  }
+
+  function figBoostViewOwnsWebContents(view, sender) {
+    if (!view || !sender) return false;
+    if (view.webContents === sender) return true;
+    const children = Array.isArray(view.children) ? view.children : [];
+    return children.some((child) => figBoostViewOwnsWebContents(child, sender));
+  }
+
   function findOwnerWindowForWebContents(sender) {
     if (!sender || !BrowserWindow) return null;
 
-    const directOwner = BrowserWindow.fromWebContents(sender);
+    const directOwner = getBrowserWindowFromWebContents(sender);
     if (directOwner) return directOwner;
 
     for (const window of BrowserWindow.getAllWindows()) {
+      if (!isUsableFigBoostWindow(window)) continue;
       if (window.webContents === sender) return window;
-      if (typeof window.getBrowserViews !== "function") continue;
-      if (window.getBrowserViews().some((view) => view.webContents === sender)) return window;
+      if (typeof window.getBrowserViews === "function" && window.getBrowserViews().some((view) => view.webContents === sender)) return window;
+      if (figBoostViewOwnsWebContents(window.contentView, sender)) return window;
     }
-    return null;
+
+    if (webContents && typeof webContents.getFocusedWebContents === "function") {
+      const focusedOwner = getBrowserWindowFromWebContents(webContents.getFocusedWebContents());
+      if (focusedOwner) return focusedOwner;
+    }
+
+    const focusedWindow = BrowserWindow.getFocusedWindow();
+    return isUsableFigBoostWindow(focusedWindow) ? focusedWindow : null;
   }
 
   function normalizeFigBoostMenuBounds(bounds) {
@@ -2876,24 +2910,49 @@
     } catch (_) {}
   }
 
+  function popupFigBoostFeatureMenu(menu, owner, point, onClosed) {
+    if (!menu || typeof menu.popup !== "function") return false;
+    const useLegacySignature = menu.popup.length > 1;
+    try {
+      if (useLegacySignature) {
+        if (owner && point) menu.popup(owner, point.x, point.y, undefined, onClosed);
+        else if (owner) menu.popup(owner, undefined, undefined, undefined, onClosed);
+        else menu.popup(undefined, undefined, undefined, undefined, onClosed);
+      } else {
+        const popupOptions = { callback: onClosed };
+        if (owner) popupOptions.window = owner;
+        if (owner && point) {
+          popupOptions.x = point.x;
+          popupOptions.y = point.y;
+        }
+        menu.popup(popupOptions);
+      }
+      return true;
+    } catch (_) {
+      try {
+        menu.popup({ callback: onClosed });
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+  }
+
   function openFigBoostFeatureMenu(sender, bounds) {
-    const owner = findOwnerWindowForWebContents(sender)
-      || BrowserWindow.getFocusedWindow();
+    const owner = findOwnerWindowForWebContents(sender);
     const point = normalizeFigBoostMenuBounds(bounds);
     const menu = Menu.buildFromTemplate(buildFigBoostFeatureMenuTemplate());
-    const popupOptions = {};
-    if (owner) popupOptions.window = owner;
-    if (point) {
-      popupOptions.x = point.x;
-      popupOptions.y = point.y;
-    }
     global.__FIGBOOST_ACTIVE_FEATURE_MENUS__.add(menu);
-    popupOptions.callback = () => {
+    let closed = false;
+    const finish = () => {
+      if (closed) return;
+      closed = true;
       global.__FIGBOOST_ACTIVE_FEATURE_MENUS__.delete(menu);
       if (sender) dispatchFeatureMenuClosed(sender);
     };
-    menu.popup(popupOptions);
-    return { ok: true };
+    const opened = popupFigBoostFeatureMenu(menu, owner, point, finish);
+    if (!opened) finish();
+    return { ok: opened };
   }
 
   function registerFigBoostFeatureMenu() {
