@@ -1,0 +1,4 @@
+interface:
+  display_name: "Real Figma Client Verification"
+  short_description: "Verify code changes in the real Figma Desktop client."
+  default_prompt: "Use $real-figma-client-verification to verify this FigBoost code change in the real Figma Desktop client."
