@@ -6,6 +6,7 @@
   const https = require("https");
   const path = require("path");
   const { spawn } = require("child_process");
+  const nativeMenuPopupLength = Menu.prototype.popup.length;
   const labels = {
     "New Window": "新建窗口",
     "New Tab": "新建标签页",
@@ -2976,7 +2977,7 @@
 
   function popupFigBoostFeatureMenu(menu, owner, point, onClosed) {
     if (!menu || typeof menu.popup !== "function") return false;
-    const useLegacySignature = menu.popup.length > 1;
+    const useLegacySignature = nativeMenuPopupLength > 1;
     try {
       if (useLegacySignature) {
         if (owner && point) menu.popup(owner, point.x, point.y, undefined, onClosed);

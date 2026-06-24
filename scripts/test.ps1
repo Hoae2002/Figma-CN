@@ -197,8 +197,11 @@ if ($main -notmatch "postMessageToActiveWebBinding\(`"handleAction`", `"save-as`
 if ($main -notmatch "findOwnerWindowForWebContents" -or $main -notmatch "window\.getBrowserViews\(\)" -or $main -notmatch "BrowserWindow\.getFocusedWindow\(\)" -or $main -notmatch "normalizeFigBoostMenuBounds" -or $main -notmatch "popupOptions\.x = point\.x" -or $main -notmatch "__FIGBOOST_ACTIVE_FEATURE_MENUS__" -or $main -notmatch "__FIGBOOST_OPEN_FEATURE_MENU__ = openFigBoostFeatureMenu" -or $main -notmatch "menu\.popup\(popupOptions\)") {
   throw "Native FigBoost feature menu must bind to the owning BrowserWindow and button position."
 }
-if ($main -notmatch "getOwnerBrowserWindow" -or $main -notmatch "figBoostViewOwnsWebContents" -or $main -notmatch "window\.contentView" -or $main -notmatch "webContents\.getFocusedWebContents" -or $main -notmatch "function popupFigBoostFeatureMenu" -or $main -notmatch "menu\.popup\.length > 1" -or $main -notmatch "menu\.popup\(owner, point\.x, point\.y, undefined, onClosed\)") {
+if ($main -notmatch "getOwnerBrowserWindow" -or $main -notmatch "figBoostViewOwnsWebContents" -or $main -notmatch "window\.contentView" -or $main -notmatch "webContents\.getFocusedWebContents" -or $main -notmatch "function popupFigBoostFeatureMenu" -or $main -notmatch "nativeMenuPopupLength > 1" -or $main -notmatch "menu\.popup\(owner, point\.x, point\.y, undefined, onClosed\)") {
   throw "Native FigBoost feature menu must support old Electron popup signatures and newer contentView ownership."
+}
+if ($main -notmatch "nativeMenuPopupLength" -or $main -notmatch "Menu\.prototype\.popup\.length" -or $main -notmatch "nativeMenuPopupLength > 1" -or $main -notmatch "const popup = Menu\.prototype\.popup;") {
+  throw "Native FigBoost feature menu must detect old Electron popup signatures before wrapping Menu.prototype.popup."
 }
 if ($main -notmatch "parseFigBoostMenuBoundsFromUrl" -or $main -notmatch "openMenu\(contents, parseFigBoostMenuBoundsFromUrl\(url\)\)") {
   throw "Native FigBoost feature menu fallback URL must keep the button position."
