@@ -7,6 +7,9 @@
   const path = require("path");
   const { spawn } = require("child_process");
   const nativeMenuPopupLength = Menu.prototype.popup.length;
+  const FIGBOOST_DISCOVERY_TIMEOUT_MS = 30000;
+  const FIGBOOST_EXPORT_TIMEOUT_MS = 60000;
+  const FIGBOOST_REST_FETCH_TIMEOUT_MS = 8000;
   const labels = {
     "New Window": "新建窗口",
     "New Tab": "新建标签页",
@@ -600,6 +603,19 @@
     return hours ? `${hours}:${pad(minutes)}:${pad(seconds)}` : `${pad(minutes)}:${pad(seconds)}`;
   }
 
+  function getFigBoostRemainingTimeout(deadline, fallbackMs) {
+    if (!deadline) return fallbackMs;
+    return Math.max(1, Math.min(fallbackMs, deadline - Date.now()));
+  }
+
+  function throwIfFigBoostDeadlineExceeded(deadline, message) {
+    if (deadline && Date.now() >= deadline) {
+      const error = new Error(message);
+      error.figBoostDeadlineExceeded = true;
+      throw error;
+    }
+  }
+
   function createBulkExportProgressWindow(owner) {
     const progressWindow = new BrowserWindow({
       width: 520,
@@ -710,6 +726,122 @@
     if (/\/files\/team/i.test(source)) return "\u56e2\u961f\u6587\u4ef6";
     if (/\/files\/project/i.test(source)) return "\u9879\u76ee";
     return "\u5176\u4ed6";
+  }
+
+  async function showFigmaProjectScopeWindow(owner, projects) {
+    const safeProjects = (projects || [])
+      .map((project, index) => ({
+        index,
+        teamId: String(project.teamId || ""),
+        projectId: String(project.projectId || ""),
+        name: cleanDiscoveredFileName(project.name) || String(project.projectId || ""),
+        expectedFileCount: Number.isFinite(Number(project.expectedFileCount)) ? Number(project.expectedFileCount) : null
+      }))
+      .filter((project) => project.teamId && project.projectId && project.name);
+    if (safeProjects.length <= 1) return safeProjects.length ? [safeProjects[0]] : null;
+
+    const scopeWindow = new BrowserWindow({
+      width: 560,
+      height: 520,
+      minWidth: 520,
+      minHeight: 420,
+      parent: owner || undefined,
+      modal: Boolean(owner),
+      show: false,
+      autoHideMenuBar: true,
+      title: "选择要检索的团队项目",
+      backgroundColor: "#ffffff",
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true
+      }
+    });
+    scopeWindow.webContents.__FIGBOOST_SKIP_RENDERER_INJECTION__ = true;
+    suppressUtilityWindowMenuBar(scopeWindow);
+    scopeWindow.on("show", () => suppressUtilityWindowMenuBar(scopeWindow));
+    scopeWindow.on("focus", () => suppressUtilityWindowMenuBar(scopeWindow));
+    scopeWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    *{box-sizing:border-box}
+    html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#f7f8fa;color:#111;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei UI",sans-serif}
+    body{display:flex;flex-direction:column}
+    header{padding:18px 22px 12px;background:#fff;border-bottom:1px solid #e6e8ec}
+    h1{margin:0 0 6px;font-size:20px;line-height:28px}
+    .summary{font-size:13px;line-height:20px;color:#5f6b7a}
+    .list{flex:1;overflow:auto;padding:12px 18px}
+    label{display:block;margin-bottom:8px;padding:10px 12px;background:#fff;border:1px solid #e6e8ec;border-radius:8px;font-size:13px;line-height:20px}
+    .meta{display:block;margin-left:24px;color:#7b8494;font-size:12px;line-height:18px}
+    footer{display:flex;align-items:center;gap:10px;padding:12px 22px;background:#fff;border-top:1px solid #e6e8ec}
+    .spacer{flex:1}
+    button{height:32px;border:1px solid #ccd2dc;border-radius:6px;background:#fff;color:#18202d;padding:0 12px;font-size:13px;cursor:pointer}
+    button.primary{border-color:#1677ff;background:#1677ff;color:#fff}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>选择要检索的团队项目</h1>
+    <div class="summary">先限定一个团队项目，可以明显缩短检索时间；选择全部时可能超过 30 秒。</div>
+  </header>
+  <div class="list" id="list"></div>
+  <footer>
+    <button id="cancel">取消</button>
+    <div class="spacer"></div>
+    <button class="primary" id="confirm">开始检索</button>
+  </footer>
+  <script>
+    const projects = ${JSON.stringify(safeProjects)};
+    const list = document.getElementById("list");
+    const addOption = (value, title, meta, checked) => {
+      const label = document.createElement("label");
+      const input = document.createElement("input");
+      input.type = "radio";
+      input.name = "scope";
+      input.value = value;
+      input.checked = checked;
+      label.appendChild(input);
+      label.appendChild(document.createTextNode(" " + title));
+      const metaNode = document.createElement("span");
+      metaNode.className = "meta";
+      metaNode.textContent = meta;
+      label.appendChild(metaNode);
+      list.appendChild(label);
+    };
+    addOption("all", "全部可见项目", projects.length + " 个项目，可能较慢", false);
+    projects.forEach((project, index) => {
+      const fileText = project.expectedFileCount === null ? "文件数未知" : project.expectedFileCount + " 个文件";
+      addOption(String(index), project.name, "Team " + project.teamId + " / Project " + project.projectId + " / " + fileText, index === 0);
+    });
+    document.getElementById("cancel").onclick = () => { window.__FIGBOOST_PROJECT_SCOPE_RESULT__ = { canceled: true }; };
+    document.getElementById("confirm").onclick = () => {
+      const checked = document.querySelector("input[name='scope']:checked");
+      window.__FIGBOOST_PROJECT_SCOPE_RESULT__ = checked && checked.value === "all"
+        ? { all: true }
+        : { projectIndex: Number(checked && checked.value || 0) };
+    };
+  </script>
+</body>
+</html>
+`)}`);
+    scopeWindow.once("ready-to-show", () => {
+      if (scopeWindow.isDestroyed()) return;
+      suppressUtilityWindowMenuBar(scopeWindow);
+      scopeWindow.show();
+    });
+    while (!scopeWindow.isDestroyed()) {
+      const result = await scopeWindow.webContents.executeJavaScript("window.__FIGBOOST_PROJECT_SCOPE_RESULT__ || null", true).catch(() => null);
+      if (result) {
+        scopeWindow.close();
+        if (result.canceled) return false;
+        if (result.all) return null;
+        return [safeProjects[Math.max(0, Math.min(safeProjects.length - 1, result.projectIndex || 0))]];
+      }
+      await sleep(200);
+    }
+    return false;
   }
 
   async function showBulkExportSelectionWindow(owner, files) {
@@ -1578,14 +1710,84 @@
     })();`, true);
   }
 
-  async function fetchFigmaTeamProjectsAndFilesViaRest(window, teamIds, fuid) {
+  async function fetchFigmaTeamProjectsViaRest(window, teamIds, deadline) {
+    return window.webContents.executeJavaScript(`(async () => {
+      const teamIds = ${JSON.stringify(teamIds || [])}.map((value) => String(value || "")).filter(Boolean);
+      const deadline = ${JSON.stringify(deadline || 0)};
+      const projects = [];
+      const seenProjects = new Set();
+      const debug = { teams: 0, projects: 0, errors: [] };
+      const clean = (value) => String(value || "").replace(/\\s+/g, " ").trim();
+      const addProject = (teamId, project) => {
+        if (!project) return;
+        const projectId = project.id || project.projectId || project.project_id;
+        const name = clean(project.name || project.path || project.title);
+        const fileCount = project.fileCount !== undefined ? project.fileCount : (project.file_count !== undefined ? project.file_count : project.numFiles);
+        const marker = teamId + ":" + projectId;
+        if (!projectId || !name || seenProjects.has(marker)) return;
+        seenProjects.add(marker);
+        projects.push({ teamId: String(teamId), projectId: String(projectId), name, expectedFileCount: Number.isFinite(Number(fileCount)) ? Number(fileCount) : null });
+      };
+      const collectProjects = (value, teamId, depth = 0) => {
+        if (!value || depth > 8) return;
+        if (Array.isArray(value)) {
+          for (const item of value) collectProjects(item, teamId, depth + 1);
+          return;
+        }
+        if (typeof value !== "object") return;
+        if (Array.isArray(value.projects)) collectProjects(value.projects, teamId, depth + 1);
+        if (Array.isArray(value.teamProjects)) collectProjects(value.teamProjects, teamId, depth + 1);
+        if (value.project && typeof value.project === "object") addProject(teamId, value.project);
+        addProject(teamId, value);
+        for (const item of Object.values(value)) collectProjects(item, teamId, depth + 1);
+      };
+      const getRemainingTimeout = () => deadline ? Math.max(1, Math.min(${FIGBOOST_REST_FETCH_TIMEOUT_MS}, deadline - Date.now())) : ${FIGBOOST_REST_FETCH_TIMEOUT_MS};
+      const fetchJson = async (url) => {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), getRemainingTimeout());
+        try {
+          const response = await fetch(url, {
+            credentials: "include",
+            signal: controller.signal,
+            headers: { Accept: "application/json" }
+          });
+          if (!response.ok) throw new Error(response.status + " " + url);
+          return response.json();
+        } finally {
+          clearTimeout(timer);
+        }
+      };
+      for (const teamId of teamIds) {
+        if (deadline && Date.now() >= deadline) break;
+        for (const url of [
+          "/v1/teams/" + encodeURIComponent(teamId) + "/projects",
+          "/api/teams/" + encodeURIComponent(teamId) + "/projects"
+        ]) {
+          try {
+            collectProjects(await fetchJson(url), teamId);
+            break;
+          } catch (error) {
+            debug.errors.push(error && error.message ? error.message : String(error));
+          }
+        }
+      }
+      debug.teams = teamIds.length;
+      debug.projects = projects.length;
+      return { projects, debug };
+    })();`, true);
+  }
+
+  async function fetchFigmaTeamProjectsAndFilesViaRest(window, teamIds, fuid, selectedProjects, deadline) {
     return window.webContents.executeJavaScript(`(async () => {
       const teamIds = ${JSON.stringify(teamIds || [])}.map((value) => String(value || "")).filter(Boolean);
       const fuid = ${JSON.stringify(fuid || "")};
+      const selectedProjects = ${JSON.stringify(selectedProjects || [])};
+      const deadline = ${JSON.stringify(deadline || 0)};
       const links = [];
       const projects = [];
       const seenFiles = new Set();
       const seenProjects = new Set();
+      const selectedProjectMarkers = new Set(selectedProjects.map((project) => String(project.teamId || "") + ":" + String(project.projectId || "")));
       const debug = { teams: 0, projects: 0, files: 0, errors: [] };
       const clean = (value) => String(value || "").replace(/\\s+/g, " ").trim();
       const addProject = (teamId, project) => {
@@ -1598,6 +1800,10 @@
         if (seenProjects.has(marker)) return;
         seenProjects.add(marker);
         projects.push({ teamId: String(teamId), projectId: String(projectId), name, expectedFileCount: Number.isFinite(Number(fileCount)) ? Number(fileCount) : null });
+      };
+      const shouldUseProject = (project) => {
+        if (!selectedProjectMarkers.size) return true;
+        return selectedProjectMarkers.has(String(project.teamId || "") + ":" + String(project.projectId || ""));
       };
       const addFile = (project, file) => {
         if (!file) return;
@@ -1643,15 +1849,24 @@
         addFile(project, value);
         for (const item of Object.values(value)) collectFiles(item, project, depth + 1);
       };
+      const getRemainingTimeout = () => deadline ? Math.max(1, Math.min(${FIGBOOST_REST_FETCH_TIMEOUT_MS}, deadline - Date.now())) : ${FIGBOOST_REST_FETCH_TIMEOUT_MS};
       const fetchJson = async (url) => {
-        const response = await fetch(url, {
-          credentials: "include",
-          headers: { Accept: "application/json" }
-        });
-        if (!response.ok) throw new Error(response.status + " " + url);
-        return response.json();
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), getRemainingTimeout());
+        try {
+          const response = await fetch(url, {
+            credentials: "include",
+            signal: controller.signal,
+            headers: { Accept: "application/json" }
+          });
+          if (!response.ok) throw new Error(response.status + " " + url);
+          return response.json();
+        } finally {
+          clearTimeout(timer);
+        }
       };
       for (const teamId of teamIds) {
+        if (deadline && Date.now() >= deadline) break;
         for (const url of [
           "/v1/teams/" + encodeURIComponent(teamId) + "/projects",
           "/api/teams/" + encodeURIComponent(teamId) + "/projects"
@@ -1666,9 +1881,9 @@
       }
       debug.teams = teamIds.length;
       debug.projects = projects.length;
-      const queue = projects.slice();
+      const queue = projects.filter(shouldUseProject);
       const workers = Array.from({ length: Math.min(8, Math.max(1, queue.length)) }, async () => {
-        while (queue.length) {
+        while (queue.length && (!deadline || Date.now() < deadline)) {
           const project = queue.shift();
           for (const url of [
             "/v1/projects/" + encodeURIComponent(project.projectId) + "/files",
@@ -2200,13 +2415,32 @@
     const queue = settingsQueue.length ? [...settingsQueue] : [...fallbackQueue];
     const seenPages = new Set();
     const filesByKey = new Map();
-    const scanTargets = [createFigmaScanTarget(owner), createFigmaScanTarget(owner), createFigmaScanTarget(owner)];
+    const scanTargets = [createFigmaScanTarget(owner)];
     let scannedCount = 0;
     const maxPages = 90;
-    const scanDeadline = Date.now() + 58000;
+    const scanStartedAt = Date.now();
+    const scanDeadline = scanStartedAt + FIGBOOST_DISCOVERY_TIMEOUT_MS;
     const fuid = getFigmaCurrentUserId();
+    let selectedProjects = null;
+    let scopedTeamIds = teamIds;
     try { fs.writeFileSync(path.join(app.getPath("userData"), "FigBoost-bulk-export-debug.log"), "", "utf8"); } catch (_) {}
     const debug = (entry) => writeBulkExportDebug(Object.assign({ scope: "discover" }, entry || {}));
+    const assertScanDeadline = () => {
+      throwIfFigBoostDeadlineExceeded(scanDeadline, "\u68c0\u7d22\u8d85\u8fc7 30 \u79d2\uff0c\u8bf7\u91cd\u65b0\u68c0\u7d22\u4e00\u6b21\u3002");
+    };
+    const ensureScanTargetCount = (count) => {
+      while (scanTargets.length < count) scanTargets.push(createFigmaScanTarget(owner));
+    };
+    const filterProjectsBySelection = (projects) => {
+      if (!selectedProjects || !selectedProjects.length) return projects;
+      const markers = new Set(selectedProjects.map((project) => `${project.teamId}:${project.projectId}`));
+      return (projects || []).filter((project) => markers.has(`${project.teamId}:${project.projectId}`));
+    };
+    const addProjectChoice = (map, project) => {
+      if (!project || !project.teamId || !project.projectId || !project.name) return;
+      const marker = `${project.teamId}:${project.projectId}`;
+      if (!map.has(marker)) map.set(marker, project);
+    };
     const enqueueFallbackScanPages = () => {
       for (const url of fallbackQueue) {
         if (!seenPages.has(url) && !queue.includes(url)) queue.push(url);
@@ -2219,7 +2453,8 @@
       try {
         await loadFigmaPage(target, seedUrl);
       } catch (_) {}
-      await sleep(1200);
+      await sleep(Math.min(1200, getFigBoostRemainingTimeout(scanDeadline, 1200)));
+      assertScanDeadline();
       let seedPage = { candidates: [] };
       try {
         const contents = getFigmaScanTargetWebContents(target);
@@ -2227,29 +2462,46 @@
       } catch (error) {
         debug({ stage: "seed-page-error", message: error && error.message ? error.message : String(error) });
       }
-      {
-        const seedProjectRows = (seedPage.candidates || [])
-          .filter((candidate) => candidate.projectRow)
-          .map((candidate) => ({
-            name: cleanDiscoveredFileName(candidate.text),
-            fileCount: Number.isFinite(candidate.fileCount) ? candidate.fileCount : null
-          }))
-          .filter((item) => item.name);
-        const seedProjectNames = new Set(seedProjectRows.map((item) => item.name));
-        const capturedProjects = drainCapturedFigmaProjects(target);
-        drainCapturedFigmaLinks(target);
-        const visibleProjects = seedProjectNames.size
-          ? capturedProjects.filter((project) => seedProjectNames.has(cleanDiscoveredFileName(project.name)))
-          : capturedProjects;
-        debug({
-          stage: "seed-capture",
-          pageProjects: seedProjectRows.length,
-          capturedProjects: capturedProjects.length,
-          queuedProjects: visibleProjects.length,
-          projects: visibleProjects.map((project) => ({ name: project.name, projectId: project.projectId, expectedFileCount: project.expectedFileCount })).slice(0, 20)
-        });
-        enqueueFigmaProjectApiJobs(visibleProjects, queue, seenPages, fuid, teamIds);
+      const seedProjectRows = (seedPage.candidates || [])
+        .filter((candidate) => candidate.projectRow)
+        .map((candidate) => ({
+          name: cleanDiscoveredFileName(candidate.text),
+          fileCount: Number.isFinite(candidate.fileCount) ? candidate.fileCount : null
+        }))
+        .filter((item) => item.name);
+      const seedProjectNames = new Set(seedProjectRows.map((item) => item.name));
+      const capturedProjects = drainCapturedFigmaProjects(target);
+      drainCapturedFigmaLinks(target);
+      const visibleProjects = seedProjectNames.size
+        ? capturedProjects.filter((project) => seedProjectNames.has(cleanDiscoveredFileName(project.name)))
+        : capturedProjects;
+      const projectChoiceMap = new Map();
+      for (const project of visibleProjects) addProjectChoice(projectChoiceMap, project);
+      try {
+        const projectResult = await fetchFigmaTeamProjectsViaRest({ webContents: getFigmaScanTargetWebContents(target) }, teamIds, scanDeadline);
+        for (const project of (projectResult && projectResult.projects) || []) addProjectChoice(projectChoiceMap, project);
+        debug({ stage: "rest-project-list", teams: teamIds.length, projects: ((projectResult && projectResult.projects) || []).length, details: projectResult && projectResult.debug });
+      } catch (error) {
+        debug({ stage: "rest-project-list-error", message: error && error.message ? error.message : String(error) });
       }
+      assertScanDeadline();
+      const projectChoices = Array.from(projectChoiceMap.values()).sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
+      if (projectChoices.length) {
+        const scope = await showFigmaProjectScopeWindow(owner, projectChoices);
+        if (scope === false) return null;
+        selectedProjects = scope;
+        scopedTeamIds = selectedProjects && selectedProjects.length
+          ? Array.from(new Set(selectedProjects.map((project) => project.teamId).filter(Boolean)))
+          : teamIds;
+      }
+      debug({
+        stage: "seed-capture",
+        pageProjects: seedProjectRows.length,
+        capturedProjects: capturedProjects.length,
+        queuedProjects: visibleProjects.length,
+        selectedProjects: selectedProjects ? selectedProjects.length : 0,
+        projects: visibleProjects.map((project) => ({ name: project.name, projectId: project.projectId, expectedFileCount: project.expectedFileCount })).slice(0, 20)
+      });
       if (progress) {
         progress.update({
           sub: "\u6b63\u5728\u5feb\u901f\u8bfb\u53d6\u56e2\u961f\u9879\u76ee",
@@ -2257,30 +2509,34 @@
         });
       }
       try {
-        const result = await fetchFigmaTeamProjectsAndFilesViaRest({ webContents: getFigmaScanTargetWebContents(target) }, teamIds, fuid);
+        const result = await fetchFigmaTeamProjectsAndFilesViaRest({ webContents: getFigmaScanTargetWebContents(target) }, scopedTeamIds, fuid, selectedProjects, scanDeadline);
         debug({ stage: "rest-projects", teams: teamIds.length, links: ((result && result.links) || []).length, projects: ((result && result.projects) || []).length, details: result && result.debug });
-        for (const project of (result && result.projects) || []) enqueueFigmaProjectApiJobs([project], queue, seenPages, fuid, teamIds);
         if (result && result.links && result.links.length) {
           mergeDiscoveredPage({ title: "\u6240\u6709\u9879\u76ee", url: seedUrl, links: result.links, candidates: [] }, filesByKey, queue, seenPages);
+          return true;
         }
+        enqueueFigmaProjectApiJobs(filterProjectsBySelection([...(result && result.projects || []), ...visibleProjects]), queue, seenPages, fuid, scopedTeamIds);
       } catch (error) {
         debug({ stage: "rest-projects-error", message: error && error.message ? error.message : String(error) });
       }
-      if (filesByKey.size > 0) return;
-      for (const teamId of teamIds) {
+      if (filesByKey.size > 0) return true;
+      for (const teamId of scopedTeamIds) {
+        assertScanDeadline();
         try {
           const result = await fetchFigmaTeamProjectsViaLiveGraph({ webContents: getFigmaScanTargetWebContents(target) }, teamId, fuid);
           debug({ stage: "livegraph-team-projects", teamId, projects: ((result && result.projects) || []).length, details: result && result.debug });
-          enqueueFigmaProjectApiJobs((result && result.projects) || [], queue, seenPages, fuid, teamIds);
+          enqueueFigmaProjectApiJobs(filterProjectsBySelection((result && result.projects) || []), queue, seenPages, fuid, scopedTeamIds);
         } catch (error) {
           debug({ stage: "livegraph-team-projects-error", teamId, message: error && error.message ? error.message : String(error) });
         }
       }
+      return false;
     };
     const scanVisibleFigmaPages = async () => {
       const scannedUrls = new Set();
       let visibleCount = 0;
       for (const contents of webContents.getAllWebContents()) {
+        assertScanDeadline();
         try {
           if (!contents || contents.isDestroyed() || contents.__FIGBOOST_SKIP_RENDERER_INJECTION__) continue;
           const currentUrl = contents.getURL();
@@ -2302,6 +2558,7 @@
       }
     };
     const processQueuedPage = async (scanTarget, job) => {
+      assertScanDeadline();
       if (job && typeof job === "object" && job.liveGraphProject) {
         const marker = `livegraph#${job.teamId}#${job.projectId}`;
         if (seenPages.has(marker)) return;
@@ -2345,7 +2602,7 @@
           page.projectPath = job.name || page.projectPath || job.projectId;
           page.sourceTitle = page.projectPath;
           page.links = [...(page.links || []), ...drainCapturedFigmaLinks(scanTarget)];
-          enqueueFigmaProjectApiJobs(drainCapturedFigmaProjects(scanTarget), queue, seenPages, fuid, teamIds);
+          enqueueFigmaProjectApiJobs(filterProjectsBySelection(drainCapturedFigmaProjects(scanTarget)), queue, seenPages, fuid, scopedTeamIds);
           debug({ stage: "project-page-load", projectId: job.projectId, teamId: job.teamId, url: projectUrl, currentUrl: contents && contents.getURL(), links: (page.links || []).length, candidates: (page.candidates || []).length, files: filesByKey.size });
           const added = mergeDiscoveredPage(page, filesByKey, queue, seenPages);
           const expected = Number.isFinite(job.expectedFileCount) ? job.expectedFileCount : null;
@@ -2398,7 +2655,7 @@
         return;
       }
       page.links = [...(page.links || []), ...drainCapturedFigmaLinks(scanTarget)];
-      enqueueFigmaProjectApiJobs(drainCapturedFigmaProjects(scanTarget), queue, seenPages, fuid, teamIds);
+      enqueueFigmaProjectApiJobs(filterProjectsBySelection(drainCapturedFigmaProjects(scanTarget)), queue, seenPages, fuid, scopedTeamIds);
       {
         const projectInfo = getFigmaProjectInfoFromUrl(page.url || contents.getURL());
         if (projectInfo) {
@@ -2422,7 +2679,7 @@
             page = await readFigmaPageLinksFast({ webContents: getFigmaScanTargetWebContents(scanTarget) || contents });
             if (clickText) page.projectPath = clickText;
             page.links = [...(page.links || []), ...drainCapturedFigmaLinks(scanTarget)];
-            enqueueFigmaProjectApiJobs(drainCapturedFigmaProjects(scanTarget), queue, seenPages, fuid, teamIds);
+            enqueueFigmaProjectApiJobs(filterProjectsBySelection(drainCapturedFigmaProjects(scanTarget)), queue, seenPages, fuid, scopedTeamIds);
             debug({ stage: "desktop-project", url: desktopProjectUrl, currentUrl: contents.getURL(), pageUrl: page.url, links: (page.links || []).length, candidates: (page.candidates || []).length });
           } catch (error) {
             debug({ stage: "desktop-project-error", url: desktopProjectUrl, message: error && error.message ? error.message : String(error) });
@@ -2467,13 +2724,20 @@
       await Promise.all(workers);
     };
     try {
-      await runFastProjectScan();
-      await scanVisibleFigmaPages();
-      await processQueuedPages();
-      if (settingsQueue.length && filesByKey.size === 0) {
-        enqueueFallbackScanPages();
+      const fastComplete = await runFastProjectScan();
+      if (fastComplete === null) return null;
+      if (fastComplete) {
+        debug({ stage: "fast-complete", files: filesByKey.size, durationMs: Date.now() - scanStartedAt });
+      } else {
+        ensureScanTargetCount(3);
+        await scanVisibleFigmaPages();
         await processQueuedPages();
+        if (settingsQueue.length && filesByKey.size === 0) {
+          enqueueFallbackScanPages();
+          await processQueuedPages();
+        }
       }
+      assertScanDeadline();
     } finally {
       for (const scanTarget of scanTargets) closeFigmaScanTarget(scanTarget);
       if (owner && !owner.isDestroyed()) owner.focus();
@@ -2683,7 +2947,8 @@
     throw new Error("\u7b49\u5f85 Figma \u540e\u53f0\u7a97\u53e3\u6253\u5f00\u753b\u677f\u6587\u4ef6\u8d85\u65f6");
   }
 
-  async function openFigmaFileInDesktop(owner, fileUrl, exportContext) {
+  async function openFigmaFileInDesktop(owner, fileUrl, exportContext, timeoutMs) {
+    const openTimeoutMs = Math.max(1, timeoutMs || 90000);
     if (exportContext && exportContext.internals && exportContext.desktopWindow) {
       exportContext.internals.openUrl(fileUrl, {
         targetWindow: exportContext.desktopWindow,
@@ -2692,7 +2957,7 @@
         source: "figboost-bulk-export"
       });
       moveExportWindowToBackground(exportContext.browserWindow, owner);
-      const contents = await waitForExportContextFileWebContents(exportContext, fileUrl, 90000);
+      const contents = await waitForExportContextFileWebContents(exportContext, fileUrl, openTimeoutMs);
       await sleep(800);
       return { owner: exportContext.browserWindow || owner, contents, exportContext };
     }
@@ -2706,7 +2971,7 @@
     } finally {
       clipboard.writeText(previousClipboard || "");
     }
-    const contents = await waitForFigmaFileWebContents(fileUrl, 90000);
+    const contents = await waitForFigmaFileWebContents(fileUrl, openTimeoutMs);
     owner = BrowserWindow.fromWebContents(contents) || owner || BrowserWindow.getFocusedWindow();
     if (owner && !owner.isDestroyed()) {
       owner.show();
@@ -2743,16 +3008,21 @@
     }
   }
 
-  async function exportFigmaFileLocalCopy(file, targetPath, exportContext) {
+  async function exportFigmaFileLocalCopy(file, targetPath, exportContext, exportDeadline) {
+    const deadlineMessage = "导出超过 1 分钟，已停止。";
     const owner = BrowserWindow.getFocusedWindow();
-    const opened = await openFigmaFileInDesktop(owner, file.url, exportContext);
+    throwIfFigBoostDeadlineExceeded(exportDeadline, deadlineMessage);
+    const opened = await openFigmaFileInDesktop(owner, file.url, exportContext, getFigBoostRemainingTimeout(exportDeadline, 30000));
+    throwIfFigBoostDeadlineExceeded(exportDeadline, deadlineMessage);
     await withSaveDialogTarget(targetPath, async () => {
       writeBulkExportDebug({ scope: "export", stage: "trigger", name: file.name, url: file.url, targetPath });
-      const download = waitForDownloadToPath(opened.contents, targetPath, 120000);
+      const download = waitForDownloadToPath(opened.contents, targetPath, getFigBoostRemainingTimeout(exportDeadline, 30000));
       await triggerFigmaSaveLocalCopy(opened.owner, opened.exportContext);
       await download;
     });
-    await waitForStableFile(targetPath, 120000);
+    throwIfFigBoostDeadlineExceeded(exportDeadline, deadlineMessage);
+    await waitForStableFile(targetPath, getFigBoostRemainingTimeout(exportDeadline, 10000));
+    throwIfFigBoostDeadlineExceeded(exportDeadline, deadlineMessage);
     writeBulkExportDebug({ scope: "export", stage: "completed", name: file.name, targetPath });
   }
 
@@ -2770,6 +3040,7 @@
     const progress = createBulkExportProgressWindow(owner);
     try {
       let files = await discoverFigmaFiles(progress);
+      if (!files) return { canceled: true };
       if (!files.length) {
         progress.close();
         await showMessageBoxForOwner(owner, {
@@ -2800,10 +3071,12 @@
       const succeeded = [];
       const failed = [];
       const exportStartedAt = Date.now();
+      const exportDeadline = exportStartedAt + FIGBOOST_EXPORT_TIMEOUT_MS;
       let exportContext = createFigmaExportContext(owner);
       const exportProgress = createBulkExportProgressWindow(owner);
       try {
         for (let index = 0; index < files.length; index += 1) {
+          throwIfFigBoostDeadlineExceeded(exportDeadline, "导出超过 1 分钟，已停止。");
           const file = files[index];
           const targetPath = getUniqueExportPath(exportDir, file.name, usedPaths);
           const fileStartedAt = Date.now();
@@ -2814,7 +3087,7 @@
             foot: exportDir
           });
           try {
-            await exportFigmaFileLocalCopy(file, targetPath, exportContext);
+            await exportFigmaFileLocalCopy(file, targetPath, exportContext, exportDeadline);
             succeeded.push({ file, targetPath, durationMs: Date.now() - fileStartedAt });
           } catch (error) {
             failed.push({
@@ -2829,6 +3102,7 @@
               durationMs: Date.now() - fileStartedAt,
               error: error && error.message ? error.message : String(error)
             });
+            if (error && error.figBoostDeadlineExceeded) throw error;
             if (index + 1 < files.length) {
               try { exportContext.close(); } catch (_) {}
               exportContext = createFigmaExportContext(owner);

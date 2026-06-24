@@ -43,6 +43,7 @@ if (-not $figBoost.Contains("https://api.github.com/repos/Hoae2002/Figma-CN/rele
 }
 
 $content = Get-Content -LiteralPath (Join-Path $root "payload\src\content\content.js") -Raw
+$main = Get-Content -LiteralPath (Join-Path $root "payload\src\main\menu-localizer.js") -Raw
 if ($content -notmatch "if \(!isFigBoostUpdateButtonEnabled\(\)\) return;") {
   throw "Update button observer must not start when the feature is disabled."
 }
@@ -146,6 +147,15 @@ if ($figBoost -notmatch 'Id = "bulk-export-figma-files"' -or $figBoost -notmatch
 if ($main -notmatch 'figboost:bulk-export-files' -or $main -notmatch '\\u6279\\u91cf\\u5bfc\\u51fa\\u753b\\u677f\\u6587\\u4ef6\.\.\.' -or $main -notmatch "function bulkExportFigmaFiles" -or $main -notmatch "createTimestampExportDir" -or $main -notmatch "showOpenDialog" -or $main -notmatch "failed\.push" -or $main -notmatch 'isFigBoostFeatureEnabled\("bulk-export-figma-files"\)') {
   throw "Native FigBoost feature menu must include batch .fig export with timestamp folder, path selection, and failure summary."
 }
+if ($main -notmatch "FIGBOOST_DISCOVERY_TIMEOUT_MS = 30000" -or $main -notmatch "FIGBOOST_EXPORT_TIMEOUT_MS = 60000" -or $main -notmatch "throwIfFigBoostDeadlineExceeded" -or $main -notmatch "getFigBoostRemainingTimeout") {
+  throw "Batch .fig export must enforce 30s discovery and 60s export deadlines."
+}
+if ($main -notmatch "function showFigmaProjectScopeWindow" -or $main -notmatch "选择要检索的团队项目" -or $main -notmatch "fetchFigmaTeamProjectsViaRest" -or $main -notmatch "selectedProjects") {
+  throw "Batch .fig export must let users scope discovery to one team project before file scanning."
+}
+if ($main -notmatch "AbortController" -or $main -notmatch "fastComplete" -or $main -notmatch "if \(fastComplete\)") {
+  throw "Batch .fig export discovery must use bounded REST requests and skip slow page scanning after a successful fast scan."
+}
 if ($main -notmatch "function showBulkExportSelectionWindow" -or $main -notmatch "selectAll" -or $main -notmatch "selectNone" -or $main -notmatch "keys: Array\.from\(selected\)" -or $main -notmatch "getFigmaPageCategory" -or $main -notmatch "projectPath" -or $main -notmatch "collapsed" -or $main -notmatch "\\\\u25b6") {
   throw "Batch .fig export must show a project-categorized selectable file list with select-all and collapse controls."
 }
@@ -190,6 +200,9 @@ if ($main -notmatch "function shouldReadVisibleFigmaPage" -or $main -notmatch "d
 }
 if ($main -notmatch "function waitForDownloadToPath" -or $main -notmatch 'session\.once\("will-download"' -or $main -notmatch "item\.setSavePath\(targetPath\)" -or $main -notmatch "function openFigmaFileInDesktop" -or $main -notmatch "Open File URL From Clipboard" -or $main -notmatch "function withSaveDialogTarget" -or $main -notmatch "dialog\.showSaveDialog = async" -or $main -notmatch "function triggerFigmaSaveLocalCopy" -or $main -notmatch "Save Local Copy" -or $main -match "function findSaveLocalCopyMenuItem" -or $main -match "clickFigmaMainMenu") {
   throw "Batch .fig export must open real Figma tabs, invoke native Save Local Copy, and intercept the save/download path."
+}
+if ($main -notmatch "exportDeadline" -or $main -notmatch "exportFigmaFileLocalCopy\(file, targetPath, exportContext, exportDeadline\)" -or $main -notmatch "导出超过 1 分钟") {
+  throw "Batch .fig export must stop and report failure when total export exceeds 60s."
 }
 if ($main -notmatch "postMessageToActiveWebBinding\(`"handleAction`", `"save-as`", `"os-menu`"\)" -or $main -notmatch "let exportContext = createFigmaExportContext\(owner\)" -or $main -notmatch "exportContext = createFigmaExportContext\(owner\)" -or $main -notmatch "stage: `"file-failed`"") {
   throw "Batch .fig export must trigger background save directly and rebuild the export context after failures."
