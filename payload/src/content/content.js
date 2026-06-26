@@ -109,7 +109,6 @@
       ".figboost-menu-wrap{z-index:2147483000;pointer-events:auto;font:12px/16px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#222;}",
       ".figboost-menu-wrap[data-placement='tab']{position:absolute;right:234px;top:50%;transform:translateY(-50%);}",
       ".figboost-menu-wrap[data-placement='titlebar']{position:fixed;right:250px;top:0;border-left:solid 1px var(--color-bordertranslucent);border-right:solid 1px var(--color-bordertranslucent);-webkit-app-region:no-drag;}",
-      ".figboost-menu-wrap[data-placement='titlebar'][data-overlapped='true']{visibility:hidden;pointer-events:none;}",
       ".figboost-menu-button{box-sizing:border-box;width:50px;height:37px;min-width:0;min-height:0;margin:0;padding:0;border:0;border-radius:0;background:transparent;color:#b6b6b6;display:flex;align-items:center;justify-content:center;cursor:pointer;font:inherit;line-height:0;appearance:none;-webkit-appearance:none;outline:0;box-shadow:none;transform:none;-webkit-app-region:no-drag;}",
       ".figboost-menu-wrap[data-placement='titlebar'] .figboost-menu-button{background-color:unset;display:flex;align-items:center;justify-content:center;width:50px;height:38px;-webkit-app-region:no-drag;color:var(--color-text-secondary);fill:var(--color-text-secondary);--fpl-icon-color:var(--color-text-secondary);pointer-events:bounding-box;cursor:default;}",
       ".figboost-menu-wrap:not([data-hover-suppressed='true']) .figboost-menu-button:hover,.figboost-menu-button[aria-expanded='true'],.figboost-menu-button[aria-pressed='true']{background:#424242;color:#d6d6d6;}",
@@ -207,6 +206,15 @@
     else openFigBoostFeatureMenuFromTitlebar(bounds);
   }
 
+  function scheduleFigBoostTitlebarMenuOpen(wrap, button) {
+    if (button.__figboostMenuOpenScheduled) return;
+    button.__figboostMenuOpenScheduled = true;
+    setTimeout(() => {
+      button.__figboostMenuOpenScheduled = false;
+      openFigBoostTitlebarMenu(wrap, button);
+    }, 0);
+  }
+
   function resetFigBoostButtonState(button) {
     if (!button) return;
     button.setAttribute("aria-expanded", "false");
@@ -267,65 +275,6 @@
     });
   }
 
-  function rectsOverlap(a, b) {
-    return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
-  }
-
-  function syncTitlebarButtonVisibility(wrap) {
-    if (!wrap || wrap.dataset.placement !== "titlebar") return;
-
-    const rect = wrap.getBoundingClientRect();
-    if (!rect.width || !rect.height) return;
-
-    const oldVisibility = wrap.style.visibility;
-    const oldPointerEvents = wrap.style.pointerEvents;
-    wrap.style.visibility = "hidden";
-    wrap.style.pointerEvents = "none";
-
-    const points = [
-      [rect.left + rect.width / 2, rect.top + rect.height / 2],
-      [rect.left + 8, rect.top + rect.height / 2],
-      [rect.right - 8, rect.top + rect.height / 2]
-    ];
-    let overlapped = false;
-    for (const point of points) {
-      const elements = document.elementsFromPoint(point[0], point[1]);
-      for (const element of elements) {
-        const control = element.closest("button,[role='button'],[aria-label],[data-tooltip],[tabindex]");
-        if (!control || control === wrap || wrap.contains(control)) continue;
-        const controlRect = control.getBoundingClientRect();
-        if (!controlRect.width || !controlRect.height) continue;
-        if (controlRect.width > 140 || controlRect.height > 48) continue;
-        if (controlRect.bottom <= 0 || controlRect.top >= 48) continue;
-        if (rectsOverlap(rect, controlRect)) {
-          overlapped = true;
-          break;
-        }
-      }
-      if (overlapped) break;
-    }
-
-    wrap.style.visibility = oldVisibility;
-    wrap.style.pointerEvents = oldPointerEvents;
-    wrap.dataset.overlapped = overlapped ? "true" : "false";
-  }
-
-  function startTitlebarButtonVisibilityMonitor(wrap) {
-    if (!wrap || wrap.dataset.placement !== "titlebar") return;
-    let frame = 0;
-    const schedule = () => {
-      if (frame) return;
-      frame = requestAnimationFrame(() => {
-        frame = 0;
-        syncTitlebarButtonVisibility(wrap);
-      });
-    };
-    const observer = new MutationObserver(schedule);
-    observer.observe(document.body, { childList: true, subtree: true, attributes: true });
-    window.addEventListener("resize", schedule);
-    schedule();
-  }
-
   function installUpdateButton() {
     if (!isFigBoostUpdateButtonEnabled() || document.getElementById("figboost-menu")) return;
     if (!document.body || !installFigBoostMenuStyle()) return;
@@ -348,16 +297,26 @@
     button.setAttribute("aria-pressed", "false");
     button.innerHTML = '<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="3.5" y="3" width="9" height="9.5" rx="1" stroke-width="0.9"/><path d="M6 1.8v2.4M10 1.8v2.4M5.8 6.2h4.4M5.8 8.6h2.7" stroke-width="0.9" stroke-linecap="round"/></svg>';
     window.addEventListener("figboost:feature-menu-closed", () => resetFigBoostButtonState(button));
-    button.addEventListener("pointerdown", (event) => {
+    const captureTitlebarMenuPress = (event) => {
       if (host.placement !== "titlebar") return;
       event.preventDefault();
       event.stopPropagation();
-      openFigBoostTitlebarMenu(wrap, button);
-    }, true);
-    button.addEventListener("click", async () => {
+    };
+    const openTitlebarMenuFromRelease = (event) => {
+      if (host.placement !== "titlebar") return;
+      event.preventDefault();
+      event.stopPropagation();
+      scheduleFigBoostTitlebarMenuOpen(wrap, button);
+    };
+    button.addEventListener("pointerdown", captureTitlebarMenuPress, true);
+    button.addEventListener("mousedown", captureTitlebarMenuPress, true);
+    button.addEventListener("pointerup", openTitlebarMenuFromRelease, true);
+    button.addEventListener("mouseup", openTitlebarMenuFromRelease, true);
+    button.addEventListener("click", async (event) => {
       if (host.placement === "titlebar") {
         event.preventDefault();
         event.stopPropagation();
+        scheduleFigBoostTitlebarMenuOpen(wrap, button);
         return;
       }
       toggleFigBoostMenu(wrap);
@@ -402,7 +361,6 @@
     const position = window.getComputedStyle(host.element).position;
     if (position === "static" && host.element !== document.body) host.element.style.position = "relative";
     host.element.appendChild(wrap);
-    startTitlebarButtonVisibilityMonitor(wrap);
   }
 
   function scheduleUpdateButtonInstall() {

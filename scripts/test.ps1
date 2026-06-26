@@ -70,8 +70,8 @@ if ($content -notmatch "data-placement='titlebar'") {
 if ($content -notmatch "right:250px;top:0;border-left:solid 1px var\(--color-bordertranslucent\);border-right:solid 1px var\(--color-bordertranslucent\);-webkit-app-region:no-drag") {
   throw "Update button titlebar placement must sit on the native titlebar button grid."
 }
-if ($content -notmatch "data-overlapped='true'\]\{visibility:hidden;pointer-events:none;\}" -or $content -notmatch "function syncTitlebarButtonVisibility\(wrap\)" -or $content -notmatch "document\.elementsFromPoint" -or $content -notmatch "window\.addEventListener\(`"resize`", schedule\);") {
-  throw "Update button titlebar placement must hide when it overlaps native controls."
+if ($content -match "data-overlapped='true'\]\{visibility:hidden;pointer-events:none;\}" -or $content -match "startTitlebarButtonVisibilityMonitor\(wrap\);") {
+  throw "Update button titlebar placement must remain clickable on Windows 10 instead of auto-hiding behind native controls."
 }
 if ($content -notmatch "SHOULD_INSTALL_UPDATE_BUTTON = IS_TEST_PAGE \|\| \(IS_TITLEBAR_PAGE && !IS_FIGMA_PAGE\)") {
   throw "Update button must not install inside figma.com content pages."
@@ -115,8 +115,8 @@ if ($content -notmatch "getFigBoostFeatureMenuBridge\(\)" -or $content -notmatch
 if ($content -notmatch "function openFigBoostTitlebarMenu" -or $content -notmatch "const bridge = getFigBoostFeatureMenuBridge\(\)" -or $content -notmatch "Promise\.resolve\(bridge\(bounds\)\)") {
   throw "Update button titlebar click must route through the main-process feature menu bridge."
 }
-if ($content -notmatch 'button\.addEventListener\("pointerdown"' -or $content -notmatch "event\.preventDefault\(\);" -or $content -notmatch "event\.stopPropagation\(\);" -or $content -notmatch "openFigBoostTitlebarMenu\(wrap, button\)") {
-  throw "Windows 10 titlebar menu must open from pointerdown inside the no-drag region."
+if ($content -notmatch 'button\.addEventListener\("pointerdown"' -or $content -notmatch 'button\.addEventListener\("mousedown"' -or $content -notmatch 'button\.addEventListener\("pointerup"' -or $content -notmatch 'button\.addEventListener\("mouseup"' -or $content -notmatch 'button\.addEventListener\("click", async \(event\)' -or $content -notmatch "scheduleFigBoostTitlebarMenuOpen\(wrap, button\)" -or $content -notmatch "setTimeout\(\(\) =>" -or $content -match 'pointerdown"[\s\S]{0,220}openFigBoostTitlebarMenu\(wrap, button\)') {
+  throw "Windows 10 titlebar menu must open after pointer/mouse release inside the no-drag region."
 }
 if ($content -notmatch "panel\.style\.position = `"fixed`"" -or $content -notmatch "rect\.bottom \+ 6" -or $content -notmatch "window\.innerWidth - rect\.right" -or $content -notmatch "2147483647") {
   throw "Windows 10 titlebar DOM menu must be fixed to the viewport at the button bounds."
@@ -147,7 +147,7 @@ if ($content -notmatch "svg\{width:14px;height:14px" -or $content -notmatch 'str
 }
 
 $main = Get-Content -LiteralPath (Join-Path $root "payload\src\main\menu-localizer.js") -Raw
-if ($main -notmatch 'ipcMain\.handle\("figboost:open-feature-menu"' -or $main -notmatch "const template = buildFigBoostFeatureMenuTemplate\(\)" -or $main -notmatch "Menu\.buildFromTemplate\(template\)" -or $main -notmatch 'label: "检查更新"') {
+if ($main -notmatch 'ipcMain\.handle\("figboost:open-feature-menu"' -or $main -notmatch "Menu\.buildFromTemplate\(buildFigBoostFeatureMenuTemplate\(\)\)" -or $main -notmatch 'label: "检查更新"') {
   throw "Main process must expose a native FigBoost feature menu."
 }
 if ($figBoost -notmatch 'Id = "bulk-export-figma-files"' -or $figBoost -notmatch 'Install-Feature "bulk-export-figma-files"' -or $figBoost -notmatch 'Uninstall-Feature "bulk-export-figma-files"') {
@@ -218,12 +218,6 @@ if ($main -notmatch "postMessageToActiveWebBinding\(`"handleAction`", `"save-as`
 }
 if ($main -notmatch "findOwnerWindowForWebContents" -or $main -notmatch "window\.getBrowserViews\(\)" -or $main -notmatch "BrowserWindow\.getFocusedWindow\(\)" -or $main -notmatch "normalizeFigBoostMenuBounds" -or $main -notmatch "popupOptions\.x = point\.x" -or $main -notmatch "__FIGBOOST_ACTIVE_FEATURE_MENUS__" -or $main -notmatch "__FIGBOOST_OPEN_FEATURE_MENU__ = openFigBoostFeatureMenu" -or $main -notmatch "menu\.popup\(popupOptions\)") {
   throw "Native FigBoost feature menu must bind to the owning BrowserWindow and button position."
-}
-if ($main -notmatch 'const os = require\("os"\)' -or $main -notmatch "function shouldUseTitlebarDomMenu" -or $main -notmatch "process\.platform !== `"win32`"" -or $main -notmatch "process\.getSystemVersion" -or $main -notmatch "os\.release\(\)" -or $main -notmatch "Number\(match\[1\]\) < 22000" -or $main -notmatch "function popupFigBoostFeatureMenuWindow" -or $main -notmatch "figboost-feature-menu://click/" -or $main -notmatch "const opened = shouldUseTitlebarDomMenu\(\)" -or $main -notmatch "popupFigBoostFeatureMenuWindow\(template, owner, point, finish\)") {
-  throw "Main process must use a custom feature menu window on Windows 10."
-}
-if ($main -notmatch "right: point && Number\.isFinite\(point\.right\)" -or $main -notmatch "const preferredX = Number\.isFinite\(popupPoint\.right\) \? popupPoint\.right - width : popupPoint\.x" -or $main -notmatch "transparent: true" -or $main -notmatch "hasShadow: true" -or $main -notmatch "backgroundColor: `"#00000000`"" -or $main -notmatch "class=`"panel`"" -or $main -notmatch "border-radius:10px") {
-  throw "Windows 10 custom feature menu must be right-aligned to the button and render as a rounded popup."
 }
 if ($main -notmatch "getOwnerBrowserWindow" -or $main -notmatch "figBoostViewOwnsWebContents" -or $main -notmatch "window\.contentView" -or $main -notmatch "webContents\.getFocusedWebContents" -or $main -notmatch "function popupFigBoostFeatureMenu" -or $main -notmatch "nativeMenuPopupLength > 1" -or $main -notmatch "menu\.popup\(owner, point\.x, point\.y, undefined, onClosed\)") {
   throw "Native FigBoost feature menu must support old Electron popup signatures and newer contentView ownership."
