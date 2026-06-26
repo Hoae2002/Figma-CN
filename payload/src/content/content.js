@@ -108,7 +108,7 @@
     style.textContent = [
       ".figboost-menu-wrap{z-index:2147483000;pointer-events:auto;font:12px/16px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#222;}",
       ".figboost-menu-wrap[data-placement='tab']{position:absolute;right:234px;top:50%;transform:translateY(-50%);}",
-      ".figboost-menu-wrap[data-placement='titlebar']{position:fixed;right:250px;top:0;border-left:solid 1px var(--color-bordertranslucent);border-right:solid 1px var(--color-bordertranslucent);}",
+      ".figboost-menu-wrap[data-placement='titlebar']{position:fixed;right:250px;top:0;border-left:solid 1px var(--color-bordertranslucent);border-right:solid 1px var(--color-bordertranslucent);-webkit-app-region:no-drag;}",
       ".figboost-menu-wrap[data-placement='titlebar'][data-overlapped='true']{visibility:hidden;pointer-events:none;}",
       ".figboost-menu-button{box-sizing:border-box;width:50px;height:37px;min-width:0;min-height:0;margin:0;padding:0;border:0;border-radius:0;background:transparent;color:#b6b6b6;display:flex;align-items:center;justify-content:center;cursor:pointer;font:inherit;line-height:0;appearance:none;-webkit-appearance:none;outline:0;box-shadow:none;transform:none;-webkit-app-region:no-drag;}",
       ".figboost-menu-wrap[data-placement='titlebar'] .figboost-menu-button{background-color:unset;display:flex;align-items:center;justify-content:center;width:50px;height:38px;-webkit-app-region:no-drag;color:var(--color-text-secondary);fill:var(--color-text-secondary);--fpl-icon-color:var(--color-text-secondary);pointer-events:bounding-box;cursor:default;}",
@@ -182,8 +182,29 @@
     const button = wrap.querySelector(".figboost-menu-button");
     if (!panel || !button) return;
     const nextHidden = !panel.hidden;
+    if (!nextHidden && wrap.dataset.placement === "titlebar") {
+      const rect = button.getBoundingClientRect();
+      panel.style.position = "fixed";
+      panel.style.top = `${Math.round(rect.bottom + 6)}px`;
+      panel.style.right = `${Math.max(8, Math.round(window.innerWidth - rect.right))}px`;
+      panel.style.zIndex = "2147483647";
+    }
     panel.hidden = nextHidden;
     button.setAttribute("aria-expanded", nextHidden ? "false" : "true");
+  }
+
+  function openFigBoostTitlebarMenu(wrap, button) {
+    const bounds = getFigBoostMenuBounds(button);
+    const bridge = getFigBoostFeatureMenuBridge();
+    button.setAttribute("aria-expanded", "true");
+    if (bridge) {
+      Promise.resolve(bridge(bounds))
+        .then((result) => {
+          if (result && result.ok === false) toggleFigBoostMenu(wrap);
+        })
+        .catch(() => openFigBoostFeatureMenuFromTitlebar(bounds));
+    }
+    else openFigBoostFeatureMenuFromTitlebar(bounds);
   }
 
   function resetFigBoostButtonState(button) {
@@ -327,19 +348,16 @@
     button.setAttribute("aria-pressed", "false");
     button.innerHTML = '<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="3.5" y="3" width="9" height="9.5" rx="1" stroke-width="0.9"/><path d="M6 1.8v2.4M10 1.8v2.4M5.8 6.2h4.4M5.8 8.6h2.7" stroke-width="0.9" stroke-linecap="round"/></svg>';
     window.addEventListener("figboost:feature-menu-closed", () => resetFigBoostButtonState(button));
+    button.addEventListener("pointerdown", (event) => {
+      if (host.placement !== "titlebar") return;
+      event.preventDefault();
+      event.stopPropagation();
+      openFigBoostTitlebarMenu(wrap, button);
+    }, true);
     button.addEventListener("click", async () => {
       if (host.placement === "titlebar") {
-        const bounds = getFigBoostMenuBounds(button);
-        const bridge = getFigBoostFeatureMenuBridge();
-        button.setAttribute("aria-expanded", "true");
-        if (bridge) {
-          Promise.resolve(bridge(bounds))
-            .then((result) => {
-              if (result && result.ok === false) toggleFigBoostMenu(wrap);
-            })
-            .catch(() => openFigBoostFeatureMenuFromTitlebar(bounds));
-        }
-        else openFigBoostFeatureMenuFromTitlebar(bounds);
+        event.preventDefault();
+        event.stopPropagation();
         return;
       }
       toggleFigBoostMenu(wrap);

@@ -1,9 +1,10 @@
 (function () {
   "use strict";
 
-  const { app, autoUpdater, clipboard, dialog, ipcMain, Menu, BrowserWindow, webContents } = require("electron");
+  const { app, autoUpdater, clipboard, dialog, ipcMain, Menu, BrowserWindow, screen, webContents } = require("electron");
   const fs = require("fs");
   const https = require("https");
+  const os = require("os");
   const path = require("path");
   const { spawn } = require("child_process");
   const nativeMenuPopupLength = Menu.prototype.popup.length;
@@ -3219,11 +3220,13 @@
   function normalizeFigBoostMenuBounds(bounds) {
     if (!bounds || typeof bounds !== "object") return null;
     const left = Number(bounds.left);
+    const right = Number(bounds.right);
     const bottom = Number(bounds.bottom);
     if (!Number.isFinite(left) || !Number.isFinite(bottom)) return null;
     return {
       x: Math.max(0, Math.round(left)),
-      y: Math.max(0, Math.round(bottom))
+      y: Math.max(0, Math.round(bottom)),
+      right: Number.isFinite(right) ? Math.max(0, Math.round(right)) : null
     };
   }
 
@@ -3238,6 +3241,114 @@
     } catch (_) {
       return null;
     }
+  }
+
+  function escapeFigBoostMenuHtml(value) {
+    return String(value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function getFigBoostPopupPoint(owner, point) {
+    if ((!point || (point.x <= 4 && point.y <= 4)) && screen && typeof screen.getCursorScreenPoint === "function") {
+      return screen.getCursorScreenPoint();
+    }
+    const base = owner && typeof owner.getBounds === "function" ? owner.getBounds() : { x: 0, y: 0 };
+    return {
+      x: Math.max(0, Math.round((base.x || 0) + (point ? point.x : 0))),
+      y: Math.max(0, Math.round((base.y || 0) + (point ? point.y : 0))),
+      right: point && Number.isFinite(point.right) ? Math.max(0, Math.round((base.x || 0) + point.right)) : null
+    };
+  }
+
+  function popupFigBoostFeatureMenuWindow(template, owner, point, onClosed) {
+    if (!BrowserWindow) return false;
+    const actions = [];
+    const rows = template.map((item) => {
+      if (item.type === "separator") return '<div class="separator"></div>';
+      const index = actions.length;
+      actions.push(item.click);
+      return `<button class="item" data-index="${index}">${escapeFigBoostMenuHtml(item.label || "")}</button>`;
+    }).join("");
+    const width = 236;
+    const height = Math.max(54, actions.length * 34 + template.filter((item) => item.type === "separator").length * 9 + 20);
+    const popupPoint = getFigBoostPopupPoint(owner, point);
+    const display = screen && typeof screen.getDisplayNearestPoint === "function"
+      ? screen.getDisplayNearestPoint(popupPoint)
+      : null;
+    const workArea = display && display.workArea ? display.workArea : { x: 0, y: 0, width: 1920, height: 1080 };
+    const preferredX = Number.isFinite(popupPoint.right) ? popupPoint.right - width : popupPoint.x;
+    const x = Math.min(Math.max(workArea.x + 8, preferredX), workArea.x + workArea.width - width - 8);
+    const y = Math.min(Math.max(workArea.y, popupPoint.y + 6), workArea.y + workArea.height - height - 8);
+    const menuWindow = new BrowserWindow({
+      width,
+      height,
+      x,
+      y,
+      frame: false,
+      resizable: false,
+      maximizable: false,
+      minimizable: false,
+      fullscreenable: false,
+      skipTaskbar: true,
+      show: false,
+      parent: owner || undefined,
+      transparent: true,
+      hasShadow: true,
+      backgroundColor: "#00000000",
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true
+      }
+    });
+    if (typeof menuWindow.setMenuBarVisibility === "function") menuWindow.setMenuBarVisibility(false);
+    if (typeof menuWindow.removeMenu === "function") menuWindow.removeMenu();
+    const finish = () => {
+      if (onClosed) onClosed();
+    };
+    menuWindow.on("closed", finish);
+    menuWindow.on("blur", () => {
+      if (!menuWindow.isDestroyed()) menuWindow.close();
+    });
+    const handleMenuUrl = (event, url) => {
+      if (!/^figboost-feature-menu:\/\/click\//i.test(url || "")) return false;
+      if (event && event.preventDefault) event.preventDefault();
+      const index = Number(String(url).split("/").pop());
+      const action = actions[index];
+      if (!menuWindow.isDestroyed()) menuWindow.close();
+      if (typeof action === "function") action();
+      return true;
+    };
+    menuWindow.webContents.on("will-navigate", handleMenuUrl);
+    if (menuWindow.webContents.setWindowOpenHandler) {
+      menuWindow.webContents.setWindowOpenHandler(({ url }) => (
+        handleMenuUrl(null, url) ? { action: "deny" } : { action: "deny" }
+      ));
+    }
+    const html = `<!doctype html><html><head><meta charset="utf-8"><style>
+      html,body{margin:0;overflow:hidden;background:transparent;color:#f1f1f1;font:12px/16px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}
+      body{box-sizing:border-box;padding:4px;background:transparent;}
+      .panel{box-sizing:border-box;padding:6px 0;border:1px solid rgba(255,255,255,.08);border-radius:10px;background:#252525;box-shadow:0 10px 28px rgba(0,0,0,.35);overflow:hidden;}
+      .item{display:block;box-sizing:border-box;width:100%;min-height:32px;padding:7px 14px;border:0;background:transparent;color:#f1f1f1;text-align:left;font:inherit;white-space:nowrap;cursor:default;}
+      .item:hover,.item:focus{background:#333;color:#fff;outline:0;}
+      .separator{height:1px;margin:4px 0;background:rgba(255,255,255,.1);}
+    </style></head><body><div class="panel">${rows}</div><script>
+      document.addEventListener("click", function(event) {
+        var item = event.target.closest(".item");
+        if (!item) return;
+        location.href = "figboost-feature-menu://click/" + item.getAttribute("data-index");
+      });
+    </script></body></html>`;
+    menuWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+    menuWindow.once("ready-to-show", () => {
+      if (!menuWindow.isDestroyed()) {
+        menuWindow.show();
+        menuWindow.focus();
+      }
+    });
+    return true;
   }
 
   function dispatchFeatureMenuClosed(contents) {
@@ -3280,7 +3391,8 @@
   function openFigBoostFeatureMenu(sender, bounds) {
     const owner = findOwnerWindowForWebContents(sender);
     const point = normalizeFigBoostMenuBounds(bounds);
-    const menu = Menu.buildFromTemplate(buildFigBoostFeatureMenuTemplate());
+    const template = buildFigBoostFeatureMenuTemplate();
+    const menu = Menu.buildFromTemplate(template);
     global.__FIGBOOST_ACTIVE_FEATURE_MENUS__.add(menu);
     let closed = false;
     const finish = () => {
@@ -3289,7 +3401,9 @@
       global.__FIGBOOST_ACTIVE_FEATURE_MENUS__.delete(menu);
       if (sender) dispatchFeatureMenuClosed(sender);
     };
-    const opened = popupFigBoostFeatureMenu(menu, owner, point, finish);
+    const opened = shouldUseTitlebarDomMenu()
+      ? popupFigBoostFeatureMenuWindow(template, owner, point, finish)
+      : popupFigBoostFeatureMenu(menu, owner, point, finish);
     if (!opened) finish();
     return { ok: opened };
   }
@@ -3302,6 +3416,17 @@
     ipcMain.handle("figboost:open-feature-menu", (event, bounds) => {
       return openFigBoostFeatureMenu(event && event.sender, bounds);
     });
+  }
+
+  function shouldUseTitlebarDomMenu() {
+    if (process.platform !== "win32") return false;
+    try {
+      const version = typeof process.getSystemVersion === "function" ? process.getSystemVersion() : os.release();
+      const match = String(version).match(/\d+\.\d+\.(\d+)/);
+      return Boolean(match && Number(match[1]) < 22000);
+    } catch (_) {
+      return false;
+    }
   }
 
   let rendererPayloadCache = null;
