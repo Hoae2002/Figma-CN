@@ -954,9 +954,15 @@ function Start-FigmaClient {
 function Install-Patch {
   param([string]$SelectedAppDir, [string]$SelectedRuntimeDir, [switch]$Force, [switch]$SkipProcessCheck, [string[]]$ShortcutRoots = $null)
   $appDir = Resolve-ManagedFigmaAppDir $SelectedRuntimeDir $SelectedAppDir
+  $target = Resolve-Target $appDir
+  $existingStatus = Get-PatchStatus $target $SelectedRuntimeDir
+  if ($existingStatus.Patched -and $existingStatus.HasRuntimePayload -and $existingStatus.HasRuntimeMainPayload -and $existingStatus.HasBuiltInUpdaterDisabled) {
+    $existingStatus | Add-Member -NotePropertyName AlreadyPatched -NotePropertyValue $true -Force
+    $existingStatus | Add-Member -NotePropertyName RestartedFigma -NotePropertyValue $false -Force
+    return $existingStatus
+  }
   $restartAfterInstall = $false
   if (-not $SkipProcessCheck) { $restartAfterInstall = Stop-FigmaForPatch $appDir -Force:$Force }
-  $target = Resolve-Target $appDir
   if (-not (Test-Path -LiteralPath $target.BackupPath)) {
     Copy-Item -LiteralPath $target.AsarPath -Destination $target.BackupPath -Force
     Write-Log "Backup created: $($target.BackupPath)"
