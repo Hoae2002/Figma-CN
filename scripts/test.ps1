@@ -25,7 +25,7 @@ if ($LASTEXITCODE -ne 0) {
   throw "FigBoost PowerShell self-test failed."
 }
 
-$figBoost = Get-Content -LiteralPath (Join-Path $root "src\FigBoost.ps1") -Raw
+$figBoost = Get-Content -LiteralPath (Join-Path $root "src\FigBoost.ps1") -Raw -Encoding UTF8
 $version = (Get-Content -LiteralPath (Join-Path $root "VERSION") -Raw).Trim()
 $build = Get-Content -LiteralPath (Join-Path $root "scripts\build.ps1") -Raw
 if ($figBoost -notmatch "\`$PatcherVersion = `"$([regex]::Escape($version))`"" -or $build -notmatch "\[string\]\`$Version = `"$([regex]::Escape($version))`"") {
@@ -51,6 +51,11 @@ if (-not $figBoost.Contains('$form.Width = 1000') -or -not $figBoost.Contains('$
 }
 if (-not $figBoost.Contains("https://api.github.com/repos/Hoae2002/Figma-CN/releases/latest") -or -not $figBoost.Contains('$PatcherReleaseAssetName = "FigBoost.exe"') -or -not $figBoost.Contains("function Get-LatestPatcherRelease") -or -not $figBoost.Contains("browser_download_url") -or -not $figBoost.Contains("function Check-PatcherUpdate") -or -not $figBoost.Contains('Compare-VersionString $release.Version $CurrentVersion') -or -not $figBoost.Contains("function Invoke-PatcherSelfUpdate") -or -not $figBoost.Contains('$currentExeLiteral = $currentExe.Replace') -or -not $figBoost.Contains('Copy-Item -LiteralPath ''$tempExeLiteral'' -Destination ''$currentExeLiteral'' -Force') -or -not $figBoost.Contains("Prompt-PatcherUpdateIfAvailable")) {
   throw "FigBoost self-update must use GitHub latest release, FigBoost.exe asset, version compare, and post-exit replacement."
+}
+$expectedUpdateFeatureTitle = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("VGl0bGUgPSAi6Ieq5Yqo5pu05pawIEZpZ21hIOWuouaIt+erryI="))
+$oldMenuFeatureTitle = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("VGl0bGUgPSAi5ZyoIEZpZ21hIOmhtumDqOaYvuekuiBGaWdCb29zdCDoj5zljZUi"))
+if (-not $figBoost.Contains($expectedUpdateFeatureTitle) -or $figBoost.Contains($oldMenuFeatureTitle)) {
+  throw "The Figma update feature must be labeled as automatic update instead of a top-menu display option."
 }
 
 $content = Get-Content -LiteralPath (Join-Path $root "payload\src\content\content.js") -Raw

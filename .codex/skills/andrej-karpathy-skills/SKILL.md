@@ -1,6 +1,6 @@
 ---
 name: andrej-karpathy-skills
-description: Project coding discipline based on Andrej Karpathy-style LLM coding guidance. Use before writing, reviewing, or refactoring code in this repository to keep changes simple, surgical, verified, committed, pushed, and validated against the real Figma client when FigBoost behavior changes.
+description: Project coding discipline based on Andrej Karpathy-style LLM coding guidance. Use before writing, reviewing, or refactoring code in this repository to keep changes simple, surgical, verified with appropriate automated checks, committed, and pushed.
 ---
 
 # Andrej Karpathy Skills
@@ -23,6 +23,8 @@ Touch only the files and lines needed for the request. Match the existing projec
 
 Define success in verifiable terms before finishing. For bug fixes, reproduce or exercise the failing path when feasible. For behavior changes, run the smallest meaningful automated checks plus any project-specific manual checks needed to prove the flow works.
 
+Do not start or control the real Figma Desktop client or capture manual regression screenshots unless the user explicitly requests it. Treat real-client testing as the user's responsibility by default.
+
 ## 5. GitHub Handoff
 
 After modifying code or project files:
@@ -30,12 +32,3 @@ After modifying code or project files:
 - Commit the completed change with a clear Chinese commit message.
 - Push the commit to GitHub `main`.
 - If push fails, report the exact blocker and leave the local commit ready to push.
-
-## 6. Real Figma Verification
-
-For changes that affect FigBoost behavior:
-- Build the updated `FigBoost.exe` when the executable is part of the deliverable.
-- Apply the relevant install, uninstall, feature, or update flow to the real installed Figma Desktop client.
-- Start or confirm the real Figma client is running after the flow when the behavior requires it.
-- Capture a screenshot proving the relevant UI or flow state.
-- State clearly if real-client screenshot verification cannot be completed.

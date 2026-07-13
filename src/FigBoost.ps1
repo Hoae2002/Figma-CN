@@ -1945,9 +1945,9 @@ function Show-Gui {
   $featureDefinitions = @(
     [pscustomobject]@{
       Id = "auto-check-official-latest"
-      Title = "在 Figma 顶部显示 FigBoost 菜单"
-      Description = "在 Figma 界面顶部显示 FigBoost 入口；菜单中可检查官方最新版，也可作为其他附加功能的入口。"
-      ProgressText = "正在安装 FigBoost 菜单功能..."
+      Title = "自动更新 Figma 客户端"
+      Description = "自动检查 Figma 官方最新版；发现新版后可直接更新，并自动重新安装汉化补丁。"
+      ProgressText = "正在安装 Figma 自动更新功能..."
       FailurePrefix = "附加功能安装失败"
       Action = {
         Set-ProgressState 35 "正在写入功能配置..."
@@ -1960,7 +1960,7 @@ function Show-Gui {
       IsInstalled = { Test-FeatureInstalled $txtRuntime.Text "auto-check-official-latest" }
       SuccessMessage = {
         param($result)
-        return "附加功能已安装。`r`n`r`n之后打开 Figma 时，顶部会显示 FigBoost 入口；打开菜单即可检查官方最新版。`r`n补丁状态：$(if ($result.Patched) { "已安装" } else { "未安装" })"
+        return "Figma 自动更新功能已安装。`r`n`r`n发现官方新版后可直接更新，并自动重新安装汉化补丁。`r`n补丁状态：$(if ($result.Patched) { "已安装" } else { "未安装" })"
       }
       UninstallProgressText = "正在卸载附加功能..."
       UninstallFailurePrefix = "附加功能卸载失败"
@@ -1973,7 +1973,7 @@ function Show-Gui {
       UninstallSuccessMessage = {
         param($result)
         $patchState = if ($result) { "`r`n补丁状态：$(if ($result.Patched) { "已安装" } else { "未安装" })" } else { "" }
-        return "附加功能已卸载。`r`n`r`n之后打开 Figma 时不再显示 FigBoost 入口；汉化补丁不受影响。$patchState"
+        return "Figma 自动更新功能已卸载。`r`n`r`n汉化补丁不受影响。$patchState"
       }
     },
     [pscustomobject]@{

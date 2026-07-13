@@ -65,6 +65,8 @@ For multi-step tasks, state a brief plan:
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
 
+Do not start or control the real Figma Desktop client or capture manual regression screenshots unless the user explicitly requests it. Treat real-client testing as the user's responsibility by default.
+
 ## 5. Project Handoff Discipline
 
 **Every code change should leave the GitHub repository ready for the next machine.**
@@ -74,14 +76,3 @@ After modifying code or project files:
 - Commit the completed change with a clear Chinese commit message that explains the user-visible reason.
 - Push the commit to the GitHub `main` branch.
 - If pushing fails because authentication or network access is unavailable, report the exact blocker and leave the local commit ready to push.
-
-## 6. Real Figma Verification
-
-**Verify FigBoost changes against the real Figma Desktop client, not only fake self-tests.**
-
-After code changes that affect FigBoost behavior:
-- Build the updated `FigBoost.exe` when the executable is part of the deliverable.
-- Start the real installed Figma Desktop client after applying the patch or feature change.
-- Capture a screenshot that shows the relevant flow or UI state worked.
-- Still run automated tests where available, but do not treat them as a replacement for the real-client screenshot check.
-- If the real-client screenshot check cannot be completed, state why before committing or in the final handoff.
