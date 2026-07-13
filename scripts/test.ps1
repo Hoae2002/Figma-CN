@@ -14,6 +14,17 @@ foreach ($relativePath in $jsFiles) {
   node --check (Join-Path $root $relativePath) | Out-Null
 }
 
+$testFiles = Get-ChildItem -LiteralPath (Join-Path $root "tests") -Filter "*.test.js" | Select-Object -ExpandProperty FullName
+node --test $testFiles
+if ($LASTEXITCODE -ne 0) {
+  throw "JavaScript behavior tests failed."
+}
+
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root "src\FigBoost.ps1") -SelfTest
+if ($LASTEXITCODE -ne 0) {
+  throw "FigBoost PowerShell self-test failed."
+}
+
 $figBoost = Get-Content -LiteralPath (Join-Path $root "src\FigBoost.ps1") -Raw
 $version = (Get-Content -LiteralPath (Join-Path $root "VERSION") -Raw).Trim()
 $build = Get-Content -LiteralPath (Join-Path $root "scripts\build.ps1") -Raw
