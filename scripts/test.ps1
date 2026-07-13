@@ -251,6 +251,12 @@ if ($main -notmatch "dispatchFeatureMenuClosed" -or $main -notmatch "figboost:fe
 if ($main -notmatch "function showOfficialUpdateCheckingWindow" -or $main -notmatch "\\u6b63\\u5728\\u68c0\\u67e5\\u66f4\\u65b0" -or $main -notmatch "const checkingWindow = showOfficialUpdateCheckingWindow\(\)" -or $main -notmatch "checkingWindow\.close\(\)") {
   throw "Manual update check must show and close a checking progress dialog."
 }
+$checkingWindowStart = $main.IndexOf("function showOfficialUpdateCheckingWindow")
+$checkingWindowEnd = $main.IndexOf("async function checkOfficialUpdateManually", $checkingWindowStart)
+$checkingWindowSource = $main.Substring($checkingWindowStart, $checkingWindowEnd - $checkingWindowStart)
+if ($checkingWindowSource.IndexOf('progressWindow.once("ready-to-show"') -gt $checkingWindowSource.IndexOf("progressWindow.loadURL") -or -not $checkingWindowSource.Contains("progressWindow.show();") -or $checkingWindowSource.Contains("progressWindow.showInactive")) {
+  throw "Manual update progress must register before loading and show as an active modal window."
+}
 if ($main -notmatch "const looksLikeOptions" -or $main -notmatch "const optionIndex = looksLikeOptions\(args\[1\]\) \? 1 : 0;") {
   throw "Dialog localization hook must not mistake BrowserWindow arguments for message box options."
 }

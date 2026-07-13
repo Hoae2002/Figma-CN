@@ -445,6 +445,10 @@
     progressWindow.webContents.__FIGBOOST_SKIP_RENDERER_INJECTION__ = true;
     progressWindow.setMenu(null);
     if (typeof progressWindow.removeMenu === "function") progressWindow.removeMenu();
+    progressWindow.once("ready-to-show", () => {
+      if (progressWindow.isDestroyed()) return;
+      progressWindow.show();
+    });
     progressWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`
 <!doctype html>
 <html>
@@ -467,11 +471,6 @@
 </body>
 </html>
 `)}`);
-    progressWindow.once("ready-to-show", () => {
-      if (progressWindow.isDestroyed()) return;
-      if (typeof progressWindow.showInactive === "function") progressWindow.showInactive();
-      else progressWindow.show();
-    });
     return {
       close() {
         if (!progressWindow.isDestroyed()) progressWindow.close();
