@@ -1427,6 +1427,7 @@ function Format-StatusText {
 
 function Set-StatusLabels {
   param($Status)
+  $Status = @($Status)[-1]
   $script:ValuePatcher.Text = "v$($Status.PatcherVersion)"
   $script:ValuePayload.Text = "v$($Status.PayloadVersion)"
   $script:ValueFigmaVersion.Text = $Status.FigmaVersion
@@ -1933,7 +1934,7 @@ function Show-Gui {
     try {
       $form.UseWaitCursor = $true
       Set-ProgressState 8 $ProgressText
-      $result = & $Action
+      $result = @(& $Action)[-1]
       Set-ProgressState 100 "操作完成"
       if ($result) {
         Set-StatusLabels $result
