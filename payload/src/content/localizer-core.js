@@ -98,9 +98,6 @@
   const TRANSLATED_TEXT_KEY = "__figmaZhTranslatedText";
   const ORIGINAL_ATTR_KEY = "__figmaZhOriginalAttrs";
   const TRANSLATED_ATTR_KEY = "__figmaZhTranslatedAttrs";
-  const TRANSLATED_VALUE_KEY = "__figmaZhTranslatedValue";
-  const EDITABLE_VALUE_TIMER_KEY = "__figmaZhEditableValueTimer";
-  const EDITABLE_VALUE_EVENT_KEY = "__figmaZhEditableValueEvents";
   const TRANSLATABLE_ATTRS = ["aria-label", "title", "placeholder"];
   const FONT_STYLE_RESTORABLE_ATTRS = ["aria-label", "title", "data-value", "aria-valuetext"];
 
@@ -378,83 +375,6 @@
     if (!element.matches("input")) return false;
     const type = (element.getAttribute("type") || "text").toLowerCase();
     return !/^(button|checkbox|color|file|hidden|image|radio|range|reset|submit)$/.test(type);
-  }
-
-  function getEditableValue(element) {
-    if (!element || element.nodeType !== Node.ELEMENT_NODE) return "";
-    if (isTextInputElement(element)) return element.value || "";
-    if (element.matches("[contenteditable]:not([contenteditable='false']),[role='textbox']")) {
-      return element.textContent || "";
-    }
-    return "";
-  }
-
-  function setEditableValue(element, value) {
-    if (!element || element.nodeType !== Node.ELEMENT_NODE) return false;
-    if (isTextInputElement(element)) {
-      const proto = element instanceof HTMLTextAreaElement
-        ? HTMLTextAreaElement.prototype
-        : HTMLInputElement.prototype;
-      const descriptor = Object.getOwnPropertyDescriptor(proto, "value");
-      if (descriptor && descriptor.set) {
-        descriptor.set.call(element, value);
-      } else {
-        element.value = value;
-      }
-      return true;
-    }
-    if (element.matches("[contenteditable]:not([contenteditable='false']),[role='textbox']")) {
-      element.textContent = value;
-      return true;
-    }
-    return false;
-  }
-
-  function getEditableContextText(element) {
-    if (!element || element.nodeType !== Node.ELEMENT_NODE) return "";
-
-    const pieces = [];
-    for (const attr of ["aria-label", "placeholder", "title", "data-tooltip", "data-testid"]) {
-      const value = element.getAttribute(attr);
-      if (value) pieces.push(value);
-    }
-
-    let current = element;
-    for (let depth = 0; current && depth < 7; depth += 1, current = current.parentElement) {
-      const text = normalizeText(current.textContent);
-      if (text && text.length <= 1000) pieces.push(text);
-      const label = current.getAttribute && current.getAttribute("aria-label");
-      if (label) pieces.push(label);
-      const testId = current.getAttribute && current.getAttribute("data-testid");
-      if (testId) pieces.push(testId);
-    }
-
-    return pieces.join(" ");
-  }
-
-  function isVariantNamingEditable(element) {
-    if (!element || element.nodeType !== Node.ELEMENT_NODE) return false;
-    if (!isTextInputElement(element) && !element.matches("[contenteditable]:not([contenteditable='false']),[role='textbox']")) {
-      return false;
-    }
-
-    const ownContext = ["aria-label", "placeholder", "title", "data-tooltip", "data-testid"]
-      .map((attr) => element.getAttribute(attr) || "")
-      .join(" ");
-    if (/(?:search|filter|find|comment|message|description|email|password|url|content|text|搜索|筛选|查找|评论|消息|描述|邮箱|密码|网址|内容|文本)/i.test(ownContext)) {
-      return false;
-    }
-
-    const context = getEditableContextText(element);
-    if (!context) return false;
-    if (/(?:text content|content|文本内容|内容)/i.test(context) && !/(?:variant|component property|变体|组件属性)/i.test(ownContext)) {
-      return false;
-    }
-
-    const hasComponentVariantContext = /(?:variant|variants|component|component set|component property|properties|property|变体|组件|属性)/i.test(context);
-    if (!hasComponentVariantContext) return false;
-
-    return /(?:name|value|default|property|variant|component|add new variant|create component property|edit variant property|名称|值|默认|属性|变体|组件)/i.test(context);
   }
 
   function isInBodyRegion(node) {
@@ -827,7 +747,7 @@
       const hits = countGradientTypeHits(scopeText);
       if (hits >= 3) {
         element.setAttribute(GRADIENT_MENU_ATTR, "1");
-        normalizeGradientTypeDescendants(element);
+
         return translated;
       }
     }
@@ -900,36 +820,13 @@
       if (combined.length <= 260 && countGradientTypeHits(combined) >= 3) {
         if (normalizeMatches) {
           parent.setAttribute(GRADIENT_MENU_ATTR, "1");
-          normalizeGradientTypeDescendants(parent);
+
         }
         return true;
       }
     }
 
     return false;
-  }
-
-  function normalizeGradientTypeDescendants(root) {
-    if (!root || root.nodeType !== Node.ELEMENT_NODE) return;
-
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    let node = walker.nextNode();
-    while (node) {
-      const text = normalizeText(node.nodeValue);
-      if (isEditableElement(node.parentElement)) {
-        node = walker.nextNode();
-        continue;
-      }
-      const source = getGradientTypeSourceTerm(text);
-      const translated = GRADIENT_TYPE_TERMS.get(source);
-      if (translated && text !== translated) {
-        node[ORIGINAL_TEXT_KEY] = node[ORIGINAL_TEXT_KEY] || node.nodeValue;
-        node[TRANSLATED_TEXT_KEY] = preserveOuterWhitespace(node.nodeValue, translated);
-        node.nodeValue = preserveOuterWhitespace(node.nodeValue, translated);
-        markChangedElement(node.parentElement, text, translated);
-      }
-      node = walker.nextNode();
-    }
   }
 
   function hasNearbyGradientControlContext(startElement, normalizeMatches) {
@@ -945,7 +842,7 @@
       if (hasPaintContext && hasPaintValue && hasGradientType) {
         if (normalizeMatches) {
           element.setAttribute(GRADIENT_MENU_ATTR, "1");
-          normalizeGradientTypeDescendants(element);
+
         }
         return true;
       }
@@ -967,7 +864,7 @@
       if (hasStopContext && hasPaintValue && hasGradientType) {
         if (normalizeMatches) {
           element.setAttribute(GRADIENT_MENU_ATTR, "1");
-          normalizeGradientTypeDescendants(element);
+
         }
         return true;
       }
@@ -1122,7 +1019,7 @@
     let textNode = walker.nextNode();
     while (textNode) {
       if (textNode[ORIGINAL_TEXT_KEY]) {
-        textNode.nodeValue = textNode[ORIGINAL_TEXT_KEY];
+        if (textNode.nodeValue === textNode[TRANSLATED_TEXT_KEY]) textNode.nodeValue = textNode[ORIGINAL_TEXT_KEY];
         delete textNode[ORIGINAL_TEXT_KEY];
         delete textNode[TRANSLATED_TEXT_KEY];
       }
@@ -1134,16 +1031,11 @@
       const originalAttrs = node[ORIGINAL_ATTR_KEY];
       if (originalAttrs) {
         for (const [name, value] of Object.entries(originalAttrs)) {
-          node.setAttribute(name, value);
+          if (node[TRANSLATED_ATTR_KEY] && node.getAttribute(name) === node[TRANSLATED_ATTR_KEY][name]) node.setAttribute(name, value);
         }
         delete node[ORIGINAL_ATTR_KEY];
         delete node[TRANSLATED_ATTR_KEY];
       }
-      if (node[EDITABLE_VALUE_TIMER_KEY]) {
-        window.clearTimeout(node[EDITABLE_VALUE_TIMER_KEY]);
-        delete node[EDITABLE_VALUE_TIMER_KEY];
-      }
-      delete node[TRANSLATED_VALUE_KEY];
       node.removeAttribute(STATE_ATTR);
       node.removeAttribute(PENDING_ATTR);
       node.removeAttribute(COMPACT_TEXT_ATTR);
@@ -1214,6 +1106,7 @@
 
     function translateAttributes(element) {
       if (!options.translateAttributes || !element || isAttributeSkippableElement(element)) return;
+      if (options.allowElement && !options.allowElement(element, "")) return;
       restoreFontStyleAttributes(element);
       for (const name of TRANSLATABLE_ATTRS) {
         if (!shouldTranslateAttribute(element, name)) continue;
@@ -1224,7 +1117,8 @@
         const priorTranslated = translatedAttrs[name];
         const priorOriginal = element[ORIGINAL_ATTR_KEY] && element[ORIGINAL_ATTR_KEY][name];
         const source = priorTranslated && current === priorTranslated ? priorOriginal : current;
-        const translated = translator.translate(source, options);
+        const builtin = translator.translate(source, options);
+        const translated = options.resolveTranslation ? options.resolveTranslation(source, element, builtin, name) : builtin;
         if (!translated || translated === current) continue;
 
         if (!element[ORIGINAL_ATTR_KEY]) element[ORIGINAL_ATTR_KEY] = {};
@@ -1237,77 +1131,8 @@
       }
   }
 
-  function dispatchEditableValueEvents(element) {
-    try {
-      element.dispatchEvent(new InputEvent("input", {
-        bubbles: true,
-        composed: true,
-        inputType: "insertReplacementText",
-        data: null
-      }));
-    } catch (_error) {
-      element.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
-    }
-    element.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
-  }
-
-  function translateEditableValue(element, force) {
-    if (!isVariantNamingEditable(element)) return false;
-    if (!force && document.activeElement === element) return false;
-
-    const original = getEditableValue(element);
-    const source = element[TRANSLATED_VALUE_KEY] && original === element[TRANSLATED_VALUE_KEY].translated
-      ? element[TRANSLATED_VALUE_KEY].original
-      : original;
-    const normalized = normalizeText(source);
-    if (!normalized || !/[A-Za-z]/.test(normalized)) return false;
-    if (/[\u4e00-\u9fff]/.test(normalized)) return false;
-    if (normalized.length > options.maxTextLength) return false;
-
-    const translated = translator.translate(source, options);
-    if (!translated || translated === original) return false;
-    if (!setEditableValue(element, translated)) return false;
-
-    element[TRANSLATED_VALUE_KEY] = { original: source, translated };
-    markChangedElement(element, source, translated);
-    stats.changedTexts += 1;
-    dispatchEditableValueEvents(element);
-    return true;
-  }
-
-  function scheduleEditableValueTranslation(element, force) {
-    if (!element || element.nodeType !== Node.ELEMENT_NODE || !isVariantNamingEditable(element)) return;
-    if (element[EDITABLE_VALUE_TIMER_KEY]) window.clearTimeout(element[EDITABLE_VALUE_TIMER_KEY]);
-    element[EDITABLE_VALUE_TIMER_KEY] = window.setTimeout(() => {
-      element[EDITABLE_VALUE_TIMER_KEY] = null;
-      translateEditableValue(element, force);
-    }, force ? 0 : 180);
-  }
-
-  function bindEditableValueEvents(element) {
-    if (!isVariantNamingEditable(element) || element[EDITABLE_VALUE_EVENT_KEY]) return;
-    element[EDITABLE_VALUE_EVENT_KEY] = true;
-    element.addEventListener("blur", () => scheduleEditableValueTranslation(element, true), true);
-    element.addEventListener("change", () => scheduleEditableValueTranslation(element, true), true);
-    element.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") scheduleEditableValueTranslation(element, true);
-    }, true);
-  }
-
-  function processEditableValueElement(element) {
-    if (!isVariantNamingEditable(element)) return;
-    bindEditableValueEvents(element);
-    translateEditableValue(element, false);
-  }
-
-  function processEditableValues(root) {
-    if (!root || root.nodeType !== Node.ELEMENT_NODE) return;
-    processEditableValueElement(root);
-    const editables = root.querySelectorAll("input,textarea,[contenteditable]:not([contenteditable='false']),[role='textbox']");
-    for (const element of editables) processEditableValueElement(element);
-  }
-
   function translateTextNode(node) {
+    if (options.allowElement && !options.allowElement(node.parentElement, node.nodeValue)) return;
     const fontStyleSource = getTranslatedFontStyleSourceTerm(node);
     if (fontStyleSource) {
       node.nodeValue = preserveFontStyleMarker(node.nodeValue, fontStyleSource);
@@ -1316,7 +1141,12 @@
     }
     const gradientTypeTranslation = getGradientTypeTranslation(node);
     if (gradientTypeTranslation) {
-      node.nodeValue = preserveOuterWhitespace(node.nodeValue, gradientTypeTranslation);
+      const original = node.nodeValue;
+      const translated = options.resolveTranslation ? options.resolveTranslation(original, node, gradientTypeTranslation) : gradientTypeTranslation;
+      if (!translated) return;
+      node[ORIGINAL_TEXT_KEY] = original;
+      node[TRANSLATED_TEXT_KEY] = preserveOuterWhitespace(original, translated);
+      node.nodeValue = node[TRANSLATED_TEXT_KEY];
       markChangedElement(node.parentElement);
       return;
     }
@@ -1325,7 +1155,8 @@
     const original = node[TRANSLATED_TEXT_KEY] && node.nodeValue === node[TRANSLATED_TEXT_KEY]
         ? node[ORIGINAL_TEXT_KEY]
         : node.nodeValue;
-      const translated = translator.translate(original, options);
+      const builtin = translator.translate(original, options);
+      const translated = options.resolveTranslation ? options.resolveTranslation(original, node, builtin) : builtin;
       if (!translated || translated === node.nodeValue) return;
 
       node[ORIGINAL_TEXT_KEY] = original;
@@ -1346,7 +1177,7 @@
     function processElement(root) {
       if (!root || !enabled) return;
       if (!isInBodyRegion(root)) return;
-      if (root.nodeType === Node.ELEMENT_NODE) processEditableValues(root);
+
       if (isEditableNode(root)) return;
       if (root.nodeType === Node.TEXT_NODE) {
         translateTextNode(root);
@@ -1394,7 +1225,7 @@
         job.done = true;
         return true;
       }
-      if (root.nodeType === Node.ELEMENT_NODE) processEditableValues(root);
+
       if (isEditableNode(root)) {
         job.done = true;
         return true;
@@ -1486,7 +1317,7 @@
     function processOrQueueMutationNode(node) {
       if (!node || !enabled) return;
       if (!isInBodyRegion(node)) return;
-      if (node.nodeType === Node.ELEMENT_NODE) processEditableValues(node);
+
       if (isEditableNode(node)) return;
       const isFloatingElement = node.nodeType === Node.ELEMENT_NODE && isLatencySensitiveFloatingElement(node);
       const textLimit = isFloatingElement ? options.floatingTextLimit : options.immediateTextLimit;

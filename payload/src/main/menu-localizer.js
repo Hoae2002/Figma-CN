@@ -6,6 +6,7 @@
   const https = require("https");
   const path = require("path");
   const { spawn } = require("child_process");
+  const translationHost = global.__FIGBOOST_TRANSLATION_HOST__ || null;
   const nativeMenuPopupLength = Menu.prototype.popup.length;
   const FIGBOOST_DISCOVERY_TIMEOUT_MS = 30000;
   const FIGBOOST_EXPORT_TIMEOUT_MS = 60000;
@@ -181,16 +182,18 @@
     return value;
   }
 
-  function localizeItems(items) {
+  function localizeItems(items, protectedBranch = false) {
     let changed = false;
     for (const item of items || []) {
-      const label = localizeText(item.label);
+      const originalLabel = translationHost ? translationHost.originalLabel(item) : item.label;
+      const unsafe = protectedBranch || /recent|plugin|font|library|open file|最近|插件|字体/i.test(originalLabel || "");
+      const label = protectedBranch ? originalLabel : translationHost ? translationHost.nativeLabel(item, localizeText, !unsafe && Boolean(item.role || item.id)) : localizeText(item.label);
       if (item.label && label !== item.label) {
         item.label = label;
         changed = true;
       }
       if (item.submenu && item.submenu.items) {
-        changed = localizeItems(item.submenu.items) || changed;
+        changed = localizeItems(item.submenu.items, unsafe) || changed;
       }
     }
     return changed;
@@ -218,6 +221,7 @@
 
   function localizeDialogOptions(options) {
     if (!options || typeof options !== "object") return options;
+    if (translationHost && (!translationHost.enabled() || translationHost.nativeMode() === "original")) return options;
     const next = { ...options };
     for (const key of ["title", "message", "detail"]) next[key] = localizeText(next[key]);
     if (Array.isArray(next.buttons)) next.buttons = next.buttons.map(localizeText);
@@ -2831,7 +2835,7 @@
     const tests = patterns.map((pattern) => pattern instanceof RegExp ? pattern : new RegExp(pattern, "i"));
     const visit = (items) => {
       for (const item of items || []) {
-        const label = String(item.label || "");
+        const label = String(translationHost ? translationHost.originalLabel(item) : item.label || "");
         if (tests.some((pattern) => pattern.test(label))) return item;
         const found = item.submenu && visit(item.submenu.items);
         if (found) return found;
@@ -3150,6 +3154,7 @@
 
   function buildFigBoostFeatureMenuTemplate() {
     const template = [
+      { label: "汉化设置…", click: () => translationHost && translationHost.openSettings() },
       {
         label: "检查更新",
         click: () => {
@@ -3321,10 +3326,7 @@
 
   function buildFigBoostRendererBridgeScript(showTitlebarButton) {
     try {
-      if (!global.__FIGBOOST_FEATURE_ENABLED__
-        || !global.__FIGBOOST_FEATURE_ENABLED__("auto-check-official-latest")) {
-        return "";
-      }
+
       return `(() => {
         try {
           window.__FIGBOOST_UPDATE_BUTTON_ENABLED__ = true;
@@ -3366,6 +3368,11 @@
 
   function handleFigBoostNavigation(contents, event, url) {
     try {
+      if (url === "figboost://translation-settings") {
+        if (event && event.preventDefault) event.preventDefault();
+        if (translationHost) translationHost.openSettings();
+        return true;
+      }
       if (/^figboost:\/\/open-feature-menu/i.test(url || "")) {
         if (event && event.preventDefault) event.preventDefault();
         const openMenu = global.__FIGBOOST_OPEN_FEATURE_MENU__;
@@ -3414,10 +3421,16 @@
       try {
         if (contents.__FIGBOOST_SKIP_RENDERER_INJECTION__) return;
         const url = contents.getURL();
-        const isFigmaPage = /^https:\/\/([^/]+\.)?figma\.com/i.test(url);
+        let isFigmaPage = false;
+        try { const parsed = new URL(url); isFigmaPage = parsed.protocol === "https:" && /(^|\.)figma\.com$/.test(parsed.hostname); } catch (_) {}
+        if (!isFigmaPage && !/^file:\/\//i.test(url)) return;
         const bridge = buildFigBoostRendererBridgeScript(!isFigmaPage);
         const payload = getRendererPayload();
-        contents.executeJavaScript(bridge + payload, true).catch(() => {});
+        if (isFigmaPage && translationHost) {
+          translationHost.attach(contents, payload).then(ok => {
+            if (!ok) contents.executeJavaScript(payload, true).catch(() => {});
+          }).catch(() => {});
+        } else contents.executeJavaScript(bridge + payload, true).catch(() => {});
       } catch (_) {}
     };
     setTimeout(run, 0);
@@ -3437,8 +3450,10 @@
     global.__FIGMA_ZH_MENU_LOCALIZER__ = true;
     const buildFromTemplate = Menu.buildFromTemplate.bind(Menu);
     Menu.buildFromTemplate = function (template) {
-      localizeTemplate(template);
-      return buildFromTemplate(template);
+      if (!translationHost) { localizeTemplate(template); return buildFromTemplate(template); }
+      const menu = buildFromTemplate(template);
+      localizeItems(menu.items);
+      return menu;
     };
     const popup = Menu.prototype.popup;
     Menu.prototype.popup = function (...args) {

@@ -1,6 +1,6 @@
 ﻿param(
   [string]$OutputPath = "$PSScriptRoot\..\FigBoost.exe",
-  [string]$Version = "0.3.5"
+  [string]$Version = "0.4.0"
 )
 
 $ErrorActionPreference = "Stop"
@@ -18,7 +18,15 @@ $payloadFiles = @(
   "payload\src\dictionary\zh-CN.js",
   "payload\src\content\localizer-core.js",
   "payload\src\content\content.js",
-  "payload\src\main\menu-localizer.js"
+  "payload\src\main\menu-localizer.js",
+  "payload\src\shared\translation-policy.js",
+  "payload\src\content\translation-runtime.js",
+  "payload\src\main\translation-service.js",
+  "payload\src\main\translation-host.js",
+  "payload\src\main\translation-settings-preload.js",
+  "payload\src\main\translation-settings.html",
+  "payload\src\main\translation-settings.css",
+  "payload\src\main\translation-settings.js"
 )
 
 $embeddedLines = @('$EmbeddedPayloadFiles = @{')

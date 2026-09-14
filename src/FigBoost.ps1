@@ -24,7 +24,7 @@ if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClo
 
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V7"
 $UpdaterDisableMarker = "FIGMA_ZH_DISABLE_BUILTIN_UPDATER"
-$PatcherVersion = "0.3.5"
+$PatcherVersion = "0.4.0"
 $PayloadFile = "i.js"
 $MainPayloadFile = "m.js"
 $FeatureConfigFile = "features.json"
@@ -497,7 +497,9 @@ function Build-Payload {
     '  window.__FIGMA_ZH_OFFICIAL_PRELOAD_INJECTED__ = version;'
     '  try {'
     $dictionary
+    (Read-PayloadText "payload\src\shared\translation-policy.js")
     $core
+    (Read-PayloadText "payload\src\content\translation-runtime.js")
     $content
     '  } catch (error) {'
     '    console.error("[FigmaZh] official preload injection failed", error);'
@@ -507,7 +509,7 @@ function Build-Payload {
 }
 
 function Build-MainPayload {
-  return Read-PayloadText "payload\src\main\menu-localizer.js"
+  return ('try { global.__FIGBOOST_TRANSLATION_HOST__ = require(require("path").join(global.__FIGMA_ZH_RUNTIME_DIR__, "translation-host.js")).createHost(); } catch (e) { console.error("FigBoost translation service unavailable"); }' + "`n" + (Read-PayloadText "payload\src\main\menu-localizer.js"))
 }
 
 function Build-MainHook {
@@ -566,6 +568,9 @@ function Disable-BuiltInUpdaterInMain {
 function Write-RuntimeFiles {
   param([string]$RuntimeDir)
   New-Item -ItemType Directory -Force -Path $RuntimeDir | Out-Null
+  foreach ($relative in @("shared\translation-policy.js", "main\translation-service.js", "main\translation-host.js", "main\translation-settings-preload.js", "main\translation-settings.html", "main\translation-settings.css", "main\translation-settings.js")) {
+    [System.IO.File]::WriteAllText((Join-Path $RuntimeDir (Split-Path $relative -Leaf)), (Read-PayloadText ("payload\src\" + $relative)), (New-Object System.Text.UTF8Encoding($false)))
+  }
   [System.IO.File]::WriteAllText((Join-Path $RuntimeDir $PayloadFile), (Build-Payload), [System.Text.Encoding]::UTF8)
   [System.IO.File]::WriteAllText((Join-Path $RuntimeDir $MainPayloadFile), (Build-MainPayload), [System.Text.Encoding]::UTF8)
 }
@@ -908,11 +913,13 @@ function Patch-Asar {
 
 function Assert-FigmaClosed {
   param([switch]$Force)
+  if ($SelfTest) { return $false }
   return Stop-FigmaForPatch "" -Force:$Force
 }
 
 function Stop-FigmaForPatch {
   param([string]$AppDir, [switch]$Force)
+  if ($SelfTest) { return $false }
   $running = Get-Process -Name "Figma" -ErrorAction SilentlyContinue
   if ($running) {
     if (-not $Force) {
@@ -938,6 +945,7 @@ function Stop-FigmaForPatch {
 
 function Start-FigmaClient {
   param([string]$AppDir)
+  if ($SelfTest) { return $false }
   if (-not $AppDir) { return $false }
   $appExe = Join-Path $AppDir "Figma.exe"
   if (-not (Test-Path -LiteralPath $appExe)) { return $false }
@@ -956,7 +964,15 @@ function Install-Patch {
   $appDir = Resolve-ManagedFigmaAppDir $SelectedRuntimeDir $SelectedAppDir
   $target = Resolve-Target $appDir
   $existingStatus = Get-PatchStatus $target $SelectedRuntimeDir
-  if ($existingStatus.Patched -and $existingStatus.HasRuntimePayload -and $existingStatus.HasRuntimeMainPayload -and $existingStatus.HasBuiltInUpdaterDisabled) {
+  $runtimeCurrent = $false
+  if ($existingStatus.HasRuntimePayload -and $existingStatus.HasRuntimeMainPayload) {
+    $runtimeCurrent = ([System.IO.File]::ReadAllText((Join-Path $SelectedRuntimeDir $PayloadFile)) -eq (Build-Payload)) -and ([System.IO.File]::ReadAllText((Join-Path $SelectedRuntimeDir $MainPayloadFile)) -eq (Build-MainPayload))
+    foreach ($relative in @("shared\translation-policy.js", "main\translation-service.js", "main\translation-host.js", "main\translation-settings-preload.js", "main\translation-settings.html", "main\translation-settings.css", "main\translation-settings.js")) {
+      $supportPath = Join-Path $SelectedRuntimeDir (Split-Path $relative -Leaf)
+      if (-not (Test-Path -LiteralPath $supportPath) -or [System.IO.File]::ReadAllText($supportPath) -ne (Read-PayloadText ("payload\src\" + $relative))) { $runtimeCurrent = $false }
+    }
+  }
+  if ($runtimeCurrent -and $existingStatus.Patched -and $existingStatus.HasRuntimePayload -and $existingStatus.HasRuntimeMainPayload -and $existingStatus.HasBuiltInUpdaterDisabled) {
     $existingStatus | Add-Member -NotePropertyName AlreadyPatched -NotePropertyValue $true -Force
     $existingStatus | Add-Member -NotePropertyName RestartedFigma -NotePropertyValue $false -Force
     return $existingStatus
@@ -981,7 +997,7 @@ function Install-Patch {
   $result = Patch-Asar $target $SelectedRuntimeDir
   Write-Log "Install result: $($result | ConvertTo-Json -Compress)"
   $status = Get-PatchStatus $target $SelectedRuntimeDir
-  $status | Add-Member -NotePropertyName AlreadyPatched -NotePropertyValue ([bool]$result.AlreadyPatched) -Force
+  $status | Add-Member -NotePropertyName AlreadyPatched -NotePropertyValue ([bool]$result.AlreadyPatched -and $runtimeCurrent) -Force
   Repair-FigmaShortcuts $target.AppDir $ShortcutRoots
   $status | Add-Member -NotePropertyName RestartedFigma -NotePropertyValue ($restartAfterInstall -and (Start-FigmaClient $target.AppDir)) -Force
   return $status
@@ -1235,6 +1251,14 @@ function Invoke-SelfTest {
     if ($installStatus.PayloadVersion -ne (Get-PayloadVersion)) { throw "Self-test payload version mismatch." }
     $repeatInstallStatus = Install-Patch $fakeAppDir $fakeRuntime -SkipProcessCheck -ShortcutRoots @($shortcutRoot)
     if (-not $repeatInstallStatus.AlreadyPatched) { throw "Self-test repeat install did not report already patched." }
+    $personalData = Join-Path $temp "personal-data.json"
+    [System.IO.File]::WriteAllText($personalData, '{"preserve":true}')
+    [System.IO.File]::WriteAllText((Join-Path $fakeRuntime "translation-service.js"), "old-version")
+    $refreshStatus = Install-Patch $fakeAppDir $fakeRuntime -SkipProcessCheck -ShortcutRoots @($shortcutRoot)
+    if ($refreshStatus.AlreadyPatched) { throw "Self-test did not report refreshed runtime." }
+    if ([System.IO.File]::ReadAllText((Join-Path $fakeRuntime "translation-service.js")) -ne (Read-PayloadText "payload\src\main\translation-service.js")) { throw "Self-test runtime upgrade failed." }
+    if ([System.IO.File]::ReadAllText($personalData) -ne '{"preserve":true}') { throw "Self-test upgrade changed personal data." }
+
     $asar = Read-Asar (Join-Path $fakeAppDir "resources\app.asar")
     $main = Get-AsarFileSlice $asar "main.js"
     $mainSource = [System.Text.Encoding]::UTF8.GetString($main.Bytes)

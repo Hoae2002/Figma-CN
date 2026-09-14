@@ -66,6 +66,7 @@
   }
 
   const FIGBOOST_MENU_ITEMS = [
+    { id: "translation-settings", label: "汉化设置…", title: "管理谷歌补译、翻译范围与个人词库", run: () => { window.location.href = "figboost://translation-settings"; } },
     {
       id: "check-official-update",
       label: "检查更新",
@@ -394,7 +395,10 @@
   const core = window.FigmaZhLocalizer;
   if (!core) return;
 
+  const translationRuntime = window.__FIGBOOST_TRANSLATION_RUNTIME__;
   const localizer = core.createLocalizer(dictionary, {
+    allowElement: translationRuntime && translationRuntime.allowElement,
+    resolveTranslation: translationRuntime && translationRuntime.resolveTranslation,
     debug: false,
     budgetMs: 24,
     chunkSize: 220,
@@ -402,6 +406,7 @@
     immediateTextLimit: 120
   });
 
+  if (translationRuntime) translationRuntime.bind(localizer);
   window.__figmaZhLocalizer = localizer;
   window.__figmaZhScanUntranslated = (options) => localizer.scanUntranslated(options);
 

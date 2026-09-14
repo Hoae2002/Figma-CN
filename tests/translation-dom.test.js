@@ -1,0 +1,82 @@
+"use strict";
+const test = require("node:test"), assert = require("node:assert/strict"), fs = require("node:fs"), path = require("node:path");
+const { JSDOM } = require("jsdom");
+const P = require("../payload/src/shared/translation-policy.js");
+function fixture(t, html, custom = {}, exact = {}) {
+  const dom = new JSDOM(html, { url: "https://www.figma.com/design/test", pretendToBeVisual: true, runScripts: "outside-only" });
+  t.after(() => dom.window.close());
+  const w = dom.window;
+  for (const f of ["shared/translation-policy.js", "content/localizer-core.js", "content/translation-runtime.js"]) w.eval(fs.readFileSync(path.join(__dirname, "../payload/src", f), "utf8"));
+  const runtime = w.__FIGBOOST_TRANSLATION_RUNTIME__;
+  const localizer = w.FigmaZhLocalizer.createLocalizer({ exact, phrases: [], uiTerms: {}, commonTerms: {}, patterns: [] }, { allowElement: runtime.allowElement, resolveTranslation: runtime.resolveTranslation });
+  runtime.bind(localizer);
+  const snapshot = { schema: 1, revision: 1, settings: { enabled: true, online: true, regions: {} }, hasKey: true, learned: {}, overrides: {}, rules: [], ...custom };
+  runtime.apply(snapshot);
+  return { w, runtime, localizer, snapshot, document: w.document };
+}
+const tick = () => new Promise(r => setTimeout(r, 50));
+test("local dictionary renders immediately without generating network requests", t => {
+  const { document, runtime } = fixture(t, '<div role="toolbar"><button>Save</button></div>', {}, { Save: "保存" });
+  assert.equal(document.querySelector("button").textContent, "保存"); assert.equal(runtime.drain().requests.length, 0);
+});
+test("unknown UI stays visible then uses learned translation; local offline reuse works", async t => {
+  const { document, runtime, snapshot } = fixture(t, '<div role="toolbar"><button>New gizmo</button></div>');
+  const button = document.querySelector("button"); assert.equal(button.textContent, "New gizmo"); assert.equal(button.closest("[data-figma-zh-pending]"), null);
+  const job = runtime.drain().requests[0]; assert.ok(job);
+  const entry = { ...job.c, translation: "新控件" }; runtime.accept([{ id: job.id, entry }]); await tick();
+  assert.equal(button.textContent, "新控件");
+  runtime.apply({ ...snapshot, revision: 2, settings: { ...snapshot.settings, online: false }, learned: { [P.key(job.c.text, job.c.region, job.c.context)]: entry } });
+  assert.equal(button.textContent, "新控件"); assert.equal(runtime.drain().requests.length, 0);
+});
+test("no editing events, input values, named content, canvas, code or plugin text are translated", async t => {
+  const { document, runtime, w } = fixture(t, `<div role="toolbar"><input value="Default"><textarea>Default</textarea><div contenteditable="true">Default</div><span data-testid="component-name">Default</span><span data-testid="variable-name">Default</span><span data-testid="font-picker">Regular</span><div role="treeitem">Save</div><a href="/design/private">Save</a><code>Save</code><div data-testid="plugin-panel">Save</div><div data-testid="canvas">Save</div></div>`, {}, { Default: "默认", Save: "保存", Regular: "常规" });
+  let events = 0; document.addEventListener("input", () => events++); document.addEventListener("change", () => events++);
+  document.querySelector("input").dispatchEvent(new w.Event("blur")); await tick();
+  assert.equal(events, 0); assert.equal(document.querySelector("input").value, "Default");
+  for (const e of document.querySelectorAll("textarea,[contenteditable],[data-testid],a,code,[role=treeitem]")) assert.ok(!/[\u3400-\u9fff]/.test(e.textContent));
+  assert.equal(runtime.drain().requests.length, 0);
+});
+test("response cannot overwrite reused or detached nodes", async t => {
+  const { document, runtime } = fixture(t, '<div role="toolbar"><button>New gizmo</button><button>New widget</button></div>');
+  const jobs = runtime.drain().requests, buttons = document.querySelectorAll("button");
+  buttons[0].textContent = "Changed"; buttons[1].remove();
+  runtime.accept(jobs.map(job => ({ id: job.id, entry: { ...job.c, translation: "错误覆盖" } }))); await tick();
+  assert.equal(buttons[0].textContent, "Changed"); assert.equal(buttons[1].textContent, "New widget");
+});
+test("switch off during request invalidates responses and restores only our own current text", async t => {
+  const { document, runtime, snapshot } = fixture(t, '<div role="toolbar"><button>Save</button><button>New gizmo</button></div>', {}, { Save: "保存" });
+  const jobs = runtime.drain().requests, buttons = document.querySelectorAll("button");
+  buttons[0].firstChild.nodeValue = "Figma changed this";
+  runtime.apply({ ...snapshot, revision: 2, settings: { ...snapshot.settings, enabled: false } });
+  runtime.accept(jobs.map(job => ({ id: job.id, entry: { ...job.c, translation: "错误覆盖" } }))); await tick();
+  assert.equal(buttons[0].textContent, "Figma changed this"); assert.equal(buttons[1].textContent, "New gizmo");
+});
+test("manual overrides and original-mode regions precede dictionary and machine cache", t => {
+  const k = P.key("Save", "toolbar", "button");
+  const { runtime, snapshot, document } = fixture(t, '<div role="toolbar"><button>Save</button></div>', { overrides: { [k]: { translation: "存储" } } }, { Save: "保存" });
+  assert.equal(document.querySelector("button").textContent, "存储");
+  runtime.apply({ ...snapshot, revision: 2, settings: { ...snapshot.settings, regions: { toolbar: "original" } } });
+  assert.equal(document.querySelector("button").textContent, "Save");
+});
+test("persistent exclusions survive recreated elements and block gradient special handling", async t => {
+  const rules = [{ text: "Save", region: "toolbar", context: "button", anchor: "save-action" }];
+  const { document, runtime } = fixture(t, '<div role="toolbar"><button data-testid="save-action">Save</button></div><div role="menu" data-testid="gradient-menu"><span>Linear</span><span>Radial</span><span>Angular</span></div>', { rules, settings: { enabled: true, online: true, regions: { menus: "original" } } }, { Save: "保存", Linear: "线性" });
+  assert.equal(document.querySelector("button").textContent, "Save");
+  document.querySelector("button").outerHTML = '<button data-testid="save-action">Save</button>'; await tick();
+  assert.equal(document.querySelector("button").textContent, "Save"); assert.equal(document.querySelector("[role=menu]").textContent, "LinearRadialAngular"); assert.equal(runtime.drain().requests.length, 0);
+});
+test("picker consumes original actions and stores stable exclusion using English source", async t => {
+  const { document, runtime, w } = fixture(t, '<div role="toolbar"><button data-testid="save-action">Save</button></div>', {}, { Save: "保存" });
+  const button = document.querySelector("button"); let clicked = 0; button.addEventListener("click", () => clicked++);
+  runtime.startPicker(); button.dispatchEvent(new w.MouseEvent("pointermove", { bubbles: true })); button.dispatchEvent(new w.MouseEvent("click", { bubbles: true, cancelable: true }));
+  const data = runtime.drain().actions[0]; assert.equal(data.data.text, "Save"); assert.equal(data.data.anchor, "save-action"); assert.equal(clicked, 0); assert.equal(button.textContent, "Save");
+  document.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Escape", bubbles: true })); assert.equal(document.querySelector("[role=status]"), null);
+});
+test("user names matching system dictionary labels remain original", t => {
+  const { document, runtime } = fixture(t, '<nav><span data-testid="file-title">Drafts</span><span data-testid="project-title">Recent</span><span data-testid="folder-name">Save</span></nav>', {}, { Drafts: "草稿", Recent: "最近", Save: "保存" });
+  assert.equal(document.querySelector("nav").textContent, "DraftsRecentSave"); assert.equal(runtime.drain().requests.length, 0);
+});
+test("unknown dialog prose is not automatically treated as a safe UI label", t => {
+  const { runtime } = fixture(t, '<div role="dialog"><p>Alice invited you to Private Workspace</p></div>');
+  assert.equal(runtime.drain().requests.length, 0);
+});

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'"><title>FigBoost · 汉化设置</title><link rel="stylesheet" href="translation-settings.css"></head>
+<body>
+<main>
+  <header><div><p class="eyebrow">FIGBOOST</p><h1>汉化设置</h1><p class="muted">词库优先，新词自动补译。设计内容始终保留原样。</p></div><span id="connection" class="badge">本地词库</span></header>
+  <div id="message" role="status" aria-live="polite">正在读取设置…</div>
+  <nav aria-label="设置分类"><button type="button" data-tab="service" aria-pressed="true">翻译服务</button><button type="button" data-tab="scope" aria-pressed="false">翻译范围</button><button type="button" data-tab="dictionary" aria-pressed="false">个人词库</button></nav>
+  <section id="service" aria-labelledby="service-title">
+    <h2 id="service-title">翻译服务</h2>
+    <form id="service-form">
+      <label class="switch"><span><strong>启用界面汉化</strong><small>关闭后恢复界面原文，保留个人词库。</small></span><input type="checkbox" id="enabled"></label>
+      <label class="switch"><span><strong>谷歌补译</strong><small>仅将本地未命中的安全界面文案发送到 Google。</small></span><input type="checkbox" id="online"></label>
+      <label for="dailyLimit">本机每日字符上限</label><div class="row"><input type="number" id="dailyLimit" min="1" max="10000000" required><button type="submit" class="primary">保存服务设置</button></div>
+      <p class="muted">达到上限后继续使用本地词库。此限制只统计本机，不能替代 Google 的项目配额。</p>
+    </form>
+    <div class="divider"></div>
+    <h2>Google API 密钥</h2><p class="muted">使用 Cloud Translation Basic v2。请在自己的 Google Cloud 项目启用 API 和结算，并将密钥限制为此 API。</p>
+    <form id="key-form"><label for="apiKey">API 密钥 <span id="key-status" class="muted"></span></label><input id="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴自己的 API 密钥" aria-describedby="key-help"><p id="key-help" class="muted">使用 Windows 加密保存。已保存的密钥不会回填到此窗口。</p><div class="row"><button type="submit">保存密钥</button><button type="button" id="test">测试已保存的密钥</button><button type="button" id="clearKey">清除密钥</button></div></form>
+    <div class="metrics"><div><span>今日发送字符</span><strong id="usage">0</strong></div><div><span>已学习词条</span><strong id="learned-count">0</strong></div><div><span>人工修正</span><strong id="manual-count">0</strong></div></div>
+    <p id="last-error" class="muted"></p>
+  </section>
+  <section id="scope" hidden aria-labelledby="scope-title"><h2 id="scope-title">按区域控制翻译</h2><p class="muted">“仅本地词库”包含内置词库、已学习词条及人工修正。</p><form id="scope-form"><div id="regions"></div><button type="submit" class="primary">保存区域设置</button></form>
+    <div class="divider"></div><h2>排除指定元素</h2><p class="muted">点选后不会触发原控件。按 Esc 退出选择；无法稳定定位的元素仅在本次页面有效。</p><div class="row"><button type="button" id="pick">去 Figma 点选排除</button><button type="button" id="checkRules">检查规则匹配</button></div><p class="muted">“当前未找到”也可能是菜单尚未打开。若打开对应界面后仍未找到，请重新点选。</p><ul id="rules" class="entries"></ul>
+    <aside>画布、图层和文件名称、组件及变量值、评论、字体与代码受统一保护。第三方插件和无法识别的区域不自动联网翻译。</aside>
+  </section>
+  <section id="dictionary" hidden aria-labelledby="dictionary-title"><div class="heading-row"><h2 id="dictionary-title">个人词库</h2><button type="button" id="refresh">刷新词库</button></div><label for="search">搜索原文或译文</label><input id="search" type="search" placeholder="输入关键词"><p id="entry-count" class="muted"></p><ul id="entries" class="entries"></ul>
+    <div class="divider"></div><h2 id="edit-title">新增或修正词条</h2><form id="entry-form"><label for="original">英文原文</label><input id="original" required maxlength="260"><div class="row"><div class="grow"><label for="entry-region">区域</label><select id="entry-region"></select></div><div class="grow"><label for="context">控件语境</label><select id="context"><option value="label">普通标签</option><option value="button">按钮</option><option value="menuitem">页面菜单项</option><option value="menu">原生菜单项</option><option value="tooltip">提示气泡</option><option value="tab">标签页</option></select></div></div><label for="translation">中文译文</label><input id="translation" maxlength="2000"><label class="check"><input type="checkbox" id="keepOriginal">此词条保持原文，不再翻译</label><div class="row"><button type="submit" class="primary">保存词条</button><button type="reset">清空表单</button></div></form><p class="muted">人工修正优先于内置词库。删除词条后可再次自动补译；“保持原文”会停止该词条翻译。</p>
+  </section>
+  <footer>个人数据保存在当前 Windows 用户的 FigBoost 目录，更新和卸载汉化时默认保留。</footer>
+</main><script src="translation-policy.js"></script><script src="translation-settings.js"></script>
+</body></html>
