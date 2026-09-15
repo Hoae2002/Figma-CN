@@ -27,9 +27,10 @@ test("reconnecting the same settings revision requeues requests and rejects old 
   await tick();
   assert.equal(document.querySelector('button').textContent, '保存');
 });
-test("built-in dictionary is bypassed and every safe label uses machine translation", t => {
-  const { document, runtime } = fixture(t, '<div role="toolbar"><button>Save</button></div>', {}, { Save: "保存" });
-  assert.equal(document.querySelector("button").textContent, "Save"); assert.equal(runtime.drain().requests.length, 1);
+test("built-in dictionary wins over learned machine cache and does not request Google", t => {
+  const k = P.key("Save", "toolbar", "button");
+  const { document, runtime } = fixture(t, '<div role="toolbar"><button>Save</button></div>', { learned: { [k]: { text: "Save", region: "toolbar", context: "button", translation: "机器缓存" } } }, { Save: "保存" });
+  assert.equal(document.querySelector("button").textContent, "保存"); assert.equal(runtime.drain().requests.length, 0);
 });
 test("unknown UI stays visible then uses learned translation; local offline reuse works", async t => {
   const { document, runtime, snapshot } = fixture(t, '<div role="toolbar"><button>New gizmo</button></div>');
@@ -63,15 +64,15 @@ test("switch off during request invalidates responses and restores only our own 
   runtime.accept(jobs.map(job => ({ id: job.id, entry: { ...job.c, translation: "错误覆盖" } }))); await tick();
   assert.equal(buttons[0].textContent, "Figma changed this"); assert.equal(buttons[1].textContent, "New gizmo");
 });
-test("manual overrides are ignored while cached translations and original regions work", t => {
+test("cached translations remain the fallback when the dictionary misses", t => {
   const k = P.key("Save", "toolbar", "button");
-  const { runtime, snapshot, document } = fixture(t, '<div role="toolbar"><button>Save</button></div>', { overrides: { [k]: { translation: "存储" } }, learned: { [k]: { translation: "缓存译文" } } }, { Save: "保存" });
+  const { runtime, snapshot, document } = fixture(t, '<div role="toolbar"><button>Save</button></div>', { learned: { [k]: { translation: "缓存译文" } } });
   assert.equal(document.querySelector("button").textContent, "缓存译文");
   runtime.apply({ ...snapshot, revision: 2, settings: { ...snapshot.settings, regions: { toolbar: "original" } } });
   assert.equal(document.querySelector("button").textContent, "Save");
 });
 test("persistent exclusions survive recreated elements and block gradient special handling", async t => {
-  const rules = [{ text: "Save", region: "toolbar", context: "button", anchor: "save-action" }];
+  const rules = [{ scope: "element", text: "Save", region: "toolbar", context: "button", anchor: "save-action" }];
   const { document, runtime } = fixture(t, '<div role="toolbar"><button data-testid="save-action">Save</button></div><div role="menu" data-testid="gradient-menu"><span>Linear</span><span>Radial</span><span>Angular</span></div>', { rules, settings: { enabled: true, online: true, regions: { menus: "original" } } }, { Save: "保存", Linear: "线性" });
   assert.equal(document.querySelector("button").textContent, "Save");
   document.querySelector("button").outerHTML = '<button data-testid="save-action">Save</button>'; await tick();
@@ -116,6 +117,34 @@ test('current Figma sidebar landmarks admit headings and buttons, protect names 
   const {runtime} = fixture(t, `<body class="feature_flag_canvas_ui3"><section role="region" aria-label="Left sidebar"><button>Pages</button><div role="grid"><button>Private page</button></div><div role="treegrid"><button>Private layer</button></div><button aria-label="Private file, file name">Private file</button></section><section aria-label="Right sidebar"><h2>Position</h2><span>Selection colors</span><button>Share</button></section></body>`);
   const texts = runtime.drain().requests.map(j => j.c.text);
   assert.deepEqual(Array.from(texts).sort(), ['Left sidebar','Pages','Position','Right sidebar','Selection colors','Share'].sort());
+});
+test("picker lets a closed dropdown open, then persists an exclusion for its popup item", t => {
+  const { document, runtime, w } = fixture(t, '<div role="toolbar"><button id="trigger" aria-haspopup="listbox" aria-expanded="false">Choose</button></div>');
+  runtime.drain();
+  const trigger = document.querySelector("#trigger");
+  trigger.addEventListener("click", () => {
+    trigger.setAttribute("aria-expanded", "true");
+    const popup = document.createElement("div"); popup.setAttribute("role", "listbox");
+    popup.innerHTML = '<div role="option">Private choice</div>'; document.body.appendChild(popup);
+  });
+  runtime.startPicker();
+  trigger.dispatchEvent(new w.MouseEvent("pointermove", { bubbles: true }));
+  trigger.dispatchEvent(new w.MouseEvent("click", { bubbles: true, cancelable: true }));
+  assert.ok(document.querySelector("[role=listbox]"));
+  const option = document.querySelector("[role=option]"); let selected = 0; option.addEventListener("click", () => selected++);
+  option.dispatchEvent(new w.MouseEvent("pointermove", { bubbles: true }));
+  option.dispatchEvent(new w.MouseEvent("click", { bubbles: true, cancelable: true }));
+  const action = runtime.drain().actions[0];
+  assert.equal(action.data.scope, "text"); assert.equal(action.data.region, "menus"); assert.equal(action.data.text, "Private choice"); assert.equal(selected, 0);
+});
+test("picker uses a stable ancestor anchor for a whole popup container", t => {
+  const { document, runtime, w } = fixture(t, '<div role="listbox" data-testid="style-picker-menu"><div role="option"><span>Style one</span></div></div>');
+  runtime.drain(); runtime.startPicker();
+  const span = document.querySelector("span");
+  span.dispatchEvent(new w.MouseEvent("pointermove", { bubbles: true, altKey: true }));
+  span.dispatchEvent(new w.MouseEvent("click", { bubbles: true, cancelable: true, altKey: true }));
+  const action = runtime.drain().actions[0];
+  assert.equal(action.data.scope, "element"); assert.equal(action.data.anchor, "style-picker-menu"); assert.equal(action.data.region, "menus");
 });
 
 test('current Figma files page is not hidden by body canvas feature flags and protects user file names', t => {

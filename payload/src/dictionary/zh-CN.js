@@ -5103,7 +5103,7 @@
     ["^Set default properties$","设为默认属性"]
   ];
 
-  window.FIGMA_ZH_DICTIONARY = {
+  const dictionary = {
     exact,
     phrases,
     uiTerms,
@@ -5111,4 +5111,6 @@
     patterns,
     version: "1.0.6"
   };
+  if (typeof window === "object") window.FIGMA_ZH_DICTIONARY = dictionary;
+  if (typeof module === "object" && module.exports) module.exports = dictionary;
 })();

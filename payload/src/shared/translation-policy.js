@@ -38,7 +38,7 @@
   function regionOf(element) {
     if (!element || !element.closest || element.closest(protectedSelector)) return null;
     const tests = [
-      ["menus", "[role='menu'],[role='menuitem'],[data-testid*='context-menu']"],
+      ["menus", "[role='menu'],[role='menuitem'],[role='listbox'],[role='option'],[aria-haspopup='menu'],[aria-haspopup='listbox'],[data-testid*='context-menu']"],
       ["floating", "[role='tooltip'],[role='dialog'],[role='alertdialog']"],
       ["right", "[aria-label='Right sidebar'],[data-testid*='properties-panel'],[data-testid*='right-panel'],[class*='properties_panel'],[class*='right_panel']"],
       ["left", "[aria-label='Left sidebar'],[data-testid*='left-panel'],[class*='left_panel'],[data-testid*='layers-panel']"],
@@ -68,7 +68,7 @@
   }
   function mode(settings, region) { return settings.regions && settings.regions[region] || "hybrid"; }
   function excluded(c, rules) {
-    return (rules || []).some(r => r.region === c.region && (r.scope === "region" || (r.scope === "element" ? r.anchor === c.anchor || (c.anchors || []).includes(r.anchor) : r.text === c.text && r.context === c.context && (!r.anchor || r.anchor === c.anchor))));
+    return (rules || []).some(r => r.region === c.region && (r.scope === "region" || (r.scope === "element" ? r.anchor === c.anchor || (c.anchors || []).includes(r.anchor) : r.scope === "text" && r.text === c.text && r.context === c.context)));
   }
   function validCandidate(c) {
     return !!c && Object.hasOwn(regions, c.region) && c.region !== "other" && safeText(c.text)

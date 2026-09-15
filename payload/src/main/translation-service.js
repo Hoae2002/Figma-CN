@@ -10,7 +10,12 @@ function validateState(s) {
     s = { schema: 2, revision: s.revision + 1, settings: { enabled: s.settings.enabled, regions: Object.fromEntries(Object.entries(s.settings.regions || {}).filter(([, v]) => v === "original")) }, learned: s.learned, rules: s.rules };
   }
   for (const [k, e] of Object.entries(s.learned)) if (!P.validCandidate(e) || !validTranslation(e.translation) || k !== P.key(e.text, e.region, e.context)) throw Error("缓存数据损坏");
-  for (const r of s.rules) if (!r || !Object.hasOwn(P.regions, r.region) || (r.scope !== "region" && !/^[a-z][a-z_-]{2,100}$/i.test(r.anchor || ""))) throw Error("排除规则损坏");
+  for (const r of s.rules) {
+    const validRegion = r && Object.hasOwn(P.regions, r.region) && r.region !== "other";
+    const validElement = r && r.scope === "element" && /^[a-z][a-z_-]{2,100}$/i.test(r.anchor || "");
+    const validText = r && r.scope === "text" && P.safeText(r.text) && typeof r.context === "string" && /^[a-z:-]{1,40}$/.test(r.context);
+    if (!validRegion || (r.scope !== "region" && !validElement && !validText)) throw Error("排除规则损坏");
+  }
   return s;
 }
 function readState(file) {
@@ -106,9 +111,14 @@ function createService({ dir, transport, now = () => new Date(), debounceMs = 18
       state.settings.enabled = data.enabled; blockedUntil = 0;
     } else if (action === "exclude") {
       if (!Object.hasOwn(P.regions, data.region) || data.region === "other") throw Error("无法排除此区域");
-      const rule = data.scope === "region" ? { region: data.region, scope: "region", text: P.regions[data.region] } : { region: data.region, scope: "element", anchor: data.anchor, text: String(data.text || "界面区域").slice(0, 100) };
+      const rule = data.scope === "region"
+        ? { region: data.region, scope: "region", text: P.regions[data.region] }
+        : data.scope === "text"
+          ? { region: data.region, scope: "text", context: data.context, text: String(data.text || "").slice(0, 100) }
+          : { region: data.region, scope: "element", anchor: data.anchor, text: String(data.text || "界面区域").slice(0, 100) };
       if (rule.scope === "element" && !/^[a-z][a-z_-]{2,100}$/i.test(rule.anchor || "")) throw Error("此区域仅本次有效");
-      if (!state.rules.some(r => r.region === rule.region && r.scope === rule.scope && r.anchor === rule.anchor)) state.rules.push(rule);
+      if (rule.scope === "text" && (!P.safeText(rule.text) || !/^[a-z:-]{1,40}$/.test(rule.context || ""))) throw Error("无法保存此文案排除");
+      if (!state.rules.some(r => r.region === rule.region && r.scope === rule.scope && r.anchor === rule.anchor && r.text === rule.text && r.context === rule.context)) state.rules.push(rule);
     } else if (action === "removeRule") {
       if (!Number.isInteger(data.index) || data.index < 0 || data.index >= state.rules.length) throw Error("排除项无效");
       const [removed] = state.rules.splice(data.index, 1);

@@ -93,6 +93,14 @@ test("disabled switch and region/ancestor exclusions block requests", async (t) 
   await service.command("removeRule", { index: 0 });
   assert.equal((await service.translate(c("Save"))).translation, "测试");
 });
+test("text exclusions persist for unanchored popup items", async (t) => {
+  let calls = 0;
+  const { service } = fixture(t, async () => { calls++; return ["测试"]; });
+  await service.command("exclude", { scope: "text", region: "menus", context: "option", text: "Private choice" });
+  assert.equal(await service.translate({ text: "Private choice", region: "menus", context: "option", anchor: null, anchors: [] }), null);
+  assert.equal(calls, 0);
+  assert.equal(service.snapshot().rules[0].scope, "text");
+});
 test("settings revision rejects an in-flight result without caching", async (t) => {
   let done, start;
   const began = new Promise((r) => (start = r));

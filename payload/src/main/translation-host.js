@@ -4,6 +4,7 @@ const path = require("path");
 const { fileURLToPath } = require("url");
 const { createService, googleTransport } = require("./translation-service.js");
 const P = require(require("fs").existsSync(path.join(__dirname, "translation-policy.js")) ? "./translation-policy.js" : "../shared/translation-policy.js");
+const dictionary = (() => { try { return require("./zh-CN.js"); } catch (_) { return { exact: {} }; } })();
 const WORLD = 1004;
 function isFigmaURL(value) {
   try { const url = new URL(value); return url.protocol === "https:" && (url.hostname === "figma.com" || url.hostname.endsWith(".figma.com")) && !url.username && !url.password; } catch (_) { return false; }
@@ -121,7 +122,11 @@ function createHost(options = {}) {
     const s = service.localState(), c = { text: original, region: "native", context: "menu" }, k = P.key(original, "native", "menu");
     let translated = original;
     if (safe && s.settings.enabled && P.mode(s.settings, "native") !== "original" && !P.excluded(c, s.rules)) {
-      if (s.learned[k]) translated = s.learned[k].translation;
+      const dictionaryValue = typeof builtin === "function" ? builtin(original) : null;
+      const exactValue = dictionary.exact && dictionary.exact[P.normalize(original)];
+      if (typeof dictionaryValue === "string" && dictionaryValue !== original) translated = dictionaryValue;
+      else if (typeof exactValue === "string" && exactValue) translated = exactValue;
+      else if (s.learned[k]) translated = s.learned[k].translation;
       else void service.translate(c);
     }
     originals.set(item, { original, translated });

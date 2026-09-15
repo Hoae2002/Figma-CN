@@ -24,7 +24,7 @@ if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClo
 
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V7"
 $UpdaterDisableMarker = "FIGMA_ZH_DISABLE_BUILTIN_UPDATER"
-$PatcherVersion = "0.5.2"
+$PatcherVersion = "0.5.3"
 $PayloadFile = "i.js"
 $MainPayloadFile = "m.js"
 $FeatureConfigFile = "features.json"
@@ -495,6 +495,7 @@ function Build-Payload {
     '  if (window.__FIGMA_ZH_OFFICIAL_PRELOAD_INJECTED__ === version && window.__FIGBOOST_TRANSLATION_RUNTIME__ && window.__figmaZhLocalizer) return;'
     '  try {'
     (Read-PayloadText "payload\src\shared\translation-policy.js")
+    (Read-PayloadText "payload\src\dictionary\zh-CN.js")
     $core
     (Read-PayloadText "payload\src\content\translation-runtime.js")
     $content
@@ -566,7 +567,7 @@ function Disable-BuiltInUpdaterInMain {
 function Write-RuntimeFiles {
   param([string]$RuntimeDir)
   New-Item -ItemType Directory -Force -Path $RuntimeDir | Out-Null
-  foreach ($relative in @("shared\translation-policy.js", "main\translation-service.js", "main\translation-host.js", "main\translation-settings-preload.js", "main\translation-settings.html", "main\translation-settings.css", "main\translation-settings.js")) {
+  foreach ($relative in @("dictionary\zh-CN.js", "shared\translation-policy.js", "main\translation-service.js", "main\translation-host.js", "main\translation-settings-preload.js", "main\translation-settings.html", "main\translation-settings.css", "main\translation-settings.js")) {
     [System.IO.File]::WriteAllText((Join-Path $RuntimeDir (Split-Path $relative -Leaf)), (Read-PayloadText ("payload\src\" + $relative)), (New-Object System.Text.UTF8Encoding($false)))
   }
   [System.IO.File]::WriteAllText((Join-Path $RuntimeDir $PayloadFile), (Build-Payload), [System.Text.Encoding]::UTF8)
@@ -965,7 +966,7 @@ function Install-Patch {
   $runtimeCurrent = $false
   if ($existingStatus.HasRuntimePayload -and $existingStatus.HasRuntimeMainPayload) {
     $runtimeCurrent = ([System.IO.File]::ReadAllText((Join-Path $SelectedRuntimeDir $PayloadFile)) -eq (Build-Payload)) -and ([System.IO.File]::ReadAllText((Join-Path $SelectedRuntimeDir $MainPayloadFile)) -eq (Build-MainPayload))
-    foreach ($relative in @("shared\translation-policy.js", "main\translation-service.js", "main\translation-host.js", "main\translation-settings-preload.js", "main\translation-settings.html", "main\translation-settings.css", "main\translation-settings.js")) {
+    foreach ($relative in @("dictionary\zh-CN.js", "shared\translation-policy.js", "main\translation-service.js", "main\translation-host.js", "main\translation-settings-preload.js", "main\translation-settings.html", "main\translation-settings.css", "main\translation-settings.js")) {
       $supportPath = Join-Path $SelectedRuntimeDir (Split-Path $relative -Leaf)
       if (-not (Test-Path -LiteralPath $supportPath) -or [System.IO.File]::ReadAllText($supportPath) -ne (Read-PayloadText ("payload\src\" + $relative))) { $runtimeCurrent = $false }
     }

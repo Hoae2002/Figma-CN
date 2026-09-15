@@ -5,7 +5,7 @@ const temp = fs.mkdtempSync(path.join(os.tmpdir(), "figboost-electron-"));
 app.setPath("userData", path.join(temp, "user-data")); process.env.LOCALAPPDATA = temp;
 app.disableHardwareAcceleration();
 const root = path.join(__dirname, "../payload/src"), runtime = path.join(temp, "runtime"); fs.mkdirSync(runtime);
-for (const file of ["shared/translation-policy.js", "main/translation-service.js", "main/translation-host.js", "main/translation-settings-preload.js", "main/translation-settings.html", "main/translation-settings.css", "main/translation-settings.js"]) fs.copyFileSync(path.join(root, file), path.join(runtime, path.basename(file)));
+for (const file of ["dictionary/zh-CN.js", "shared/translation-policy.js", "main/translation-service.js", "main/translation-host.js", "main/translation-settings-preload.js", "main/translation-settings.html", "main/translation-settings.css", "main/translation-settings.js"]) fs.copyFileSync(path.join(root, file), path.join(runtime, path.basename(file)));
 const payload = require("node:child_process").execFileSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path.join(__dirname, "build-renderer-fixture.ps1")], { encoding: "utf8", windowsHide: true });
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(fn) { for (let i = 0; i < 40; i++) { if (await fn()) return; await wait(100); } throw Error("Regression condition timed out"); }
@@ -42,17 +42,17 @@ app.whenReady().then(async () => {
   assert.equal(await blocked.text(), "Not found");
   async function command(action, data) { const result = await settings.webContents.executeJavaScript(`window.figBoostSettings.invoke(${JSON.stringify(action)},${JSON.stringify(data || {})})`); assert.equal(result.ok, true, result.error); return result; }
   await until(async () => (await page.webContents.executeJavaScript("document.querySelector('#new').textContent")) === "新控件");
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 1);
   assert.equal(await page.webContents.executeJavaScript("document.querySelector('input').value"), "Default");
   const snap = (await command("snapshot")).state;
   assert.equal(snap.pages.connected, 1);
-  assert.equal(snap.credential, undefined); assert.equal(Object.keys(snap.learned).length, 2);
+  assert.equal(snap.credential, undefined); assert.equal(Object.keys(snap.learned).length, 1);
   assert.equal(await settings.webContents.executeJavaScript("document.querySelector('input[type=password]') === null"), true);
   await settings.webContents.executeJavaScript("document.querySelector('#enabled').click()");
   await until(async () => (await page.webContents.executeJavaScript("document.querySelector('#save').textContent")) === "Save");
   await settings.webContents.executeJavaScript("document.querySelector('#enabled').click()");
   await until(async () => (await page.webContents.executeJavaScript("document.querySelector('#save').textContent")) === "保存");
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 1);
   await settings.webContents.executeJavaScript("document.querySelector('#region').value='toolbar';document.querySelector('#exclude-form').requestSubmit()");
   await until(async () => (await page.webContents.executeJavaScript("document.querySelector('#save').textContent")) === "Save");
   await settings.webContents.executeJavaScript("document.querySelector('#rules button').click()");
@@ -62,9 +62,8 @@ app.whenReady().then(async () => {
   await outsider.loadURL("data:text/html,<html><body>untrusted</body></html>");
   const rejected = await outsider.webContents.executeJavaScript("window.figBoostSettings.invoke('snapshot')"); assert.equal(rejected.ok, false);
   const item = { label: "Save" };
-  assert.equal(host.nativeLabel(item, () => "builtin", true), "Save");
-  await wait(350);
-  item.label = host.nativeLabel(item, () => "builtin", true);
+  assert.equal(host.nativeLabel(item, value => value, true), "保存");
+  item.label = host.nativeLabel(item, value => value, true);
   assert.equal(item.label, "保存"); assert.equal(host.originalLabel(item), "Save");
   await command("settings", { enabled: false });
   assert.equal(host.nativeLabel(item, () => "builtin", true), "Save");
@@ -87,7 +86,7 @@ app.whenReady().then(async () => {
   await command("settings", { enabled: true });
   await until(async () => (await retryPage.webContents.executeJavaScript("document.querySelector('#save').textContent")) === "保存");
   assert.equal((await command("snapshot")).state.pages.pending, 0);
-  console.log("Electron regression passed: anonymous queue, cache reuse, isolated settings with default-session 404, switch, exclusion/restore, protected inputs, untrusted IPC rejection, native asynchronous translation and 600/760/1440/1920px layout.");
+  console.log("Electron regression passed: dictionary-first translation, anonymous fallback queue, cache reuse, isolated settings with default-session 404, switch, exclusion/restore, protected inputs, untrusted IPC rejection, native dictionary translation and 600/760/1440/1920px layout.");
 }).then(() => finish(0)).catch(error => { console.error(error.stack); finish(1); });
 function finish(code) {
   if (host) host.close();

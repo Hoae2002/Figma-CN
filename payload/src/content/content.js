@@ -391,7 +391,7 @@
 
   const extensionApi = typeof chrome === "undefined" ? null : chrome;
   const storage = extensionApi && extensionApi.storage && extensionApi.storage.sync;
-  const dictionary = window.__FIGBOOST_TRANSLATION_RUNTIME__ ? { exact: {}, version: "automatic" } : window.FIGMA_ZH_DICTIONARY || { exact: {}, phrases: [], version: "unknown" };
+  const dictionary = window.FIGMA_ZH_DICTIONARY || { exact: {}, phrases: [], version: "unknown" };
   const core = window.FigmaZhLocalizer;
   if (!core) return;
 
