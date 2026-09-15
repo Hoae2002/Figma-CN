@@ -48,21 +48,13 @@
     if (view && isCommunityLocation(view.location)) return "community";
     const tests = [
       ["menus", "[role='menu'],[role='menuitem'],[role='listbox'],[role='option'],[aria-haspopup='menu'],[aria-haspopup='listbox'],[data-testid*='context-menu']"],
-      ["floating", "[role='tooltip'],[role='dialog'],[role='alertdialog'],[data-testid*='popover' i],[data-testid*='dropdown' i],[data-testid*='tooltip' i],[data-floating-ui-portal],[data-radix-popper-content-wrapper]"],
+      ["floating", "[role='tooltip'],[role='dialog'],[role='alertdialog'],[data-testid*='popover' i],[data-testid*='dropdown' i],[data-testid*='tooltip' i],[class*='popover' i],[class*='dropdown' i],[class*='tooltip' i],[data-floating-ui-portal],[data-radix-popper-content-wrapper]"],
       ["right", "[aria-label='Right sidebar'],[data-testid*='properties-panel'],[data-testid*='right-panel'],[class*='properties_panel'],[class*='right_panel']"],
       ["left", "[aria-label='Left sidebar'],[data-testid*='left-panel'],[class*='left_panel'],[data-testid*='layers-panel']"],
       ["toolbar", "[role='toolbar'],[data-testid*='toolbar'],[class*='toolbar']"],
       ["home", "nav,[role='navigation'],[data-testid*='file-browser-sidebar']"]
     ];
     for (const [region, selector] of tests) if (element.closest(selector)) return region;
-    for (let current = element, depth = 0; current && current !== element.ownerDocument.body && depth < 8; current = current.parentElement, depth += 1) {
-      const marker = `${current.getAttribute("class") || ""} ${current.getAttribute("data-testid") || ""}`;
-      if (/(?:popover|dropdown|tooltip|floating|overlay)/i.test(marker)) return "floating";
-      if (!view || typeof view.getComputedStyle !== "function") continue;
-      const style = view.getComputedStyle(current);
-      const zIndex = Number.parseInt(style.zIndex, 10);
-      if ((style.position === "fixed" || style.position === "absolute") && (Number.isFinite(zIndex) ? zIndex >= 10 : current.parentElement === element.ownerDocument.body)) return "floating";
-    }
     if (view && /^\/files(?:\/|$)/.test(view.location.pathname)) return "home";
     return "other";
   }

@@ -133,9 +133,9 @@ test('font family values and dropdown options never enter either translation pat
 });
 test('current floating menus, typography labels and search placeholders use the dictionary', t => {
   const {runtime, document} = fixture(t, `<section aria-label="Right sidebar"><div><h2>Typography</h2><button role="combobox" aria-label="Font family"><span>Source Han Sans CN</span></button><button role="combobox"><span>Medium</span></button><span>15</span><div>Alignment</div></div></section>
-    <div style="position:fixed;z-index:1000"><button>Add min width…</button><button>Add max width…</button><button>Add min height…</button><button>Add max height…</button></div>
+    <div role="menu"><button>Add min width…</button><button>Add max width…</button><button>Add min height…</button><button>Add max height…</button></div>
     <div class="library-popover"><input value="Private query" placeholder="Search"><p>No colors available</p></div>
-    <div style="position:absolute;z-index:100"><span>Fonts</span></div>`, {}, {
+    <div role="tooltip"><span>Fonts</span></div>`, {}, {
     Typography: "排版", Alignment: "对齐方式", Fonts: "字体", Search: "搜索", "No colors available": "没有可用颜色",
     "Add min width…": "添加最小宽度…", "Add max width…": "添加最大宽度…",
     "Add min height…": "添加最小高度…", "Add max height…": "添加最大高度…"
@@ -148,6 +148,17 @@ test('current floating menus, typography labels and search placeholders use the 
   assert.equal(search.placeholder, "搜索");
   assert.equal(search.value, "Private query");
   assert.ok(document.body.textContent.includes("Source Han Sans CN"));
+});
+
+test('translation policy never forces style calculation in its DOM hot path', t => {
+  const { document, w } = fixture(t, '<div role="menu"><button>Add min width…</button></div>', {}, { "Add min width…": "添加最小宽度…" });
+  let styleReads = 0;
+  w.getComputedStyle = () => { styleReads += 1; throw new Error("forced style calculation"); };
+  const button = document.querySelector("button");
+  for (let index = 0; index < 500; index += 1) {
+    assert.equal(P.regionOf(button), "menus");
+  }
+  assert.equal(styleReads, 0);
 });
 test('current Figma files page uses dictionary only and protects user file names', t => {
   const {runtime, document} = fixture(t, `<body class="feature_flag_canvas_ui3 feature_flag_new_canvas">
