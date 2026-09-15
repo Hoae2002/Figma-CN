@@ -15,6 +15,18 @@ function fixture(t, html, custom = {}, exact = {}) {
   return { w, runtime, localizer, snapshot, document: w.document };
 }
 const tick = () => new Promise(r => setTimeout(r, 50));
+test("reconnecting the same settings revision requeues requests and rejects old replies", async t => {
+  const { document, runtime, snapshot } = fixture(t, '<div role="toolbar"><button>Save</button></div>');
+  const first = runtime.drain().requests[0];
+  runtime.apply(snapshot, true);
+  const second = runtime.drain().requests[0];
+  assert.ok(second.id > first.id);
+  runtime.accept([{ id: first.id, entry: { ...first.c, translation: "旧结果" } }]);
+  assert.equal(document.querySelector('button').textContent, 'Save');
+  runtime.accept([{ id: second.id, entry: { ...second.c, translation: "保存" } }]);
+  await tick();
+  assert.equal(document.querySelector('button').textContent, '保存');
+});
 test("built-in dictionary is bypassed and every safe label uses machine translation", t => {
   const { document, runtime } = fixture(t, '<div role="toolbar"><button>Save</button></div>', {}, { Save: "保存" });
   assert.equal(document.querySelector("button").textContent, "Save"); assert.equal(runtime.drain().requests.length, 1);
@@ -98,4 +110,10 @@ test('whole-area exclusion blocks every label including cached results', t => {
   });
   assert.equal(document.querySelector('button').textContent, 'Save');
   assert.equal(runtime.drain().requests.length, 0);
+});
+
+test('current Figma sidebar landmarks admit headings and buttons, protect names and layer grids', t => {
+  const {runtime} = fixture(t, `<section role="region" aria-label="Left sidebar"><button>Pages</button><div role="grid"><button>Private page</button></div><div role="treegrid"><button>Private layer</button></div><button aria-label="Private file, file name">Private file</button></section><section aria-label="Right sidebar"><h2>Position</h2><button>Share</button></section>`);
+  const texts = runtime.drain().requests.map(j => j.c.text);
+  assert.deepEqual(Array.from(texts).sort(), ['Pages','Position','Share'].sort());
 });

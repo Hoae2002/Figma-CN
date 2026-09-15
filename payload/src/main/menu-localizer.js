@@ -3263,9 +3263,9 @@
         const bridge = buildFigBoostRendererBridgeScript(!isFigmaPage);
         const payload = getRendererPayload();
         if (isFigmaPage && translationHost) {
-          translationHost.attach(contents, payload).then(ok => {
-            if (!ok) contents.executeJavaScript(payload, true).catch(() => {});
-          }).catch(() => {});
+          // The host retries initialization in the isolated world. A main-world
+          // fallback cannot receive settings/results and only hides the failure.
+          translationHost.attach(contents, payload).catch(() => {});
         } else contents.executeJavaScript(bridge + payload, true).catch(() => {});
       } catch (_) {}
     };

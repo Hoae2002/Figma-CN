@@ -20,24 +20,33 @@ function createHost(options = {}) {
     try { return path.resolve(fileURLToPath(event.sender.getURL())).toLowerCase() === path.resolve(settingsFile).toLowerCase(); } catch (_) { return false; }
   }
   const execute = (contents, code) => contents.executeJavaScriptInIsolatedWorld(WORLD, [{ code }]);
-  function snapshot() { return service.snapshot(); }
-  function safePayloadSnapshot() { const s = snapshot(); delete s.usage; delete s.lastError; return s; }
+  function snapshot() {
+    const s = service.snapshot();
+    const pages = [...attached.values()].filter(r => !r.contents.isDestroyed() && isFigmaURL(r.contents.getURL()));
+    s.pages = { connected: pages.filter(r => r.ready).length, pending: pages.filter(r => !r.ready).length };
+    return s;
+  }
+  function safePayloadSnapshot() { const s = service.snapshot(); delete s.usage; delete s.lastError; return s; }
   async function attach(contents, payload) {
     if (!isFigmaURL(contents.getURL()) || typeof contents.executeJavaScriptInIsolatedWorld !== "function") return false;
     const existing = attached.get(contents.id);
-    if (existing && existing.url === contents.getURL()) return true;
-    const record = { contents, url: contents.getURL(), busy: false, pageRevision: -2, epoch: Symbol() };
+    if (existing && existing.url === contents.getURL() && (existing.ready || existing.busy)) return !!existing.ready;
+    const record = { contents, payload, url: contents.getURL(), busy: true, ready: false, retryAt: 0, pageRevision: -2, epoch: Symbol() };
     attached.set(contents.id, record);
     try {
       await execute(contents, payload);
-      await execute(contents, `window.__FIGBOOST_TRANSLATION_RUNTIME__.apply(${JSON.stringify(safePayloadSnapshot())})`);
-    } catch (_) { attached.delete(contents.id); return false; }
+      const initialized = await execute(contents, "Boolean(document.body && window.__FIGBOOST_TRANSLATION_RUNTIME__ && window.__figmaZhLocalizer)");
+      if (!initialized) throw new Error("Translation runtime not ready");
+      await execute(contents, `window.__FIGBOOST_TRANSLATION_RUNTIME__.apply(${JSON.stringify(safePayloadSnapshot())}, true)`);
+      record.ready = true;
+    } catch (_) { record.retryAt = Date.now() + 5000; }
+    finally { record.busy = false; }
     if (!contents.__figBoostTranslationEvents) {
       contents.__figBoostTranslationEvents = true;
       contents.on("did-start-navigation", (_e, _url, inPlace, mainFrame) => { if (mainFrame && !inPlace) attached.delete(contents.id); });
       contents.once("destroyed", () => attached.delete(contents.id));
     }
-    return true;
+    return record.ready;
   }
   async function poll(record) {
     const c = record.contents;
@@ -46,7 +55,7 @@ function createHost(options = {}) {
     record.busy = true;
     try {
       const batch = await execute(c, "window.__FIGBOOST_TRANSLATION_RUNTIME__ && window.__FIGBOOST_TRANSLATION_RUNTIME__.drain()");
-      if (!batch) return;
+      if (!batch) { record.ready = false; record.retryAt = Date.now() + 5000; return; }
       for (const action of (batch.actions || []).slice(0, 10)) if (action.action === "exclude") await service.command("exclude", action.data);
       const epoch = record.epoch, url = c.getURL();
       const requests = (batch.requests || []).slice(0, 50);
@@ -55,16 +64,23 @@ function createHost(options = {}) {
         if (c.isDestroyed() || attached.get(c.id) !== record || record.epoch !== epoch || c.getURL() !== url) return;
         return execute(c, `window.__FIGBOOST_TRANSLATION_RUNTIME__?.accept(${JSON.stringify([{ id: job.id, entry }])})`);
       }).catch(() => {});
-    } catch (_) {} finally { record.busy = false; }
+    } catch (_) { record.ready = false; record.retryAt = Date.now() + 5000; } finally { record.busy = false; }
   }
-  const timer = setInterval(() => { for (const record of attached.values()) void poll(record); }, 250);
+  const timer = setInterval(() => {
+    for (const record of attached.values()) {
+      if (record.contents.isDestroyed()) { attached.delete(record.contents.id); continue; }
+      if (record.ready) void poll(record);
+      else if (!record.busy && Date.now() >= record.retryAt) void attach(record.contents, record.payload);
+    }
+  }, 250);
   timer.unref();
   service.onChange(() => {
     const code = `window.__FIGBOOST_TRANSLATION_RUNTIME__?.apply(${JSON.stringify(safePayloadSnapshot())})`;
     for (const { contents } of attached.values()) if (!contents.isDestroyed()) execute(contents, code).catch(() => {});
   });
   async function startPicker() {
-    const candidate = pickerTarget && attached.get(pickerTarget.id) || [...attached.values()].find(r => !r.contents.isDestroyed() && r.contents.isFocused()) || [...attached.values()].find(r => !r.contents.isDestroyed());
+    const pages = [...attached.values()].filter(r => r.ready && !r.contents.isDestroyed());
+    const candidate = pages.find(r => pickerTarget && r.contents.id === pickerTarget.id) || pages.find(r => r.contents.isFocused()) || pages[0];
     if (!candidate) throw new Error("请先打开 Figma 文件页面，再点选排除");
     await execute(candidate.contents, "window.__FIGBOOST_TRANSLATION_RUNTIME__.startPicker()");
     if (settingsWindow) settingsWindow.hide();
@@ -94,7 +110,8 @@ function createHost(options = {}) {
         const reports = await Promise.all([...attached.values()].map(r => execute(r.contents, "window.__FIGBOOST_TRANSLATION_RUNTIME__?.ruleStatus()").catch(() => [])));
         return { ok: true, rules: snapshot().rules.map(rule => ({ ...rule, matched: reports.flat().some(r => r && r.anchor === rule.anchor && r.region === rule.region && r.matched) })) };
       }
-      return { ok: true, state: await service.command(action, data) };
+      await service.command(action, data);
+      return { ok: true, state: snapshot() };
     } catch (e) { return { ok: false, error: e.message }; }
   });
   function nativeLabel(item, builtin, safe = false) {

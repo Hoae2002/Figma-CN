@@ -14,7 +14,8 @@
   }
   const protectedSelector = [
     "canvas", "svg", "iframe", "webview", "code", "pre", "input", "textarea", "select", "option",
-    "[contenteditable]:not([contenteditable='false'])", "[role='textbox']", "[role='treeitem']",
+    "[contenteditable]:not([contenteditable='false'])", "[role='textbox']", "[role='treeitem']", "[role='treegrid']",
+    "[aria-label$=', file name']", "[aria-label='Left sidebar'] [role='grid']",
     "[data-figma-zh-skip]", "[data-testid*='canvas']", "[data-testid*='viewport']", "[class*='canvas']",
     "[data-testid*='comment']", "[class*='comment']", "[data-testid*='plugin']", "[class*='plugin']",
     "[data-testid*='file-name']", "[data-testid*='file_name']", "[data-testid*='project-name']",
@@ -35,8 +36,8 @@
     const tests = [
       ["menus", "[role='menu'],[role='menuitem'],[data-testid*='context-menu']"],
       ["floating", "[role='tooltip'],[role='dialog'],[role='alertdialog']"],
-      ["right", "[data-testid*='properties-panel'],[data-testid*='right-panel'],[class*='properties_panel'],[class*='right_panel']"],
-      ["left", "[data-testid*='left-panel'],[class*='left_panel'],[data-testid*='layers-panel']"],
+      ["right", "[aria-label='Right sidebar'],[data-testid*='properties-panel'],[data-testid*='right-panel'],[class*='properties_panel'],[class*='right_panel']"],
+      ["left", "[aria-label='Left sidebar'],[data-testid*='left-panel'],[class*='left_panel'],[data-testid*='layers-panel']"],
       ["toolbar", "[role='toolbar'],[data-testid*='toolbar'],[class*='toolbar']"],
       ["home", "nav,[role='navigation'],[data-testid*='file-browser-sidebar']"]
     ];

@@ -6,7 +6,7 @@
 <div id="message" role="status" aria-live="polite">正在读取设置…</div>
 <section aria-labelledby="translate-title"><label class="switch"><span><strong id="translate-title">自动汉化</strong><small>开启后自动翻译，关闭后恢复原文。</small></span><input type="checkbox" id="enabled" disabled></label>
 <p class="muted">无需密钥。未缓存的界面文字会发送给 Google 翻译，结果自动保存；网络不可用时保留原文。画布内容、输入值和用户命名不参与翻译。</p>
-<p id="last-error" class="status-note"></p><p id="cache-status" class="muted"></p></section>
+<p id="last-error" class="status-note"></p><p id="page-status" class="muted"></p><p id="cache-status" class="muted"></p></section>
 <section aria-labelledby="scope-title"><div class="heading-row"><div><h2 id="scope-title">不翻译的区域</h2><p class="muted">点选后立即恢复原文，也可以排除整个面板。</p></div><button type="button" id="pick" class="primary">点选排除</button></div>
 <form id="exclude-form" class="row"><div class="grow"><label for="region">排除整个区域</label><select id="region"></select></div><button type="submit">添加排除</button></form>
 <ul id="rules" class="entries"></ul><p class="muted">点选时按住 Alt 选择上层区域，Esc 退出。没有稳定定位的区域仅本次有效；Figma 改版后可能需要重新选择。</p></section>

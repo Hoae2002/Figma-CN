@@ -24,7 +24,7 @@ if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClo
 
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V7"
 $UpdaterDisableMarker = "FIGMA_ZH_DISABLE_BUILTIN_UPDATER"
-$PatcherVersion = "0.5.0"
+$PatcherVersion = "0.5.1"
 $PayloadFile = "i.js"
 $MainPayloadFile = "m.js"
 $FeatureConfigFile = "features.json"
@@ -492,13 +492,13 @@ function Build-Payload {
     '"use strict";'
     ';(() => {'
     "  const version = $(ConvertTo-JsString $version);"
-    '  if (window.__FIGMA_ZH_OFFICIAL_PRELOAD_INJECTED__ === version) return;'
-    '  window.__FIGMA_ZH_OFFICIAL_PRELOAD_INJECTED__ = version;'
+    '  if (window.__FIGMA_ZH_OFFICIAL_PRELOAD_INJECTED__ === version && window.__FIGBOOST_TRANSLATION_RUNTIME__ && window.__figmaZhLocalizer) return;'
     '  try {'
     (Read-PayloadText "payload\src\shared\translation-policy.js")
     $core
     (Read-PayloadText "payload\src\content\translation-runtime.js")
     $content
+    '  window.__FIGMA_ZH_OFFICIAL_PRELOAD_INJECTED__ = version;'
     '  } catch (error) {'
     '    console.error("[FigmaZh] official preload injection failed", error);'
     '  }'

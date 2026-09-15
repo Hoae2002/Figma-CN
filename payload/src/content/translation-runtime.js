@@ -25,7 +25,7 @@
     if (!P.validCandidate(c)) return null;
     // User-facing tooltips can contain names. Only standalone UI labels are sent.
     if (/["“”‘’]/.test(c.text) || element.querySelector("input,textarea,[contenteditable='true'],[data-testid*='name']")) return null;
-    if (c.context === "label" && !element.closest("label") && !/(?:^|[-_])(?:label|heading|help-text)$/.test(c.anchor || "")) return null;
+    if (c.context === "label" && !element.closest("label,h1,h2,h3,h4,h5,h6,[role='heading']") && !/(?:^|[-_])(?:label|heading|help-text)$/.test(c.anchor || "")) return null;
     if (requests.size >= 1000) return null;
     const token = `${k}:${attr || "text"}`;
     let job = requests.get(token);
@@ -35,8 +35,8 @@
     if (job && !job.nodes.some(n => n.node === node && n.attr === attr)) job.nodes.push({ node, attr, source });
     return null;
   }
-  function apply(snapshot) {
-    if (!snapshot || snapshot.revision === state.revision) return;
+  function apply(snapshot, reconnect = false) {
+    if (!snapshot || (!reconnect && snapshot.revision === state.revision)) return;
     if (localizer) localizer.stop();
     clearTimeout(retryTimer); retryTimer = null;
     state = snapshot; generation++; requests.clear(); outgoing.length = 0; attempted.clear();

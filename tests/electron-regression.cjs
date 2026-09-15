@@ -6,7 +6,7 @@ app.setPath("userData", path.join(temp, "user-data")); process.env.LOCALAPPDATA 
 app.disableHardwareAcceleration();
 const root = path.join(__dirname, "../payload/src"), runtime = path.join(temp, "runtime"); fs.mkdirSync(runtime);
 for (const file of ["shared/translation-policy.js", "main/translation-service.js", "main/translation-host.js", "main/translation-settings-preload.js", "main/translation-settings.html", "main/translation-settings.css", "main/translation-settings.js"]) fs.copyFileSync(path.join(root, file), path.join(runtime, path.basename(file)));
-const payload = ["shared/translation-policy.js", "content/localizer-core.js", "content/translation-runtime.js", "content/content.js"].map(file => fs.readFileSync(path.join(root, file), "utf8")).join("\n");
+const payload = require("node:child_process").execFileSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path.join(__dirname, "build-renderer-fixture.ps1")], { encoding: "utf8", windowsHide: true });
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(fn) { for (let i = 0; i < 40; i++) { if (await fn()) return; await wait(100); } throw Error("Regression condition timed out"); }
 let host;
@@ -45,6 +45,7 @@ app.whenReady().then(async () => {
   assert.equal(calls.length, 2);
   assert.equal(await page.webContents.executeJavaScript("document.querySelector('input').value"), "Default");
   const snap = (await command("snapshot")).state;
+  assert.equal(snap.pages.connected, 1);
   assert.equal(snap.credential, undefined); assert.equal(Object.keys(snap.learned).length, 2);
   assert.equal(await settings.webContents.executeJavaScript("document.querySelector('input[type=password]') === null"), true);
   await settings.webContents.executeJavaScript("document.querySelector('#enabled').click()");
@@ -69,6 +70,23 @@ app.whenReady().then(async () => {
   assert.equal(host.nativeLabel(item, () => "builtin", true), "Save");
   for (const width of [600, 760, 1440, 1920]) { settings.setContentSize(width, 850); assert.equal(await settings.webContents.executeJavaScript("document.documentElement.scrollWidth <= innerWidth"), true); }
   assert.ok(fs.existsSync(path.join(temp, "FigBoost/translation/cache.json")));
+  // Reproduce a failed first injection, then verify automatic recovery with the
+  // installer's actual wrapper instead of a raw concatenation of source files.
+  const retryPage = new BrowserWindow({ show: false, webPreferences: { session: isolatedSession, nodeIntegration: true, contextIsolation: true, sandbox: false } });
+  await retryPage.loadURL("https://www.figma.com/design/retry");
+  const execute = retryPage.webContents.executeJavaScriptInIsolatedWorld.bind(retryPage.webContents);
+  let failOnce = true;
+  retryPage.webContents.executeJavaScriptInIsolatedWorld = (...args) => {
+    if (failOnce) { failOnce = false; return Promise.reject(new Error("Page not ready")); }
+    return execute(...args);
+  };
+  assert.equal(await host.attach(retryPage.webContents, payload), false);
+  assert.equal((await command("snapshot")).state.pages.pending, 1);
+  await wait(5200);
+  await until(async () => (await command("snapshot")).state.pages.connected === 2);
+  await command("settings", { enabled: true });
+  await until(async () => (await retryPage.webContents.executeJavaScript("document.querySelector('#save').textContent")) === "保存");
+  assert.equal((await command("snapshot")).state.pages.pending, 0);
   console.log("Electron regression passed: anonymous queue, cache reuse, isolated settings with default-session 404, switch, exclusion/restore, protected inputs, untrusted IPC rejection, native asynchronous translation and 600/760/1440/1920px layout.");
 }).then(() => finish(0)).catch(error => { console.error(error.stack); finish(1); });
 function finish(code) {

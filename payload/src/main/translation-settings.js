@@ -6,8 +6,10 @@
   function text(tag, value, className) { const e = document.createElement(tag); e.textContent = value; if (className) e.className = className; return e; }
   function render() {
     $("enabled").checked = state.settings.enabled;
-    $("connection").textContent = !state.settings.enabled ? "汉化已关闭" : state.blocked ? "使用已有缓存" : "自动汉化已开启";
-    $("cache-status").textContent = `已缓存 ${Object.keys(state.learned).length.toLocaleString()} 段界面文字，下次自动复用。`;
+    $("connection").textContent = !state.settings.enabled ? "汉化已关闭" : !state.pages?.connected ? "等待页面接入" : state.blocked ? "使用已有缓存" : "自动汉化已开启";
+    const cached = Object.values(state.learned), native = cached.filter(e => e.region === "native").length;
+    $("cache-status").textContent = `已缓存页面文案 ${cached.length - native} 条、桌面菜单 ${native} 条，下次自动复用。`;
+    $("page-status").textContent = state.pages?.connected ? `已连接 ${state.pages.connected} 个 Figma 页面。` : state.pages?.pending ? "页面汉化尚未接入，正在自动重试。" : "尚未连接 Figma 页面，请打开文件；若文件已打开，请在方便时重新启动 Figma。";
     $("last-error").textContent = state.lastError ? `${state.lastError}，稍后自动重试。` : "";
     $("rules").replaceChildren();
     state.rules.forEach((rule, index) => {
