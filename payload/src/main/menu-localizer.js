@@ -840,8 +840,8 @@
     document.getElementById("selectAll").onclick = () => { selected = new Set(files.map((file) => file.key)); render(); };
     document.getElementById("selectNone").onclick = () => { selected = new Set(); render(); };
     document.getElementById("filter").oninput = (event) => { filterText = event.target.value.trim().toLowerCase(); render(); };
-    document.getElementById("cancel").onclick = () => { window.__FIGBOOST_SELECTION_RESULT__ = { canceled: true }; };
-    document.getElementById("export").onclick = () => { window.__FIGBOOST_SELECTION_RESULT__ = { canceled: false, keys: Array.from(selected) }; };
+    document.getElementById("cancel").onclick = () => { Object.defineProperty(window, "__FIGBOOST_RESULT_${selectionWindow.webContents.id}__", { value: { canceled: true }, configurable: true }); };
+    document.getElementById("export").onclick = () => { Object.defineProperty(window, "__FIGBOOST_RESULT_${selectionWindow.webContents.id}__", { value: { canceled: false, keys: Array.from(selected) }, configurable: true }); };
     render();
   </script>
 </body>
@@ -853,7 +853,7 @@
       selectionWindow.show();
     });
     while (!selectionWindow.isDestroyed()) {
-      const result = await selectionWindow.webContents.executeJavaScript("window.__FIGBOOST_SELECTION_RESULT__ || null", true).catch(() => null);
+      const result = await selectionWindow.webContents.executeJavaScript(`window["__FIGBOOST_RESULT_${selectionWindow.webContents.id}__"] || null`, true).catch(() => null);
       if (result) {
         selectionWindow.close();
         if (result.canceled) return null;
