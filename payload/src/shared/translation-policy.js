@@ -103,7 +103,9 @@
   function isToolSectionContent(element, text) {
     const value = normalize(text);
     if (!element || toolSectionTitles.has(value)) return false;
-    for (let current = element, depth = 0; current && depth < 8; current = current.parentElement, depth += 1) {
+    const item = element.closest("button,[role='button'],[role='menuitem'],[role='option'],[role='listitem']");
+    if (!item) return false;
+    for (let current = item, depth = 0; current && depth < 6; current = current.parentElement, depth += 1) {
       let title = null;
       for (const child of Array.from(current.children || [])) {
         if (toolSectionTitles.has(normalize(child.textContent))) { title = child; break; }
@@ -117,19 +119,24 @@
     }
     return false;
   }
-  function isProtectedDynamicValue(element, text) {
+  function isProtectedDynamicValue(element, text, region) {
     if (!element || !element.closest) return false;
-    if (hasFontFamilyContext(element) || isLikelyFontFamilyText(text) || hasTypographyFieldContext(element, text)) return true;
-    if (isToolSectionContent(element, text)) return true;
+    const currentRegion = region || regionOf(element);
+    if (!currentRegion || currentRegion === "other") return false;
+    if (["right", "menus", "floating"].includes(currentRegion)) {
+      if (isLikelyFontFamilyText(text)) return true;
+      const typographyControl = element.closest("[role='combobox'],[role='option'],[role='listbox'],[aria-haspopup='listbox']");
+      if (typographyControl && (hasFontFamilyContext(element) || hasTypographyFieldContext(element, text))) return true;
+    }
+    if (currentRegion === "right" && isToolSectionContent(element, text)) return true;
     return Boolean(element.closest(
       "[data-testid*='tool-item' i],[data-testid*='tool-card' i],[data-testid*='installed-tool' i]," +
       "[data-testid*='widget-name' i],[class*='tool_item' i],[class*='tool-card' i],[class*='installed_tool' i]"
     ));
   }
   function candidate(element, text) {
-    if (isProtectedDynamicValue(element, text)) return null;
     const region = regionOf(element);
-    if (!region) return null;
+    if (!region || region === "other" || isProtectedDynamicValue(element, text, region)) return null;
     const anchors = []; for (let e = element; e; e = e.parentElement) if (e.hasAttribute("data-testid")) anchors.push(e.getAttribute("data-testid"));
     return { text: normalize(text), region, context: contextOf(element), anchor: anchorOf(element), anchors };
   }

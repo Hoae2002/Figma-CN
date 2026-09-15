@@ -150,15 +150,32 @@ test('current floating menus, typography labels and search placeholders use the 
   assert.ok(document.body.textContent.includes("Source Han Sans CN"));
 });
 
-test('translation policy never forces style calculation in its DOM hot path', t => {
-  const { document, w } = fixture(t, '<div role="menu"><button>Add min width…</button></div>', {}, { "Add min width…": "添加最小宽度…" });
-  let styleReads = 0;
+test('bulk UI mutations avoid layout reads and run full candidate recognition once per text', async t => {
+  const { document, w } = fixture(t, '<main></main>', {}, { Save: "保存" });
+  let styleReads = 0, layoutReads = 0, candidateCalls = 0, preliminaryRegionCalls = 0;
   w.getComputedStyle = () => { styleReads += 1; throw new Error("forced style calculation"); };
-  const button = document.querySelector("button");
-  for (let index = 0; index < 500; index += 1) {
-    assert.equal(P.regionOf(button), "menus");
+  w.Element.prototype.getBoundingClientRect = () => { layoutReads += 1; throw new Error("forced layout calculation"); };
+  const policy = w.FigBoostTranslationPolicy;
+  const originalCandidate = policy.candidate;
+  const originalRegionOf = policy.regionOf;
+  policy.candidate = (...args) => { candidateCalls += 1; return originalCandidate(...args); };
+  policy.regionOf = (...args) => { preliminaryRegionCalls += 1; return originalRegionOf(...args); };
+
+  const menu = document.createElement("div");
+  menu.setAttribute("role", "menu");
+  for (let index = 0; index < 100; index += 1) {
+    const button = document.createElement("button");
+    button.textContent = "Save";
+    menu.append(button);
   }
+  document.body.append(menu);
+  await tick();
+
+  assert.equal([...menu.querySelectorAll("button")].filter(button => button.textContent === "保存").length, 100);
+  assert.equal(candidateCalls, 100);
+  assert.equal(preliminaryRegionCalls, 0);
   assert.equal(styleReads, 0);
+  assert.equal(layoutReads, 0);
 });
 test('current Figma files page uses dictionary only and protects user file names', t => {
   const {runtime, document} = fixture(t, `<body class="feature_flag_canvas_ui3 feature_flag_new_canvas">

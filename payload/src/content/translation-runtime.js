@@ -10,13 +10,14 @@
     return P.candidate(node.nodeType === 3 ? node.parentElement : node, source);
   }
   function allowElement(element, source) {
-    const c = P.candidate(element, source);
-    return state.settings.enabled && !!c;
+    if (!state.settings.enabled) return false;
+    const region = P.regionOf(element);
+    return !!region && region !== "other";
   }
   function resolveTranslation(source, node, builtin, attr) {
     const c = candidate(node, source);
     const element = node.nodeType === 3 ? node.parentElement : node;
-    if (!c || !allowElement(element, source)) return null;
+    if (!state.settings.enabled || !c || c.region === "other") return null;
     const k = P.key(c.text, c.region, c.context);
     // The maintained Figma dictionary is authoritative. Machine cache and
     // Google are fallbacks only when the dictionary has no usable result.
