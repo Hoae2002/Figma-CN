@@ -401,6 +401,8 @@
   }
 
   function shouldTranslateAttribute(element, name) {
+    if (window.FigBoostTranslationPolicy
+      && window.FigBoostTranslationPolicy.isProtectedDynamicValue(element, element.getAttribute(name))) return false;
     if (isLayerTreeContentElement(element)) return false;
     if (isUserNamedContentElement(element, element.getAttribute(name))) return false;
     if (isFontStyleAttributeValue(element, element.getAttribute(name))) return false;
@@ -877,6 +879,8 @@
     if (!node || node.nodeType !== Node.TEXT_NODE) return false;
     if (!node.nodeValue || !/[A-Za-z]/.test(node.nodeValue)) return false;
     if (node.nodeValue.trim().length > DEFAULT_OPTIONS.maxTextLength) return false;
+    if (window.FigBoostTranslationPolicy
+      && window.FigBoostTranslationPolicy.isProtectedDynamicValue(node.parentElement, node.nodeValue)) return false;
     if (isProductFilterTerm(node)) return false;
     if (isFontStyleControlTerm(node)) return false;
     const parent = node.parentElement;

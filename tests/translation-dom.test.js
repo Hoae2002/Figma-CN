@@ -118,6 +118,44 @@ test('current Figma sidebar landmarks use only the built-in dictionary', t => {
   assert.equal(runtime.drain().requests.length, 0);
   assert.match(document.body.textContent, /页面/); assert.match(document.body.textContent, /位置/); assert.match(document.body.textContent, /选区颜色/); assert.match(document.body.textContent, /分享/);
 });
+test('right sidebar system headings translate while installed tool names stay original', t => {
+  const {runtime, document} = fixture(t, `<section aria-label="Right sidebar">
+    <div><div><h2>Page</h2></div><div>Page value</div></div>
+    <div><div><h2>Style</h2></div><button>Add</button></div>
+    <div><div><h2>Export</h2></div><button>Add export</button></div>
+    <div data-testid="properties-section"><div><h2>Tools</h2><button aria-label="Add tool">+</button></div><div>
+      <div role="listitem"><span>Chinese content filling assistant</span><button aria-label="Remove">-</button></div>
+      <div role="listitem"><span>Create table</span><button aria-label="Remove">-</button></div>
+      <div role="listitem"><span>IconPark</span><button aria-label="Remove">-</button></div>
+      <div role="listitem"><span>Open noise and texture</span><button aria-label="Remove">-</button></div>
+    </div></div>
+  </section>`, {}, {
+    Page: "页面", Style: "样式", Export: "导出", Tools: "工具",
+    "Chinese content filling assistant": "错误译文一", "Create table": "错误译文二",
+    IconPark: "错误译文三", "Open noise and texture": "错误译文四"
+  });
+  assert.equal(runtime.drain().requests.length, 0);
+  for (const expected of ["页面", "样式", "导出", "工具"]) assert.ok(document.body.textContent.includes(expected), expected);
+  for (const original of ["Chinese content filling assistant", "Create table", "IconPark", "Open noise and texture"]) {
+    assert.ok(document.body.textContent.includes(original), original);
+  }
+  assert.ok(!document.body.textContent.includes("错误译文"));
+});
+test('font family values and dropdown options never enter either translation path', t => {
+  const {runtime, document} = fixture(t, `<section aria-label="Right sidebar">
+    <div><h2>Typography</h2>
+      <button role="combobox" aria-label="Font family"><span>Source Han Sans CN</span></button>
+      <button role="combobox"><span>Futura</span></button>
+      <button role="combobox"><span>Medium</span></button><span>18</span>
+    </div>
+  </section><div role="listbox" aria-label="Font family"><div role="option">Noto Sans SC</div><div role="option">Acme Brand Sans</div></div>`, {}, {
+    Typography: "排版", "Source Han Sans CN": "错误字体一", Futura: "错误字体二", "Noto Sans SC": "错误字体三", "Acme Brand Sans": "错误字体四"
+  });
+  assert.equal(runtime.drain().requests.length, 0);
+  assert.ok(document.body.textContent.includes("排版"));
+  for (const original of ["Source Han Sans CN", "Futura", "Noto Sans SC", "Acme Brand Sans"]) assert.ok(document.body.textContent.includes(original), original);
+  assert.ok(!document.body.textContent.includes("错误字体"));
+});
 test("picker lets a closed dropdown open, then persists an exclusion for its popup item", t => {
   const { document, runtime, w } = fixture(t, '<div role="toolbar"><button id="trigger" aria-haspopup="listbox" aria-expanded="false">Choose</button></div>');
   runtime.drain();
