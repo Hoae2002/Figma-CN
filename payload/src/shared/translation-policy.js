@@ -4,7 +4,7 @@
   else root.FigBoostTranslationPolicy = api;
 })(typeof window === "object" ? window : globalThis, function () {
   "use strict";
-  const regions = { toolbar: "工具栏", menus: "页面菜单", right: "右侧属性面板", left: "左侧面板", home: "文件首页导航", floating: "提示与弹窗", native: "原生桌面菜单", other: "未识别界面（受保护）" };
+  const regions = { community: "社区页面", toolbar: "工具栏", menus: "页面菜单", right: "右侧属性面板", left: "左侧面板", home: "文件首页导航", floating: "提示与弹窗", native: "原生桌面菜单", other: "未识别界面（受保护）" };
   const normalize = value => String(value || "").replace(/\s+/g, " ").trim();
   const key = (text, region, context) => JSON.stringify(["en", "zh-CN", region, context || "label", normalize(text)]);
   function safeText(text) {
@@ -35,8 +35,17 @@
     "a[href*='/design/']", "a[href*='/file/']", "a[href*='/board/']", "a[href*='/proto/']",
     "a[href*='/slides/']", "a[href*='/team/']", "a[href*='/project/']"
   ].join(",");
+  function isCommunityLocation(location) {
+    if (!location) return false;
+    const route = `${location.pathname || ""}${location.search || ""}${location.hash || ""}`.toLowerCase();
+    return /(?:^|[/?#=&])community(?:[/?#=&]|$)/.test(route);
+  }
   function regionOf(element) {
     if (!element || !element.closest || element.closest(protectedSelector)) return null;
+    const view = element.ownerDocument && element.ownerDocument.defaultView;
+    // Community is the only online-translation boundary. Classify the whole
+    // route first so layout changes cannot leak candidates into other regions.
+    if (view && isCommunityLocation(view.location)) return "community";
     const tests = [
       ["menus", "[role='menu'],[role='menuitem'],[role='listbox'],[role='option'],[aria-haspopup='menu'],[aria-haspopup='listbox'],[data-testid*='context-menu']"],
       ["floating", "[role='tooltip'],[role='dialog'],[role='alertdialog']"],
@@ -46,7 +55,6 @@
       ["home", "nav,[role='navigation'],[data-testid*='file-browser-sidebar']"]
     ];
     for (const [region, selector] of tests) if (element.closest(selector)) return region;
-    const view = element.ownerDocument && element.ownerDocument.defaultView;
     if (view && /^\/files(?:\/|$)/.test(view.location.pathname)) return "home";
     return "other";
   }
@@ -74,5 +82,5 @@
     return !!c && Object.hasOwn(regions, c.region) && c.region !== "other" && safeText(c.text)
       && typeof c.context === "string" && /^[a-z:-]{1,40}$/.test(c.context);
   }
-  return { regions, normalize, key, safeText, protectedSelector, regionOf, contextOf, anchorOf, candidate, mode, excluded, validCandidate };
+  return { regions, normalize, key, safeText, protectedSelector, isCommunityLocation, regionOf, contextOf, anchorOf, candidate, mode, excluded, validCandidate };
 });

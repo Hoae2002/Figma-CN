@@ -6,9 +6,11 @@
   function text(tag, value, className) { const e = document.createElement(tag); e.textContent = value; if (className) e.className = className; return e; }
   function render() {
     $("enabled").checked = state.settings.enabled;
-    $("connection").textContent = !state.settings.enabled ? "汉化已关闭" : !state.pages?.connected ? "等待页面接入" : state.blocked ? "使用已有缓存" : "自动汉化已开启";
-    const cached = Object.values(state.learned), native = cached.filter(e => e.region === "native").length;
-    $("cache-status").textContent = `已缓存页面文案 ${cached.length - native} 条、桌面菜单 ${native} 条，下次自动复用。`;
+    $("community-online").checked = state.settings.communityOnline;
+    $("community-online").disabled = false;
+    $("connection").textContent = !state.settings.enabled ? "词库汉化已关闭" : !state.pages?.connected ? "等待页面接入" : state.blocked && state.settings.communityOnline ? "社区使用已有缓存" : state.settings.communityOnline ? "词库＋社区补译已开启" : "词库汉化已开启";
+    const cached = Object.values(state.learned).filter(e => e.region === "community");
+    $("cache-status").textContent = `已缓存社区补译 ${cached.length} 条，下次进入社区自动复用。`;
     $("page-status").textContent = state.pages?.connected ? `已连接 ${state.pages.connected} 个 Figma 页面。` : state.pages?.pending ? "页面汉化尚未接入，正在自动重试。" : "尚未连接 Figma 页面，请打开文件；若文件已打开，请在方便时重新启动 Figma。";
     $("last-error").textContent = state.lastError ? `${state.lastError}，稍后自动重试。` : "";
     $("rules").replaceChildren();
@@ -33,7 +35,8 @@
     finally { if (button) button.disabled = false; }
   }
   for (const [region, label] of Object.entries(P.regions)) if (region !== "other") { const option = text("option", label); option.value = region; $("region").append(option); }
-  $("enabled").addEventListener("change", () => run($("enabled"), "settings", { enabled: $("enabled").checked }, $("enabled").checked ? "已开启自动汉化" : "已恢复界面原文"));
+  $("enabled").addEventListener("change", () => run($("enabled"), "settings", { enabled: $("enabled").checked }, $("enabled").checked ? "已开启词库汉化" : "已恢复界面原文"));
+  $("community-online").addEventListener("change", () => run($("community-online"), "settings", { communityOnline: $("community-online").checked }, $("community-online").checked ? "已开启社区 Google 补译" : "已关闭社区 Google 补译"));
   $("pick").addEventListener("click", () => run($("pick"), "pick", {}, "已进入点选模式，Esc 退出"));
   $("exclude-form").addEventListener("submit", e => { e.preventDefault(); run(e.submitter, "exclude", { scope: "region", region: $("region").value }, "已排除此区域"); });
   window.addEventListener("focus", () => { if (state) run(null, "snapshot", {}, "设置已刷新"); });

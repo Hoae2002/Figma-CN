@@ -119,15 +119,13 @@ function createHost(options = {}) {
     const prior = originals.get(item);
     const original = prior && item.label === prior.translated ? prior.original : item.label;
     if (typeof original !== "string") return original;
-    const s = service.localState(), c = { text: original, region: "native", context: "menu" }, k = P.key(original, "native", "menu");
+    const s = service.localState(), c = { text: original, region: "native", context: "menu" };
     let translated = original;
     if (safe && s.settings.enabled && P.mode(s.settings, "native") !== "original" && !P.excluded(c, s.rules)) {
       const dictionaryValue = typeof builtin === "function" ? builtin(original) : null;
       const exactValue = dictionary.exact && dictionary.exact[P.normalize(original)];
       if (typeof dictionaryValue === "string" && dictionaryValue !== original) translated = dictionaryValue;
       else if (typeof exactValue === "string" && exactValue) translated = exactValue;
-      else if (s.learned[k]) translated = s.learned[k].translation;
-      else void service.translate(c);
     }
     originals.set(item, { original, translated });
     return translated;

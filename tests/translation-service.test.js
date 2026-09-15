@@ -8,11 +8,12 @@ const {
   createService,
   readState,
   googleTransport,
+  refineUiTranslation,
 } = require("../payload/src/main/translation-service");
 const P = require("../payload/src/shared/translation-policy");
 const c = (text) => ({
   text,
-  region: "toolbar",
+  region: "community",
   context: "button",
   anchor: "toolbar-action",
 });
@@ -77,12 +78,12 @@ test("disabled switch and region/ancestor exclusions block requests", async (t) 
   await service.command("settings", { enabled: false });
   assert.equal(await service.translate(c("Save")), null);
   await service.command("settings", { enabled: true });
-  await service.command("exclude", { scope: "region", region: "toolbar" });
+  await service.command("exclude", { scope: "region", region: "community" });
   assert.equal(await service.translate(c("Save")), null);
   await service.command("removeRule", { index: 0 });
   await service.command("exclude", {
     scope: "element",
-    region: "toolbar",
+    region: "community",
     anchor: "toolbar-group",
   });
   assert.equal(
@@ -93,11 +94,11 @@ test("disabled switch and region/ancestor exclusions block requests", async (t) 
   await service.command("removeRule", { index: 0 });
   assert.equal((await service.translate(c("Save"))).translation, "测试");
 });
-test("text exclusions persist for unanchored popup items", async (t) => {
+test("text exclusions persist for unanchored Community items", async (t) => {
   let calls = 0;
   const { service } = fixture(t, async () => { calls++; return ["测试"]; });
-  await service.command("exclude", { scope: "text", region: "menus", context: "option", text: "Private choice" });
-  assert.equal(await service.translate({ text: "Private choice", region: "menus", context: "option", anchor: null, anchors: [] }), null);
+  await service.command("exclude", { scope: "text", region: "community", context: "option", text: "Private choice" });
+  assert.equal(await service.translate({ text: "Private choice", region: "community", context: "option", anchor: null, anchors: [] }), null);
   assert.equal(calls, 0);
   assert.equal(service.snapshot().rules[0].scope, "text");
 });
@@ -110,15 +111,15 @@ test("settings revision rejects an in-flight result without caching", async (t) 
   });
   const result = service.translate(c("Save"));
   await began;
-  await service.command("exclude", { scope: "region", region: "toolbar" });
+  await service.command("exclude", { scope: "region", region: "community" });
   done(["保存"]);
   assert.equal(await result, null);
   assert.equal(Object.keys(service.snapshot().learned).length, 0);
 });
-test("legacy migration retains cache and exclusions but never credentials or manual dictionary", async (t) => {
+test("legacy migration retains data but global machine cache is no longer usable", async (t) => {
   const { service, dir, options } = fixture(t, async () => ["测试"]);
   service.close();
-  const entry = { ...c("Save"), translation: "保存" },
+  const entry = { text: "Save", region: "toolbar", context: "button", anchor: "toolbar-action", translation: "保存" },
     old = {
       schema: 1,
       revision: 3,
@@ -140,9 +141,11 @@ test("legacy migration retains cache and exclusions but never credentials or man
   assert.equal(snap.credential, undefined);
   assert.equal(snap.overrides, undefined);
   assert.equal(snap.settings.regions.native, undefined);
+  assert.equal(snap.settings.communityOnline, true);
   assert.equal(snap.rules[0].scope, "region");
   await reboot.command("removeRule", { index: 0 });
-  assert.equal((await reboot.translate(c("Save"))).translation, "保存");
+  assert.equal(await reboot.translate({ ...entry, translation: undefined }), null);
+  assert.equal((await reboot.translate(c("Save"))).translation, "测试");
   assert.deepEqual(JSON.parse(fs.readFileSync(file)), old);
   reboot.close();
 });
@@ -246,4 +249,21 @@ test("Google transport uses anonymous fixed endpoint and joins sentence fragment
   assert.equal(url.searchParams.has("key"), false);
   assert.equal(options.useSessionCookies, false);
   await assert.rejects(googleTransport(net)(["One", "Two"]));
+});
+test("Google is limited to Community and the separate switch", async (t) => {
+  let calls = 0;
+  const { service } = fixture(t, async () => { calls++; return ["测试"]; });
+  const legacy = { text: "Unknown toolbar action", region: "toolbar", context: "button", anchor: "toolbar-action" };
+  assert.equal(await service.translate(legacy), null);
+  await service.command("settings", { communityOnline: false });
+  assert.equal(await service.translate(c("Unknown Community action")), null);
+  await service.command("settings", { communityOnline: true });
+  assert.equal((await service.translate(c("Unknown Community action"))).translation, "测试");
+  assert.equal(calls, 1);
+});
+test("UI glossary normalizes common Figma design terminology", () => {
+  assert.equal(refineUiTranslation("Create component variants and frame styles", "创建部件变种和框架风格"), "创建组件变体和画框样式");
+  assert.equal(refineUiTranslation("Browse libraries and assets for prototypes", "浏览图书馆和资产以获取样机"), "浏览资源库和资源以获取原型");
+  assert.equal(refineUiTranslation("Use Figma Make to build a design system", "使用 Figma 制作构建设计体系"), "使用 Figma Make 构建设计系统");
+  assert.equal(refineUiTranslation("Read a travel story", "阅读旅行故事"), "阅读旅行故事");
 });

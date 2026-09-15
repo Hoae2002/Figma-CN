@@ -59,3 +59,11 @@ test("untranslated classification separates UI and protected tokens", () => {
   assert.equal(translator.classifyUntranslated("already translated 中文"), "ui");
   assert.equal(translator.classifyUntranslated("纯中文"), "none");
 });
+
+test("bundled dictionary covers current Community UI wording", () => {
+  const dictionary = require("../payload/src/dictionary/zh-CN.js");
+  const translator = core.createTranslator(dictionary);
+  assert.equal(translator.translate("Explore community-made libraries, plugins, icon sets, and more"), "探索社区创作者制作的资源库、插件、图标集等内容");
+  assert.equal(translator.translate("Figma creations"), "Figma 创作");
+  assert.equal(translator.translate("Try it..."), "试用…");
+});

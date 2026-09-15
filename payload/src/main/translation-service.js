@@ -1,14 +1,48 @@
 "use strict";
 const fs = require("fs"), path = require("path");
 const P = require(fs.existsSync(path.join(__dirname, "translation-policy.js")) ? "./translation-policy.js" : "../shared/translation-policy.js");
-const defaults = () => ({ schema: 2, revision: 0, settings: { enabled: true, regions: {} }, learned: {}, rules: [] });
+const defaults = () => ({ schema: 2, revision: 0, settings: { enabled: true, communityOnline: true, regions: {} }, learned: {}, rules: [] });
 const validTranslation = s => typeof s === "string" && s.trim() && s.length <= 2000 && !/[<>\u0000-\u0008]/.test(s);
+const UI_GLOSSARY = [
+  [/\bcomponent properties\b/i, [[/组件的?属性|部件属性|构件属性/g, "组件属性"]]],
+  [/\bauto[- ]?layout\b/i, [[/自动排版|自动版式/g, "自动布局"]]],
+  [/\bdesign systems?\b/i, [[/设计体系|设计制度/g, "设计系统"]]],
+  [/\bwireframes?\b/i, [[/线框模型|线框架构|线框(?!图)/g, "线框图"]]],
+  [/\bcomponents?\b/i, [[/组成部分|部件|构件/g, "组件"]]],
+  [/\bvariants?\b/i, [[/变种|变型/g, "变体"]]],
+  [/\binstances?\b/i, [[/事例|例子/g, "实例"]]],
+  [/\bframes?\b/i, [[/框架|帧/g, "画框"]]],
+  [/\blayers?\b/i, [[/层次|图层层级/g, "图层"]]],
+  [/\bstyles?\b/i, [[/款式|风格/g, "样式"]]],
+  [/\bassets?\b/i, [[/资产/g, "资源"]]],
+  [/\blibraries?\b/i, [[/图书馆|程序库/g, "资源库"]]],
+  [/\bplugins?\b/i, [[/外挂|附加组件/g, "插件"]]],
+  [/\bwidgets?\b/i, [[/小部件|窗口小部件/g, "小组件"]]],
+  [/\bprototypes?\b/i, [[/原型机|样机/g, "原型"]]],
+  [/\bmockups?\b/i, [[/模型|模拟图/g, "视觉稿"]]],
+  [/\bconstraints?\b/i, [[/限制条件|制约因素/g, "约束"]]],
+  [/\bstrokes?\b/i, [[/中风|笔划|行程/g, "描边"]]],
+  [/\bfills?\b/i, [[/灌装|填写内容/g, "填充"]]],
+  [/\bcorner radius\b/i, [[/角半径/g, "圆角"]]],
+  [/\bFigma Make\b/i, [[/Figma\s*制作\s*/g, "Figma Make "]]],
+];
+function refineUiTranslation(source, translation) {
+  let value = String(translation || "").trim();
+  for (const [sourcePattern, replacements] of UI_GLOSSARY) {
+    sourcePattern.lastIndex = 0;
+    if (!sourcePattern.test(source)) continue;
+    for (const [wrong, preferred] of replacements) value = value.replace(wrong, preferred);
+  }
+  return value;
+}
 function validateState(s) {
   if (!s || ![1, 2].includes(s.schema) || !s.settings || typeof s.settings.enabled !== "boolean" || !s.learned || !Array.isArray(s.rules) || !Number.isSafeInteger(s.revision)) throw Error("缓存格式不兼容");
   if (s.schema === 1) {
     // Preserve machine results and exclusions, never use old credentials or manual entries.
-    s = { schema: 2, revision: s.revision + 1, settings: { enabled: s.settings.enabled, regions: Object.fromEntries(Object.entries(s.settings.regions || {}).filter(([, v]) => v === "original")) }, learned: s.learned, rules: s.rules };
+    s = { schema: 2, revision: s.revision + 1, settings: { enabled: s.settings.enabled, communityOnline: true, regions: Object.fromEntries(Object.entries(s.settings.regions || {}).filter(([, v]) => v === "original")) }, learned: s.learned, rules: s.rules };
   }
+  if (s.settings.communityOnline === undefined) s.settings.communityOnline = true;
+  if (typeof s.settings.communityOnline !== "boolean") throw Error("社区补译设置无效");
   for (const [k, e] of Object.entries(s.learned)) if (!P.validCandidate(e) || !validTranslation(e.translation) || k !== P.key(e.text, e.region, e.context)) throw Error("缓存数据损坏");
   for (const r of s.rules) {
     const validRegion = r && Object.hasOwn(P.regions, r.region) && r.region !== "other";
@@ -65,7 +99,7 @@ function createService({ dir, transport, now = () => new Date(), debounceMs = 18
   }
   function change() { state.revision++; persist(); for (const fn of listeners) fn(); }
   function snapshot() { return JSON.parse(JSON.stringify({ ...state, lastError, blocked: now().getTime() < blockedUntil })); }
-  function allowed(c) { return !closed && state.settings.enabled && P.validCandidate(c) && P.mode(state.settings, c.region) !== "original" && !P.excluded(c, state.rules); }
+  function allowed(c) { return !closed && state.settings.enabled && state.settings.communityOnline && c && c.region === "community" && P.validCandidate(c) && P.mode(state.settings, c.region) !== "original" && !P.excluded(c, state.rules); }
   function finish(job, value) { pending.delete(job.key); job.resolve(value); }
   async function run(job) {
     try {
@@ -77,7 +111,9 @@ function createService({ dir, transport, now = () => new Date(), debounceMs = 18
       }
       if (!Array.isArray(values) || values.length !== 1 || !validTranslation(values[0])) throw Error("翻译响应无效，未缓存");
       if (!allowed(job.c) || job.revision !== state.revision) return finish(job, null);
-      const entry = { ...job.c, translation: values[0].trim(), source: "google-web", updatedAt: now().toISOString() };
+      const translation = refineUiTranslation(job.c.text, values[0]);
+      if (!validTranslation(translation)) throw Error("翻译响应无效，未缓存");
+      const entry = { ...job.c, translation, source: "google-web-ui", updatedAt: now().toISOString() };
       delete state.learned[job.key]; state.learned[job.key] = entry;
       const keys = Object.keys(state.learned); for (const key of keys.slice(0, Math.max(0, keys.length - 10000))) delete state.learned[key];
       persist(); lastError = ""; finish(job, entry);
@@ -107,8 +143,11 @@ function createService({ dir, transport, now = () => new Date(), debounceMs = 18
   async function command(action, data = {}) {
     if (action === "snapshot") return snapshot();
     if (action === "settings") {
-      if (typeof data.enabled !== "boolean") throw Error("汉化开关无效");
-      state.settings.enabled = data.enabled; blockedUntil = 0;
+      let changed = false;
+      if (Object.hasOwn(data, "enabled")) { if (typeof data.enabled !== "boolean") throw Error("汉化开关无效"); state.settings.enabled = data.enabled; changed = true; }
+      if (Object.hasOwn(data, "communityOnline")) { if (typeof data.communityOnline !== "boolean") throw Error("社区补译开关无效"); state.settings.communityOnline = data.communityOnline; changed = true; }
+      if (!changed) throw Error("汉化设置无效");
+      blockedUntil = 0;
     } else if (action === "exclude") {
       if (!Object.hasOwn(P.regions, data.region) || data.region === "other") throw Error("无法排除此区域");
       const rule = data.scope === "region"
@@ -129,4 +168,4 @@ function createService({ dir, transport, now = () => new Date(), debounceMs = 18
   for (const [region, mode] of Object.entries(state.settings.regions || {})) if (mode === "original" && !state.rules.some(r => r.region === region && r.scope === "region")) state.rules.push({ region, scope: "region", text: P.regions[region] });
   return { snapshot, command, translate, localState: () => state, onChange: fn => listeners.add(fn), close: () => { closed = true; clearTimeout(timer); while (waiting.length) finish(waiting.shift(), null); } };
 }
-module.exports = { createService, googleTransport, readState, defaults };
+module.exports = { createService, googleTransport, readState, defaults, refineUiTranslation };

@@ -23,7 +23,7 @@ app.whenReady().then(async () => {
   const isolatedSession = session.fromPartition("figboost-test");
   await isolatedSession.protocol.handle("https", () => new Response('<!doctype html><html><body><div role="toolbar"><button id="save">Save</button><button id="new" data-testid="novel-action">Gizmo frobnication</button><input value="Default"></div></body></html>', { headers: { "content-type": "text/html" } }));
   const page = new BrowserWindow({ show: false, webPreferences: { session: isolatedSession, nodeIntegration: false, contextIsolation: true, sandbox: true } });
-  await page.loadURL("https://www.figma.com/design/fixture");
+  await page.loadURL("https://www.figma.com/community");
   assert.equal(await host.attach(page.webContents, payload), true);
   assert.equal(await page.webContents.executeJavaScript("typeof window.__FIGBOOST_TRANSLATION_RUNTIME__"), "undefined");
   await until(async () => (await page.webContents.executeJavaScript("document.querySelector('#save').textContent")) === "保存");
@@ -48,12 +48,18 @@ app.whenReady().then(async () => {
   assert.equal(snap.pages.connected, 1);
   assert.equal(snap.credential, undefined); assert.equal(Object.keys(snap.learned).length, 1);
   assert.equal(await settings.webContents.executeJavaScript("document.querySelector('input[type=password]') === null"), true);
+  await settings.webContents.executeJavaScript("document.querySelector('#community-online').click()");
+  await until(async () => (await page.webContents.executeJavaScript("document.querySelector('#new').textContent")) === "Gizmo frobnication");
+  assert.equal(await page.webContents.executeJavaScript("document.querySelector('#save').textContent"), "保存");
+  await settings.webContents.executeJavaScript("document.querySelector('#community-online').click()");
+  await until(async () => (await page.webContents.executeJavaScript("document.querySelector('#new').textContent")) === "新控件");
+  assert.equal(calls.length, 1);
   await settings.webContents.executeJavaScript("document.querySelector('#enabled').click()");
   await until(async () => (await page.webContents.executeJavaScript("document.querySelector('#save').textContent")) === "Save");
   await settings.webContents.executeJavaScript("document.querySelector('#enabled').click()");
   await until(async () => (await page.webContents.executeJavaScript("document.querySelector('#save').textContent")) === "保存");
   assert.equal(calls.length, 1);
-  await settings.webContents.executeJavaScript("document.querySelector('#region').value='toolbar';document.querySelector('#exclude-form').requestSubmit()");
+  await settings.webContents.executeJavaScript("document.querySelector('#region').value='community';document.querySelector('#exclude-form').requestSubmit()");
   await until(async () => (await page.webContents.executeJavaScript("document.querySelector('#save').textContent")) === "Save");
   await settings.webContents.executeJavaScript("document.querySelector('#rules button').click()");
   await until(async () => (await page.webContents.executeJavaScript("document.querySelector('#save').textContent")) === "保存");
@@ -86,7 +92,7 @@ app.whenReady().then(async () => {
   await command("settings", { enabled: true });
   await until(async () => (await retryPage.webContents.executeJavaScript("document.querySelector('#save').textContent")) === "保存");
   assert.equal((await command("snapshot")).state.pages.pending, 0);
-  console.log("Electron regression passed: dictionary-first translation, anonymous fallback queue, cache reuse, isolated settings with default-session 404, switch, exclusion/restore, protected inputs, untrusted IPC rejection, native dictionary translation and 600/760/1440/1920px layout.");
+  console.log("Electron regression passed: dictionary-only regular pages and native menus, Community-only Google fallback, UI switch and cache reuse, isolated settings with default-session 404, exclusion/restore, protected inputs, untrusted IPC rejection and responsive layout.");
 }).then(() => finish(0)).catch(error => { console.error(error.stack); finish(1); });
 function finish(code) {
   if (host) host.close();

@@ -10,13 +10,13 @@ function fixture(t, html, custom = {}, exact = {}, pageUrl = "https://www.figma.
   const runtime = w.__FIGBOOST_TRANSLATION_RUNTIME__;
   const localizer = w.FigmaZhLocalizer.createLocalizer({ exact, phrases: [], uiTerms: {}, commonTerms: {}, patterns: [] }, { allowElement: runtime.allowElement, resolveTranslation: runtime.resolveTranslation });
   runtime.bind(localizer);
-  const snapshot = { schema: 1, revision: 1, settings: { enabled: true, online: true, regions: {} }, hasKey: true, learned: {}, overrides: {}, rules: [], ...custom };
+  const snapshot = { schema: 2, revision: 1, settings: { enabled: true, communityOnline: true, regions: {} }, learned: {}, rules: [], ...custom };
   runtime.apply(snapshot);
   return { w, runtime, localizer, snapshot, document: w.document };
 }
 const tick = () => new Promise(r => setTimeout(r, 50));
 test("reconnecting the same settings revision requeues requests and rejects old replies", async t => {
-  const { document, runtime, snapshot } = fixture(t, '<div role="toolbar"><button>Save</button></div>');
+  const { document, runtime, snapshot } = fixture(t, '<div role="toolbar"><button>Save</button></div>', {}, {}, "https://www.figma.com/community");
   const first = runtime.drain().requests[0];
   runtime.apply(snapshot, true);
   const second = runtime.drain().requests[0];
@@ -33,12 +33,12 @@ test("built-in dictionary wins over learned machine cache and does not request G
   assert.equal(document.querySelector("button").textContent, "保存"); assert.equal(runtime.drain().requests.length, 0);
 });
 test("unknown UI stays visible then uses learned translation; local offline reuse works", async t => {
-  const { document, runtime, snapshot } = fixture(t, '<div role="toolbar"><button>New gizmo</button></div>');
+  const { document, runtime, snapshot } = fixture(t, '<div role="toolbar"><button>New gizmo</button></div>', {}, {}, "https://www.figma.com/community");
   const button = document.querySelector("button"); assert.equal(button.textContent, "New gizmo"); assert.equal(button.closest("[data-figma-zh-pending]"), null);
   const job = runtime.drain().requests[0]; assert.ok(job);
   const entry = { ...job.c, translation: "新控件" }; runtime.accept([{ id: job.id, entry }]); await tick();
   assert.equal(button.textContent, "新控件");
-  runtime.apply({ ...snapshot, revision: 2, settings: { ...snapshot.settings, online: false }, learned: { [P.key(job.c.text, job.c.region, job.c.context)]: entry } });
+  runtime.apply({ ...snapshot, revision: 2, learned: { [P.key(job.c.text, job.c.region, job.c.context)]: entry } });
   assert.equal(button.textContent, "新控件"); assert.equal(runtime.drain().requests.length, 0);
 });
 test("no editing events, input values, named content, canvas, code or plugin text are translated", async t => {
@@ -50,14 +50,14 @@ test("no editing events, input values, named content, canvas, code or plugin tex
   assert.equal(runtime.drain().requests.length, 0);
 });
 test("response cannot overwrite reused or detached nodes", async t => {
-  const { document, runtime } = fixture(t, '<div role="toolbar"><button>New gizmo</button><button>New widget</button></div>');
+  const { document, runtime } = fixture(t, '<div role="toolbar"><button>New gizmo</button><button>New widget</button></div>', {}, {}, "https://www.figma.com/community");
   const jobs = runtime.drain().requests, buttons = document.querySelectorAll("button");
   buttons[0].textContent = "Changed"; buttons[1].remove();
   runtime.accept(jobs.map(job => ({ id: job.id, entry: { ...job.c, translation: "错误覆盖" } }))); await tick();
   assert.equal(buttons[0].textContent, "Changed"); assert.equal(buttons[1].textContent, "New widget");
 });
 test("switch off during request invalidates responses and restores only our own current text", async t => {
-  const { document, runtime, snapshot } = fixture(t, '<div role="toolbar"><button>Save</button><button>New gizmo</button></div>', {}, { Save: "保存" });
+  const { document, runtime, snapshot } = fixture(t, '<div role="toolbar"><button>Save</button><button>New gizmo</button></div>', {}, { Save: "保存" }, "https://www.figma.com/community");
   const jobs = runtime.drain().requests, buttons = document.querySelectorAll("button");
   buttons[0].firstChild.nodeValue = "Figma changed this";
   runtime.apply({ ...snapshot, revision: 2, settings: { ...snapshot.settings, enabled: false } });
@@ -65,10 +65,10 @@ test("switch off during request invalidates responses and restores only our own 
   assert.equal(buttons[0].textContent, "Figma changed this"); assert.equal(buttons[1].textContent, "New gizmo");
 });
 test("cached translations remain the fallback when the dictionary misses", t => {
-  const k = P.key("Save", "toolbar", "button");
-  const { runtime, snapshot, document } = fixture(t, '<div role="toolbar"><button>Save</button></div>', { learned: { [k]: { translation: "缓存译文" } } });
+  const k = P.key("Save", "community", "button");
+  const { runtime, snapshot, document } = fixture(t, '<div role="toolbar"><button>Save</button></div>', { learned: { [k]: { translation: "缓存译文" } } }, {}, "https://www.figma.com/community");
   assert.equal(document.querySelector("button").textContent, "缓存译文");
-  runtime.apply({ ...snapshot, revision: 2, settings: { ...snapshot.settings, regions: { toolbar: "original" } } });
+  runtime.apply({ ...snapshot, revision: 2, settings: { ...snapshot.settings, regions: { community: "original" } } });
   assert.equal(document.querySelector("button").textContent, "Save");
 });
 test("persistent exclusions survive recreated elements and block gradient special handling", async t => {
@@ -113,10 +113,10 @@ test('whole-area exclusion blocks every label including cached results', t => {
   assert.equal(runtime.drain().requests.length, 0);
 });
 
-test('current Figma sidebar landmarks admit headings and buttons, protect names and layer grids', t => {
-  const {runtime} = fixture(t, `<body class="feature_flag_canvas_ui3"><section role="region" aria-label="Left sidebar"><button>Pages</button><div role="grid"><button>Private page</button></div><div role="treegrid"><button>Private layer</button></div><button aria-label="Private file, file name">Private file</button></section><section aria-label="Right sidebar"><h2>Position</h2><span>Selection colors</span><button>Share</button></section></body>`);
-  const texts = runtime.drain().requests.map(j => j.c.text);
-  assert.deepEqual(Array.from(texts).sort(), ['Left sidebar','Pages','Position','Right sidebar','Selection colors','Share'].sort());
+test('current Figma sidebar landmarks use only the built-in dictionary', t => {
+  const {runtime, document} = fixture(t, `<body class="feature_flag_canvas_ui3"><section role="region" aria-label="Left sidebar"><button>Pages</button><div role="grid"><button>Private page</button></div><div role="treegrid"><button>Private layer</button></div><button aria-label="Private file, file name">Private file</button></section><section aria-label="Right sidebar"><h2>Position</h2><span>Selection colors</span><button>Share</button></section></body>`, {}, { Pages: "页面", Position: "位置", "Selection colors": "选区颜色", Share: "分享" });
+  assert.equal(runtime.drain().requests.length, 0);
+  assert.match(document.body.textContent, /页面/); assert.match(document.body.textContent, /位置/); assert.match(document.body.textContent, /选区颜色/); assert.match(document.body.textContent, /分享/);
 });
 test("picker lets a closed dropdown open, then persists an exclusion for its popup item", t => {
   const { document, runtime, w } = fixture(t, '<div role="toolbar"><button id="trigger" aria-haspopup="listbox" aria-expanded="false">Choose</button></div>');
@@ -147,8 +147,8 @@ test("picker uses a stable ancestor anchor for a whole popup container", t => {
   assert.equal(action.data.scope, "element"); assert.equal(action.data.anchor, "style-picker-menu"); assert.equal(action.data.region, "menus");
 });
 
-test('current Figma files page is not hidden by body canvas feature flags and protects user file names', t => {
-  const {runtime} = fixture(t, `<body class="feature_flag_canvas_ui3 feature_flag_new_canvas">
+test('current Figma files page uses dictionary only and protects user file names', t => {
+  const {runtime, document} = fixture(t, `<body class="feature_flag_canvas_ui3 feature_flag_new_canvas">
     <nav aria-label="Sidebar">
       <ul><li><button><span>Drafts</span></button></li><li><div><span>Community</span></div></li></ul>
       <section><button><i18n-text>Starred</i18n-text></button><div><button aria-description="Design file"><span>Private sidebar file</span></button></div></section>
@@ -157,9 +157,19 @@ test('current Figma files page is not hidden by body canvas feature flags and pr
     <div role="tablist"><button role="tab"><span>Recently viewed</span></button></div>
     <div role="combobox"><span>All files</span></div>
     <main><div role="listitem"><div role="group" aria-label="Private card file"><h2>Private card file</h2><button aria-label="Add to Starred"></button></div></div></main>
-  </body>`, {}, {}, "https://www.figma.com/files/team/test/recents-and-sharing/recently-viewed");
-  const texts = runtime.drain().requests.map(job => job.c.text);
-  for (const expected of ['Drafts', 'Community', 'Starred', 'Recents', 'Recently viewed', 'All files']) assert.ok(texts.includes(expected), expected);
-  assert.ok(!texts.includes('Private sidebar file'));
-  assert.ok(!texts.includes('Private card file'));
+  </body>`, {}, { Drafts: "草稿", Community: "社区", Starred: "已加星标", Recents: "最近", "Recently viewed": "最近查看", "All files": "所有文件" }, "https://www.figma.com/files/team/test/recents-and-sharing/recently-viewed");
+  assert.equal(runtime.drain().requests.length, 0);
+  for (const expected of ["草稿", "社区", "已加星标", "最近", "最近查看", "所有文件"]) assert.ok(document.body.textContent.includes(expected), expected);
+  assert.ok(document.body.textContent.includes('Private sidebar file'));
+  assert.ok(document.body.textContent.includes('Private card file'));
+});
+test("Community route owns Google requests and its switch preserves dictionary translation", t => {
+  const { runtime, document, snapshot } = fixture(t, '<nav><button>Save</button><button>New design resource</button></nav>', {}, { Save: "保存" }, "https://www.figma.com/files/team/test/community");
+  assert.equal(P.regionOf(document.querySelector("button")).toString(), "community");
+  assert.equal(document.querySelectorAll("button")[0].textContent, "保存");
+  assert.equal(runtime.drain().requests.length, 1);
+  runtime.apply({ ...snapshot, revision: 2, settings: { ...snapshot.settings, communityOnline: false } });
+  assert.equal(document.querySelectorAll("button")[0].textContent, "保存");
+  assert.equal(document.querySelectorAll("button")[1].textContent, "New design resource");
+  assert.equal(runtime.drain().requests.length, 0);
 });

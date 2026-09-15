@@ -1321,6 +1321,7 @@
     "Explore a diverse range of whiteboard templates designed to enhance collaboration and creativity during brainstorming sessions and group projects.": "探索各种各样的白板模板，旨在增强头脑风暴和团队项目中的协作和创造力。",
     "Explore and add more Community libraries from this tab.": "从这个选项卡中探索并添加更多的社区库。",
     "Explore Community": "探索社区",
+    "Explore community-made libraries, plugins, icon sets, and more": "探索社区创作者制作的资源库、插件、图标集等内容",
     "Explore creators": "探索创作者",
     "Explore component behavior": "探索组件行为",
     "Explore diagramming and chart templates, designed to help you visualize ideas with ease.": "探索图表和图表模板，旨在帮助您轻松可视化想法。",
@@ -1380,6 +1381,7 @@
     "Figma Catan (Playable)": "Figma 卡坦岛 (可玩)",
     "Figma AI Credits": "Figma AI 额度",
     "Figma Community": "Figma 社区",
+    "Figma creations": "Figma 创作",
     "Figma connects everyone in the design process so teams can deliver better products, faster.": "Figma 将设计过程中的每个人联系起来，让团队可以更快地交付更好的产品。",
     "Figma context where you need it": "随处即用的 Figma 上下文信息",
     "Figma Desktop App version 126.3.12": "Figma 桌面应用版本 126.3.12",
@@ -3553,6 +3555,9 @@
     "Try FigJam for…": "试试把 FigJam 用于…",
     "Try Figma for free": "免费体验 Figma",
     "Try Figma for free.": "免费体验 Figma",
+    "Try it": "试用",
+    "Try it...": "试用…",
+    "Try it…": "试用…",
     "Try it out": "试试看",
     "Try new component property authoring features": "尝试新的组件属性编写功能。",
     "Try now": "立即重试",
@@ -5109,7 +5114,7 @@
     uiTerms,
     commonTerms,
     patterns,
-    version: "1.0.6"
+    version: "1.0.7"
   };
   if (typeof window === "object") window.FIGMA_ZH_DICTIONARY = dictionary;
   if (typeof module === "object" && module.exports) module.exports = dictionary;
