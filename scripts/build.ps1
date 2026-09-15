@@ -1,6 +1,6 @@
 ﻿param(
   [string]$OutputPath = "$PSScriptRoot\..\FigBoost.exe",
-  [string]$Version = "0.4.1"
+  [string]$Version = "0.5.0"
 )
 
 $ErrorActionPreference = "Stop"
@@ -15,7 +15,6 @@ New-Item -ItemType Directory -Force -Path (Split-Path -Parent $output) | Out-Nul
 
 $payloadFiles = @(
   "payload\manifest.json",
-  "payload\src\dictionary\zh-CN.js",
   "payload\src\content\localizer-core.js",
   "payload\src\content\content.js",
   "payload\src\main\menu-localizer.js",

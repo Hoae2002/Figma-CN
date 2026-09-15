@@ -15,9 +15,9 @@ function fixture(t, html, custom = {}, exact = {}) {
   return { w, runtime, localizer, snapshot, document: w.document };
 }
 const tick = () => new Promise(r => setTimeout(r, 50));
-test("local dictionary renders immediately without generating network requests", t => {
+test("built-in dictionary is bypassed and every safe label uses machine translation", t => {
   const { document, runtime } = fixture(t, '<div role="toolbar"><button>Save</button></div>', {}, { Save: "保存" });
-  assert.equal(document.querySelector("button").textContent, "保存"); assert.equal(runtime.drain().requests.length, 0);
+  assert.equal(document.querySelector("button").textContent, "Save"); assert.equal(runtime.drain().requests.length, 1);
 });
 test("unknown UI stays visible then uses learned translation; local offline reuse works", async t => {
   const { document, runtime, snapshot } = fixture(t, '<div role="toolbar"><button>New gizmo</button></div>');
@@ -51,10 +51,10 @@ test("switch off during request invalidates responses and restores only our own 
   runtime.accept(jobs.map(job => ({ id: job.id, entry: { ...job.c, translation: "错误覆盖" } }))); await tick();
   assert.equal(buttons[0].textContent, "Figma changed this"); assert.equal(buttons[1].textContent, "New gizmo");
 });
-test("manual overrides and original-mode regions precede dictionary and machine cache", t => {
+test("manual overrides are ignored while cached translations and original regions work", t => {
   const k = P.key("Save", "toolbar", "button");
-  const { runtime, snapshot, document } = fixture(t, '<div role="toolbar"><button>Save</button></div>', { overrides: { [k]: { translation: "存储" } } }, { Save: "保存" });
-  assert.equal(document.querySelector("button").textContent, "存储");
+  const { runtime, snapshot, document } = fixture(t, '<div role="toolbar"><button>Save</button></div>', { overrides: { [k]: { translation: "存储" } }, learned: { [k]: { translation: "缓存译文" } } }, { Save: "保存" });
+  assert.equal(document.querySelector("button").textContent, "缓存译文");
   runtime.apply({ ...snapshot, revision: 2, settings: { ...snapshot.settings, regions: { toolbar: "original" } } });
   assert.equal(document.querySelector("button").textContent, "Save");
 });
@@ -78,5 +78,24 @@ test("user names matching system dictionary labels remain original", t => {
 });
 test("unknown dialog prose is not automatically treated as a safe UI label", t => {
   const { runtime } = fixture(t, '<div role="dialog"><p>Alice invited you to Private Workspace</p></div>');
+  assert.equal(runtime.drain().requests.length, 0);
+});
+
+test('container exclusion protects new descendants and recreated controls', async t => {
+  const { document, runtime, snapshot } = fixture(t, '<div role="toolbar"><div data-testid="action-group"><button data-testid="save-action">Save</button></div></div>');
+  runtime.drain();
+  runtime.apply({ ...snapshot, revision: 2, rules: [{ scope: 'element', region: 'toolbar', anchor: 'action-group', text: 'Actions' }] });
+  document.querySelector('[data-testid="action-group"]').innerHTML = '<button data-testid="new-action">New gizmo</button>';
+  await tick();
+  assert.equal(runtime.drain().requests.length, 0);
+  assert.equal(document.querySelector('button').textContent, 'New gizmo');
+});
+
+test('whole-area exclusion blocks every label including cached results', t => {
+  const { document, runtime } = fixture(t, '<div role="toolbar"><button>Save</button></div>', {
+    rules: [{ scope: 'region', region: 'toolbar' }],
+    learned: { [P.key('Save', 'toolbar', 'button')]: { text: 'Save', region: 'toolbar', context: 'button', translation: '保存' } }
+  });
+  assert.equal(document.querySelector('button').textContent, 'Save');
   assert.equal(runtime.drain().requests.length, 0);
 });

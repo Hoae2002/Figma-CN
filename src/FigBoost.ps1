@@ -24,7 +24,7 @@ if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClo
 
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V7"
 $UpdaterDisableMarker = "FIGMA_ZH_DISABLE_BUILTIN_UPDATER"
-$PatcherVersion = "0.4.1"
+$PatcherVersion = "0.5.0"
 $PayloadFile = "i.js"
 $MainPayloadFile = "m.js"
 $FeatureConfigFile = "features.json"
@@ -484,7 +484,6 @@ function Get-PayloadVersion {
 
 function Build-Payload {
   $manifest = Read-PayloadText "payload\manifest.json" | ConvertFrom-Json
-  $dictionary = Read-PayloadText "payload\src\dictionary\zh-CN.js"
   $core = Read-PayloadText "payload\src\content\localizer-core.js"
   $content = Read-PayloadText "payload\src\content\content.js"
   $version = if ($manifest.version) { $manifest.version } else { "unknown" }
@@ -496,7 +495,6 @@ function Build-Payload {
     '  if (window.__FIGMA_ZH_OFFICIAL_PRELOAD_INJECTED__ === version) return;'
     '  window.__FIGMA_ZH_OFFICIAL_PRELOAD_INJECTED__ = version;'
     '  try {'
-    $dictionary
     (Read-PayloadText "payload\src\shared\translation-policy.js")
     $core
     (Read-PayloadText "payload\src\content\translation-runtime.js")

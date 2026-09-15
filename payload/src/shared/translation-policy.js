@@ -4,7 +4,7 @@
   else root.FigBoostTranslationPolicy = api;
 })(typeof window === "object" ? window : globalThis, function () {
   "use strict";
-  const regions = { toolbar: "工具栏", menus: "页面菜单", right: "右侧属性面板", left: "左侧面板", home: "文件首页导航", floating: "提示与弹窗", native: "原生桌面菜单", other: "其他界面（仅本地）" };
+  const regions = { toolbar: "工具栏", menus: "页面菜单", right: "右侧属性面板", left: "左侧面板", home: "文件首页导航", floating: "提示与弹窗", native: "原生桌面菜单", other: "未识别界面（受保护）" };
   const normalize = value => String(value || "").replace(/\s+/g, " ").trim();
   const key = (text, region, context) => JSON.stringify(["en", "zh-CN", region, context || "label", normalize(text)]);
   function safeText(text) {
@@ -56,11 +56,12 @@
   function candidate(element, text) {
     const region = regionOf(element);
     if (!region) return null;
-    return { text: normalize(text), region, context: contextOf(element), anchor: anchorOf(element) };
+    const anchors = []; for (let e = element; e; e = e.parentElement) if (e.hasAttribute("data-testid")) anchors.push(e.getAttribute("data-testid"));
+    return { text: normalize(text), region, context: contextOf(element), anchor: anchorOf(element), anchors };
   }
   function mode(settings, region) { return settings.regions && settings.regions[region] || "hybrid"; }
   function excluded(c, rules) {
-    return (rules || []).some(r => r.region === c.region && r.text === c.text && r.context === c.context && (!r.anchor || r.anchor === c.anchor));
+    return (rules || []).some(r => r.region === c.region && (r.scope === "region" || (r.scope === "element" ? r.anchor === c.anchor || (c.anchors || []).includes(r.anchor) : r.text === c.text && r.context === c.context && (!r.anchor || r.anchor === c.anchor))));
   }
   function validCandidate(c) {
     return !!c && Object.hasOwn(regions, c.region) && c.region !== "other" && safeText(c.text)

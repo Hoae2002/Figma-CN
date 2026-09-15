@@ -1,5 +1,5 @@
 "use strict";
-const { app, BrowserWindow, webContents, ipcMain, net, safeStorage } = require("electron");
+const { app, BrowserWindow, webContents, ipcMain, net } = require("electron");
 const path = require("path");
 const { fileURLToPath } = require("url");
 const { createService, googleTransport } = require("./translation-service.js");
@@ -9,7 +9,7 @@ function isFigmaURL(value) {
   try { const url = new URL(value); return url.protocol === "https:" && (url.hostname === "figma.com" || url.hostname.endsWith(".figma.com")) && !url.username && !url.password; } catch (_) { return false; }
 }
 function createHost(options = {}) {
-  const service = createService({ dir: path.join(process.env.LOCALAPPDATA || app.getPath("userData"), "FigBoost", "translation"), safeStorage, transport: options.transport || googleTransport(net) });
+  const service = createService({ dir: path.join(process.env.LOCALAPPDATA || app.getPath("userData"), "FigBoost", "translation"), transport: options.transport || googleTransport(net) });
   const attached = new Map(), originals = new WeakMap();
   let settingsWindow = null, pickerTarget = null;
   const settingsFile = path.join(__dirname, "translation-settings.html");
@@ -26,7 +26,7 @@ function createHost(options = {}) {
     if (!isFigmaURL(contents.getURL()) || typeof contents.executeJavaScriptInIsolatedWorld !== "function") return false;
     const existing = attached.get(contents.id);
     if (existing && existing.url === contents.getURL()) return true;
-    const record = { contents, url: contents.getURL(), busy: false, disposed: false, epoch: Symbol() };
+    const record = { contents, url: contents.getURL(), busy: false, pageRevision: -2, epoch: Symbol() };
     attached.set(contents.id, record);
     try {
       await execute(contents, payload);
@@ -42,7 +42,7 @@ function createHost(options = {}) {
   async function poll(record) {
     const c = record.contents;
     if (record.busy || c.isDestroyed() || !isFigmaURL(c.getURL())) return;
-    if (c.getURL() !== record.url) { record.url = c.getURL(); await execute(c, `window.__FIGBOOST_TRANSLATION_RUNTIME__.apply(${JSON.stringify({ ...safePayloadSnapshot(), revision: -2 })})`).catch(() => {}); }
+    if (c.getURL() !== record.url) { record.url = c.getURL(); record.epoch = Symbol(); await execute(c, `window.__FIGBOOST_TRANSLATION_RUNTIME__.apply(${JSON.stringify({ ...safePayloadSnapshot(), revision: record.pageRevision-- })})`).catch(() => {}); }
     record.busy = true;
     try {
       const batch = await execute(c, "window.__FIGBOOST_TRANSLATION_RUNTIME__ && window.__FIGBOOST_TRANSLATION_RUNTIME__.drain()");
@@ -51,9 +51,9 @@ function createHost(options = {}) {
       const epoch = record.epoch, url = c.getURL();
       const requests = (batch.requests || []).slice(0, 50);
       // Do not hold the polling loop while the network is pending.
-      void Promise.all(requests.map(async job => ({ id: job.id, entry: await service.translate(job.c) }))).then(results => {
+      for (const job of requests) void service.translate(job.c).then(entry => {
         if (c.isDestroyed() || attached.get(c.id) !== record || record.epoch !== epoch || c.getURL() !== url) return;
-        return execute(c, `window.__FIGBOOST_TRANSLATION_RUNTIME__?.accept(${JSON.stringify(results)})`);
+        return execute(c, `window.__FIGBOOST_TRANSLATION_RUNTIME__?.accept(${JSON.stringify([{ id: job.id, entry }])})`);
       }).catch(() => {});
     } catch (_) {} finally { record.busy = false; }
   }
@@ -77,7 +77,7 @@ function createHost(options = {}) {
     if (settingsWindow && !settingsWindow.isDestroyed()) { settingsWindow.show(); settingsWindow.focus(); return; }
     // Figma's default session intercepts file:// and rejects files outside its bundle.
     // A non-persistent private session keeps our local settings assets independent.
-    settingsWindow = new BrowserWindow({ show: options.showSettings !== false, width: 980, height: 800, minWidth: 720, minHeight: 580, title: "FigBoost · 汉化设置", backgroundColor: "#202020", autoHideMenuBar: true, webPreferences: { partition: "figboost-translation-settings", preload: path.join(__dirname, "translation-settings-preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: true } });
+    settingsWindow = new BrowserWindow({ show: options.showSettings !== false, width: 760, height: 700, minWidth: 600, minHeight: 520, title: "FigBoost · 汉化设置", backgroundColor: "#202020", autoHideMenuBar: true, webPreferences: { partition: "figboost-translation-settings", preload: path.join(__dirname, "translation-settings-preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: true } });
     settingsWindow.webContents.__FIGBOOST_SKIP_RENDERER_INJECTION__ = true;
     settingsWindow.removeMenu();
     settingsWindow.webContents.on("will-navigate", event => event.preventDefault());
@@ -103,16 +103,9 @@ function createHost(options = {}) {
     if (typeof original !== "string") return original;
     const s = service.localState(), c = { text: original, region: "native", context: "menu" }, k = P.key(original, "native", "menu");
     let translated = original;
-    const override = s.overrides[k];
-    if (s.settings.enabled && P.mode(s.settings, "native") !== "original" && !P.excluded(c, s.rules)) {
-      if (override) translated = override.keepOriginal ? original : override.translation;
-      else {
-        translated = builtin(original);
-        if (translated === original && safe) {
-          if (s.learned[k]) translated = s.learned[k].translation;
-          else void service.translate(c);
-        }
-      }
+    if (safe && s.settings.enabled && P.mode(s.settings, "native") !== "original" && !P.excluded(c, s.rules)) {
+      if (s.learned[k]) translated = s.learned[k].translation;
+      else void service.translate(c);
     }
     originals.set(item, { original, translated });
     return translated;

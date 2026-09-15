@@ -1134,7 +1134,7 @@
   function translateTextNode(node) {
     if (options.allowElement && !options.allowElement(node.parentElement, node.nodeValue)) return;
     const fontStyleSource = getTranslatedFontStyleSourceTerm(node);
-    if (fontStyleSource) {
+    if (fontStyleSource && !options.resolveTranslation) {
       node.nodeValue = preserveFontStyleMarker(node.nodeValue, fontStyleSource);
       markChangedElement(node.parentElement);
       return;
