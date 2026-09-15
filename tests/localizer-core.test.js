@@ -80,3 +80,27 @@ test("bundled dictionary covers current editor overlays", () => {
   assert.equal(translator.translate("Search"), "搜索");
   assert.equal(translator.translate("No colors available"), "没有可用颜色");
 });
+
+test("bundled dictionary covers the current clipboard, navigation, variable, and category labels", () => {
+  const dictionary = require("../payload/src/dictionary/zh-CN.js");
+  const translator = core.createTranslator(dictionary);
+  const expected = {
+    "Frame link copied to clipboard": "画框链接已复制到剪贴板",
+    "Go to folder": "转到文件夹",
+    "Find...": "查找…",
+    "Variable collection": "变量集合",
+    "Name": "名称",
+    "Light": "浅色",
+    "Content generation": "内容生成",
+    "Shaders": "着色器",
+    "Styling": "样式",
+    "Format & resize": "格式与调整尺寸",
+    "Fun & creative": "趣味与创意",
+    "Product & brand": "产品与品牌"
+  };
+
+  for (const [source, translation] of Object.entries(expected)) {
+    assert.equal(dictionary.exact[source], translation, source);
+    assert.equal(translator.translate(source), translation, source);
+  }
+});

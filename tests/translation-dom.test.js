@@ -150,6 +150,29 @@ test('current floating menus, typography labels and search placeholders use the 
   assert.ok(document.body.textContent.includes("Source Han Sans CN"));
 });
 
+test('current clipboard, navigation, variable, and category labels use the exact dictionary', t => {
+  const dictionary = require("../payload/src/dictionary/zh-CN.js");
+  const exact = Object.fromEntries([
+    "Frame link copied to clipboard", "Go to folder", "Find...", "Variable collection", "Name", "Light",
+    "Content generation", "Shaders", "Styling", "Format & resize", "Fun & creative", "Product & brand"
+  ].map(source => [source, dictionary.exact[source]]));
+  const {runtime, document} = fixture(t, `<section aria-label="Right sidebar">
+      <h2>Variable collection</h2><div>Name</div><div>Light</div>
+      <input value="Private query" placeholder="Find...">
+    </section>
+    <div role="menu"><button>Go to folder</button></div>
+    <div role="tooltip">Frame link copied to clipboard</div>
+    <div role="menu"><button>Content generation</button><button>Shaders</button><button>Styling</button><button>Format & resize</button><button>Fun & creative</button><button>Product & brand</button></div>`, {}, exact);
+
+  assert.equal(runtime.drain().requests.length, 0);
+  for (const expected of ["变量集合", "名称", "浅色", "转到文件夹", "画框链接已复制到剪贴板", "内容生成", "着色器", "样式", "格式与调整尺寸", "趣味与创意", "产品与品牌"]) {
+    assert.ok(document.body.textContent.includes(expected), expected);
+  }
+  const search = document.querySelector("input");
+  assert.equal(search.placeholder, "查找…");
+  assert.equal(search.value, "Private query");
+});
+
 test('bulk UI mutations avoid layout reads and run full candidate recognition once per text', async t => {
   const { document, w } = fixture(t, '<main></main>', {}, { Save: "保存" });
   let styleReads = 0, layoutReads = 0, candidateCalls = 0, preliminaryRegionCalls = 0;
