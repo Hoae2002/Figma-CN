@@ -294,6 +294,13 @@
       return cacheResult(cacheKey, result);
     }
 
+    function translateExact(value) {
+      const normalized = normalizeText(value);
+      if (!normalized) return null;
+      const exactMatch = exact.get(normalized);
+      return exactMatch ? preserveOuterWhitespace(value, exactMatch) : null;
+    }
+
     function classifyUntranslated(value) {
       const text = normalizeText(value);
       if (!text || !/[A-Za-z]/.test(text)) return "none";
@@ -302,7 +309,7 @@
       return "ui";
     }
 
-    return { translate, classifyUntranslated };
+    return { translate, translateExact, classifyUntranslated };
   }
 
   function isSkippableElement(element) {
@@ -1128,6 +1135,47 @@
       stats.changedTexts += 1;
     }
 
+    function translateExactTextNode(node) {
+      if (!node || node.nodeType !== Node.TEXT_NODE || !node.nodeValue || !/[A-Za-z]/.test(node.nodeValue)) return false;
+      const original = node[TRANSLATED_TEXT_KEY] && node.nodeValue === node[TRANSLATED_TEXT_KEY]
+        ? node[ORIGINAL_TEXT_KEY]
+        : node.nodeValue;
+      const builtin = translator.translateExact(original);
+      if (!builtin || builtin === node.nodeValue || !shouldTranslateTextNode(node)) return false;
+      const translated = options.resolveTranslation ? options.resolveTranslation(original, node, builtin) : builtin;
+      if (!translated || translated === node.nodeValue) return false;
+
+      node[ORIGINAL_TEXT_KEY] = original;
+      node[TRANSLATED_TEXT_KEY] = translated;
+      node.nodeValue = translated;
+      markChangedElement(node.parentElement, original, translated);
+      stats.changedTexts += 1;
+      stats.processedNodes += 1;
+      return true;
+    }
+
+    function pretranslateExactDictionary(root) {
+      if (!root || !enabled || !isInBodyRegion(root)) return;
+      const element = root.nodeType === Node.TEXT_NODE ? root.parentElement : root;
+      if (!element || isEditableNode(root) || isSkippableElement(element)) return;
+      const policy = window.FigBoostTranslationPolicy;
+      if (policy && policy.isCommunityLocation(window.location)) return;
+      if (root.nodeType === Node.TEXT_NODE) {
+        translateExactTextNode(root);
+        return;
+      }
+      if (root.nodeType !== Node.ELEMENT_NODE) return;
+
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      let visited = 0;
+      let node = walker.nextNode();
+      while (node && visited < 260) {
+        translateExactTextNode(node);
+        visited += 1;
+        node = walker.nextNode();
+      }
+    }
+
     function classifyTextNode(node) {
       if (shouldTranslateTextNode(node)) return "text";
       if (getTranslatedFontStyleSourceTerm(node)) return "font-style";
@@ -1291,6 +1339,7 @@
       if (!isInBodyRegion(node)) return;
 
       if (isEditableNode(node)) return;
+      if (!inspectSize && node.nodeType === Node.ELEMENT_NODE) pretranslateExactDictionary(node);
       const isFloatingElement = node.nodeType === Node.ELEMENT_NODE && isLatencySensitiveFloatingElement(node);
       if (node.nodeType === Node.TEXT_NODE || isFloatingElement) {
         processElement(node);
