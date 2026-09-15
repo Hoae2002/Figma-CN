@@ -9,8 +9,5 @@
 <label class="switch"><span><strong>社区 Google 补译</strong><small>只补译 Community 页面中词库未收录的安全文案。</small></span><input type="checkbox" id="community-online" disabled></label>
 <p class="muted">社区文案仍然优先匹配内置词库，Google 结果会经过 Figma／UI 设计术语校正后缓存在本机。编辑器、文件页及桌面菜单不会发送给 Google。画布内容、输入值和用户命名不参与翻译。</p>
 <p id="last-error" class="status-note"></p><p id="page-status" class="muted"></p><p id="cache-status" class="muted"></p></section>
-<section aria-labelledby="scope-title"><div class="heading-row"><div><h2 id="scope-title">不翻译的区域</h2><p class="muted">点选后立即恢复原文，也可以排除整个面板。</p></div><button type="button" id="pick" class="primary">点选排除</button></div>
-<form id="exclude-form" class="row"><div class="grow"><label for="region">排除整个区域</label><select id="region"></select></div><button type="submit">添加排除</button></form>
-<ul id="rules" class="entries"></ul><p class="muted">进入点选后，可以先打开下拉或右键菜单，再点击要排除的菜单项；按住 Alt 选择上层区域，按住 Shift 可直接选择下拉触发按钮，Esc 退出。没有稳定定位的控件会按同一区域的同类文案保存。</p></section>
 <footer>内置词库用于全部可识别界面；Google 只补译社区页面。个人数据保存在本机，更新时保留。</footer>
-</main><script src="translation-policy.js"></script><script src="translation-settings.js"></script></body></html>
+</main><script src="translation-settings.js"></script></body></html>

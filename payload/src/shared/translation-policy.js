@@ -13,7 +13,7 @@
       && !/(?:https?:|www\.|[\w-]+\.(?:com|org|net|fig|png|jpg|svg|js|ts|json)\b|\b[0-9a-f]{8}-|\b\d{3,}\b)/i.test(text);
   }
   const protectedSelector = [
-    "canvas", "svg", "iframe", "webview", "code", "pre", "input", "textarea", "select", "option",
+    "canvas", "svg", "iframe", "webview", "code", "pre",
     "[contenteditable]:not([contenteditable='false'])", "[role='textbox']", "[role='treeitem']", "[role='treegrid']",
     "[aria-label$=', file name']", "[aria-label='Left sidebar'] [role='grid']",
     "[data-figma-zh-skip]", "[data-testid*='canvas']", "[data-testid*='viewport']", "[aria-label='Canvas']", "[aria-label='Canvas viewport']",
@@ -48,13 +48,21 @@
     if (view && isCommunityLocation(view.location)) return "community";
     const tests = [
       ["menus", "[role='menu'],[role='menuitem'],[role='listbox'],[role='option'],[aria-haspopup='menu'],[aria-haspopup='listbox'],[data-testid*='context-menu']"],
-      ["floating", "[role='tooltip'],[role='dialog'],[role='alertdialog']"],
+      ["floating", "[role='tooltip'],[role='dialog'],[role='alertdialog'],[data-testid*='popover' i],[data-testid*='dropdown' i],[data-testid*='tooltip' i],[data-floating-ui-portal],[data-radix-popper-content-wrapper]"],
       ["right", "[aria-label='Right sidebar'],[data-testid*='properties-panel'],[data-testid*='right-panel'],[class*='properties_panel'],[class*='right_panel']"],
       ["left", "[aria-label='Left sidebar'],[data-testid*='left-panel'],[class*='left_panel'],[data-testid*='layers-panel']"],
       ["toolbar", "[role='toolbar'],[data-testid*='toolbar'],[class*='toolbar']"],
       ["home", "nav,[role='navigation'],[data-testid*='file-browser-sidebar']"]
     ];
     for (const [region, selector] of tests) if (element.closest(selector)) return region;
+    for (let current = element, depth = 0; current && current !== element.ownerDocument.body && depth < 8; current = current.parentElement, depth += 1) {
+      const marker = `${current.getAttribute("class") || ""} ${current.getAttribute("data-testid") || ""}`;
+      if (/(?:popover|dropdown|tooltip|floating|overlay)/i.test(marker)) return "floating";
+      if (!view || typeof view.getComputedStyle !== "function") continue;
+      const style = view.getComputedStyle(current);
+      const zIndex = Number.parseInt(style.zIndex, 10);
+      if ((style.position === "fixed" || style.position === "absolute") && (Number.isFinite(zIndex) ? zIndex >= 10 : current.parentElement === element.ownerDocument.body)) return "floating";
+    }
     if (view && /^\/files(?:\/|$)/.test(view.location.pathname)) return "home";
     return "other";
   }
@@ -87,6 +95,7 @@
   }
   function hasTypographyFieldContext(element, text) {
     const value = normalize(text);
+    if (!element.closest("[role='combobox'],[aria-haspopup='listbox'],[aria-label*='font' i],[data-testid*='font' i]")) return false;
     if (!/^[A-Za-z][A-Za-z0-9 .+'-]{1,72}$/.test(value)) return false;
     if (/^(?:Typography|Font|Font size|Line height|Letter spacing|Text align|Auto|Default|Thin|ExtraLight|Light|Normal|Regular|Medium|SemiBold|Bold|ExtraBold|Black|Heavy|Italic)$/i.test(value)) return false;
     for (let current = element, depth = 0; current && depth < 6; current = current.parentElement, depth += 1) {
@@ -132,13 +141,9 @@
     const anchors = []; for (let e = element; e; e = e.parentElement) if (e.hasAttribute("data-testid")) anchors.push(e.getAttribute("data-testid"));
     return { text: normalize(text), region, context: contextOf(element), anchor: anchorOf(element), anchors };
   }
-  function mode(settings, region) { return settings.regions && settings.regions[region] || "hybrid"; }
-  function excluded(c, rules) {
-    return (rules || []).some(r => r.region === c.region && (r.scope === "region" || (r.scope === "element" ? r.anchor === c.anchor || (c.anchors || []).includes(r.anchor) : r.scope === "text" && r.text === c.text && r.context === c.context)));
-  }
   function validCandidate(c) {
     return !!c && Object.hasOwn(regions, c.region) && c.region !== "other" && safeText(c.text)
       && typeof c.context === "string" && /^[a-z:-]{1,40}$/.test(c.context);
   }
-  return { regions, normalize, key, safeText, protectedSelector, isCommunityLocation, regionOf, contextOf, anchorOf, isLikelyFontFamilyText, isToolSectionContent, isProtectedDynamicValue, candidate, mode, excluded, validCandidate };
+  return { regions, normalize, key, safeText, protectedSelector, isCommunityLocation, regionOf, contextOf, anchorOf, isLikelyFontFamilyText, isToolSectionContent, isProtectedDynamicValue, candidate, validCandidate };
 });

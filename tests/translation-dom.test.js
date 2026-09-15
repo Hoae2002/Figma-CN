@@ -10,7 +10,7 @@ function fixture(t, html, custom = {}, exact = {}, pageUrl = "https://www.figma.
   const runtime = w.__FIGBOOST_TRANSLATION_RUNTIME__;
   const localizer = w.FigmaZhLocalizer.createLocalizer({ exact, phrases: [], uiTerms: {}, commonTerms: {}, patterns: [] }, { allowElement: runtime.allowElement, resolveTranslation: runtime.resolveTranslation });
   runtime.bind(localizer);
-  const snapshot = { schema: 2, revision: 1, settings: { enabled: true, communityOnline: true, regions: {} }, learned: {}, rules: [], ...custom };
+  const snapshot = { schema: 3, revision: 1, settings: { enabled: true, communityOnline: true }, learned: {}, ...custom };
   runtime.apply(snapshot);
   return { w, runtime, localizer, snapshot, document: w.document };
 }
@@ -68,22 +68,16 @@ test("cached translations remain the fallback when the dictionary misses", t => 
   const k = P.key("Save", "community", "button");
   const { runtime, snapshot, document } = fixture(t, '<div role="toolbar"><button>Save</button></div>', { learned: { [k]: { translation: "缓存译文" } } }, {}, "https://www.figma.com/community");
   assert.equal(document.querySelector("button").textContent, "缓存译文");
-  runtime.apply({ ...snapshot, revision: 2, settings: { ...snapshot.settings, regions: { community: "original" } } });
+  runtime.apply({ ...snapshot, revision: 2, settings: { ...snapshot.settings, enabled: false } });
   assert.equal(document.querySelector("button").textContent, "Save");
 });
-test("persistent exclusions survive recreated elements and block gradient special handling", async t => {
-  const rules = [{ scope: "element", text: "Save", region: "toolbar", context: "button", anchor: "save-action" }];
-  const { document, runtime } = fixture(t, '<div role="toolbar"><button data-testid="save-action">Save</button></div><div role="menu" data-testid="gradient-menu"><span>Linear</span><span>Radial</span><span>Angular</span></div>', { rules, settings: { enabled: true, online: true, regions: { menus: "original" } } }, { Save: "保存", Linear: "线性" });
-  assert.equal(document.querySelector("button").textContent, "Save");
-  document.querySelector("button").outerHTML = '<button data-testid="save-action">Save</button>'; await tick();
-  assert.equal(document.querySelector("button").textContent, "Save"); assert.equal(document.querySelector("[role=menu]").textContent, "LinearRadialAngular"); assert.equal(runtime.drain().requests.length, 0);
-});
-test("picker consumes original actions and stores stable exclusion using English source", async t => {
-  const { document, runtime, w } = fixture(t, '<div role="toolbar"><button data-testid="save-action">Save</button></div>', {}, { Save: "保存" });
-  const button = document.querySelector("button"); let clicked = 0; button.addEventListener("click", () => clicked++);
-  runtime.startPicker(); button.dispatchEvent(new w.MouseEvent("pointermove", { bubbles: true })); button.dispatchEvent(new w.MouseEvent("click", { bubbles: true, cancelable: true }));
-  const data = runtime.drain().actions[0]; assert.equal(data.data.text, "Save"); assert.equal(data.data.anchor, "save-action"); assert.equal(clicked, 0); assert.equal(button.textContent, "Save");
-  document.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Escape", bubbles: true })); assert.equal(document.querySelector("[role=status]"), null);
+test("legacy exclusion fields no longer block dictionary translation", t => {
+  const { document, runtime } = fixture(t, '<div role="toolbar"><button data-testid="save-action">Save</button></div>', {
+    settings: { enabled: true, communityOnline: true, regions: { toolbar: "original" } },
+    rules: [{ scope: "element", region: "toolbar", anchor: "save-action", text: "Save" }]
+  }, { Save: "保存" });
+  assert.equal(document.querySelector("button").textContent, "保存");
+  assert.equal(runtime.drain().requests.length, 0);
 });
 test("user names matching system dictionary labels remain original", t => {
   const { document, runtime } = fixture(t, '<nav><span data-testid="file-title">Drafts</span><span data-testid="project-title">Recent</span><span data-testid="folder-name">Save</span></nav>', {}, { Drafts: "草稿", Recent: "最近", Save: "保存" });
@@ -91,25 +85,6 @@ test("user names matching system dictionary labels remain original", t => {
 });
 test("unknown dialog prose is not automatically treated as a safe UI label", t => {
   const { runtime } = fixture(t, '<div role="dialog"><p>Alice invited you to Private Workspace</p></div>');
-  assert.equal(runtime.drain().requests.length, 0);
-});
-
-test('container exclusion protects new descendants and recreated controls', async t => {
-  const { document, runtime, snapshot } = fixture(t, '<div role="toolbar"><div data-testid="action-group"><button data-testid="save-action">Save</button></div></div>');
-  runtime.drain();
-  runtime.apply({ ...snapshot, revision: 2, rules: [{ scope: 'element', region: 'toolbar', anchor: 'action-group', text: 'Actions' }] });
-  document.querySelector('[data-testid="action-group"]').innerHTML = '<button data-testid="new-action">New gizmo</button>';
-  await tick();
-  assert.equal(runtime.drain().requests.length, 0);
-  assert.equal(document.querySelector('button').textContent, 'New gizmo');
-});
-
-test('whole-area exclusion blocks every label including cached results', t => {
-  const { document, runtime } = fixture(t, '<div role="toolbar"><button>Save</button></div>', {
-    rules: [{ scope: 'region', region: 'toolbar' }],
-    learned: { [P.key('Save', 'toolbar', 'button')]: { text: 'Save', region: 'toolbar', context: 'button', translation: '保存' } }
-  });
-  assert.equal(document.querySelector('button').textContent, 'Save');
   assert.equal(runtime.drain().requests.length, 0);
 });
 
@@ -156,35 +131,24 @@ test('font family values and dropdown options never enter either translation pat
   for (const original of ["Source Han Sans CN", "Futura", "Noto Sans SC", "Acme Brand Sans"]) assert.ok(document.body.textContent.includes(original), original);
   assert.ok(!document.body.textContent.includes("错误字体"));
 });
-test("picker lets a closed dropdown open, then persists an exclusion for its popup item", t => {
-  const { document, runtime, w } = fixture(t, '<div role="toolbar"><button id="trigger" aria-haspopup="listbox" aria-expanded="false">Choose</button></div>');
-  runtime.drain();
-  const trigger = document.querySelector("#trigger");
-  trigger.addEventListener("click", () => {
-    trigger.setAttribute("aria-expanded", "true");
-    const popup = document.createElement("div"); popup.setAttribute("role", "listbox");
-    popup.innerHTML = '<div role="option">Private choice</div>'; document.body.appendChild(popup);
+test('current floating menus, typography labels and search placeholders use the dictionary', t => {
+  const {runtime, document} = fixture(t, `<section aria-label="Right sidebar"><div><h2>Typography</h2><button role="combobox" aria-label="Font family"><span>Source Han Sans CN</span></button><button role="combobox"><span>Medium</span></button><span>15</span><div>Alignment</div></div></section>
+    <div style="position:fixed;z-index:1000"><button>Add min width…</button><button>Add max width…</button><button>Add min height…</button><button>Add max height…</button></div>
+    <div class="library-popover"><input value="Private query" placeholder="Search"><p>No colors available</p></div>
+    <div style="position:absolute;z-index:100"><span>Fonts</span></div>`, {}, {
+    Typography: "排版", Alignment: "对齐方式", Fonts: "字体", Search: "搜索", "No colors available": "没有可用颜色",
+    "Add min width…": "添加最小宽度…", "Add max width…": "添加最大宽度…",
+    "Add min height…": "添加最小高度…", "Add max height…": "添加最大高度…"
   });
-  runtime.startPicker();
-  trigger.dispatchEvent(new w.MouseEvent("pointermove", { bubbles: true }));
-  trigger.dispatchEvent(new w.MouseEvent("click", { bubbles: true, cancelable: true }));
-  assert.ok(document.querySelector("[role=listbox]"));
-  const option = document.querySelector("[role=option]"); let selected = 0; option.addEventListener("click", () => selected++);
-  option.dispatchEvent(new w.MouseEvent("pointermove", { bubbles: true }));
-  option.dispatchEvent(new w.MouseEvent("click", { bubbles: true, cancelable: true }));
-  const action = runtime.drain().actions[0];
-  assert.equal(action.data.scope, "text"); assert.equal(action.data.region, "menus"); assert.equal(action.data.text, "Private choice"); assert.equal(selected, 0);
+  assert.equal(runtime.drain().requests.length, 0);
+  for (const expected of ["排版", "对齐方式", "字体", "没有可用颜色", "添加最小宽度…", "添加最大宽度…", "添加最小高度…", "添加最大高度…"]) {
+    assert.ok(document.body.textContent.includes(expected), expected);
+  }
+  const search = document.querySelector("input");
+  assert.equal(search.placeholder, "搜索");
+  assert.equal(search.value, "Private query");
+  assert.ok(document.body.textContent.includes("Source Han Sans CN"));
 });
-test("picker uses a stable ancestor anchor for a whole popup container", t => {
-  const { document, runtime, w } = fixture(t, '<div role="listbox" data-testid="style-picker-menu"><div role="option"><span>Style one</span></div></div>');
-  runtime.drain(); runtime.startPicker();
-  const span = document.querySelector("span");
-  span.dispatchEvent(new w.MouseEvent("pointermove", { bubbles: true, altKey: true }));
-  span.dispatchEvent(new w.MouseEvent("click", { bubbles: true, cancelable: true, altKey: true }));
-  const action = runtime.drain().actions[0];
-  assert.equal(action.data.scope, "element"); assert.equal(action.data.anchor, "style-picker-menu"); assert.equal(action.data.region, "menus");
-});
-
 test('current Figma files page uses dictionary only and protects user file names', t => {
   const {runtime, document} = fixture(t, `<body class="feature_flag_canvas_ui3 feature_flag_new_canvas">
     <nav aria-label="Sidebar">

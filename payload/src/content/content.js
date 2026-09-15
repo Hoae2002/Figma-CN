@@ -66,7 +66,7 @@
   }
 
   const FIGBOOST_MENU_ITEMS = [
-    { id: "translation-settings", label: "汉化设置…", title: "管理词库汉化、社区补译与排除区域", run: () => { window.location.href = "figboost://translation-settings"; } },
+    { id: "translation-settings", label: "汉化设置…", title: "管理词库汉化与社区补译", run: () => { window.location.href = "figboost://translation-settings"; } },
     {
       id: "check-official-update",
       label: "检查更新",

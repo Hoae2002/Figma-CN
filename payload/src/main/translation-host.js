@@ -1,5 +1,5 @@
 "use strict";
-const { app, BrowserWindow, webContents, ipcMain, net } = require("electron");
+const { app, BrowserWindow, ipcMain, net } = require("electron");
 const path = require("path");
 const { fileURLToPath } = require("url");
 const { createService, googleTransport } = require("./translation-service.js");
@@ -12,7 +12,7 @@ function isFigmaURL(value) {
 function createHost(options = {}) {
   const service = createService({ dir: path.join(process.env.LOCALAPPDATA || app.getPath("userData"), "FigBoost", "translation"), transport: options.transport || googleTransport(net) });
   const attached = new Map(), originals = new WeakMap();
-  let settingsWindow = null, pickerTarget = null;
+  let settingsWindow = null;
   const settingsFile = path.join(__dirname, "translation-settings.html");
   function isSettingsSource(event) {
     if (!settingsWindow || event.sender !== settingsWindow.webContents) return false;
@@ -57,7 +57,6 @@ function createHost(options = {}) {
     try {
       const batch = await execute(c, "window.__FIGBOOST_TRANSLATION_RUNTIME__ && window.__FIGBOOST_TRANSLATION_RUNTIME__.drain()");
       if (!batch) { record.ready = false; record.retryAt = Date.now() + 5000; return; }
-      for (const action of (batch.actions || []).slice(0, 10)) if (action.action === "exclude") await service.command("exclude", action.data);
       const epoch = record.epoch, url = c.getURL();
       const requests = (batch.requests || []).slice(0, 50);
       // Do not hold the polling loop while the network is pending.
@@ -79,22 +78,11 @@ function createHost(options = {}) {
     const code = `window.__FIGBOOST_TRANSLATION_RUNTIME__?.apply(${JSON.stringify(safePayloadSnapshot())})`;
     for (const { contents } of attached.values()) if (!contents.isDestroyed()) execute(contents, code).catch(() => {});
   });
-  async function startPicker() {
-    const pages = [...attached.values()].filter(r => r.ready && !r.contents.isDestroyed());
-    const candidate = pages.find(r => pickerTarget && r.contents.id === pickerTarget.id) || pages.find(r => r.contents.isFocused()) || pages[0];
-    if (!candidate) throw new Error("请先打开 Figma 文件页面，再点选排除");
-    await execute(candidate.contents, "window.__FIGBOOST_TRANSLATION_RUNTIME__.startPicker()");
-    if (settingsWindow) settingsWindow.hide();
-    const owner = BrowserWindow.fromWebContents(candidate.contents); if (owner) owner.show();
-    candidate.contents.focus();
-  }
   function openSettings() {
-    const focused = webContents.getFocusedWebContents();
-    if (focused && attached.has(focused.id)) pickerTarget = focused;
     if (settingsWindow && !settingsWindow.isDestroyed()) { settingsWindow.show(); settingsWindow.focus(); return; }
     // Figma's default session intercepts file:// and rejects files outside its bundle.
     // A non-persistent private session keeps our local settings assets independent.
-    settingsWindow = new BrowserWindow({ show: options.showSettings !== false, width: 760, height: 700, minWidth: 600, minHeight: 520, title: "FigBoost · 汉化设置", backgroundColor: "#202020", autoHideMenuBar: true, webPreferences: { partition: "figboost-translation-settings", preload: path.join(__dirname, "translation-settings-preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: true } });
+    settingsWindow = new BrowserWindow({ show: options.showSettings !== false, width: 760, height: 520, minWidth: 600, minHeight: 420, title: "FigBoost · 汉化设置", backgroundColor: "#202020", autoHideMenuBar: true, webPreferences: { partition: "figboost-translation-settings", preload: path.join(__dirname, "translation-settings-preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: true } });
     settingsWindow.webContents.__FIGBOOST_SKIP_RENDERER_INJECTION__ = true;
     settingsWindow.removeMenu();
     settingsWindow.webContents.on("will-navigate", event => event.preventDefault());
@@ -106,11 +94,6 @@ function createHost(options = {}) {
     if (!isSettingsSource(event)) return { ok: false, error: "无效的设置来源" };
     try {
       if (JSON.stringify(data || {}).length > 20000) throw new Error("设置内容过大");
-      if (action === "pick") { await startPicker(); return { ok: true, state: snapshot() }; }
-      if (action === "ruleStatus") {
-        const reports = await Promise.all([...attached.values()].map(r => execute(r.contents, "window.__FIGBOOST_TRANSLATION_RUNTIME__?.ruleStatus()").catch(() => [])));
-        return { ok: true, rules: snapshot().rules.map(rule => ({ ...rule, matched: reports.flat().some(r => r && r.anchor === rule.anchor && r.region === rule.region && r.matched) })) };
-      }
       await service.command(action, data);
       return { ok: true, state: snapshot() };
     } catch (e) { return { ok: false, error: e.message }; }
@@ -119,9 +102,9 @@ function createHost(options = {}) {
     const prior = originals.get(item);
     const original = prior && item.label === prior.translated ? prior.original : item.label;
     if (typeof original !== "string") return original;
-    const s = service.localState(), c = { text: original, region: "native", context: "menu" };
+    const s = service.localState();
     let translated = original;
-    if (safe && s.settings.enabled && P.mode(s.settings, "native") !== "original" && !P.excluded(c, s.rules)) {
+    if (safe && s.settings.enabled) {
       const dictionaryValue = typeof builtin === "function" ? builtin(original) : null;
       const exactValue = dictionary.exact && dictionary.exact[P.normalize(original)];
       if (typeof dictionaryValue === "string" && dictionaryValue !== original) translated = dictionaryValue;
@@ -130,6 +113,6 @@ function createHost(options = {}) {
     originals.set(item, { original, translated });
     return translated;
   }
-  return { attach, openSettings, nativeLabel, originalLabel: item => { const prior = originals.get(item); return prior && item.label === prior.translated ? prior.original : item.label; }, enabled: () => service.localState().settings.enabled, nativeMode: () => P.mode(service.localState().settings, "native"), close: () => { clearInterval(timer); service.close(); } };
+  return { attach, openSettings, nativeLabel, originalLabel: item => { const prior = originals.get(item); return prior && item.label === prior.translated ? prior.original : item.label; }, enabled: () => service.localState().settings.enabled, close: () => { clearInterval(timer); service.close(); } };
 }
 module.exports = { createHost, isFigmaURL };

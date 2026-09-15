@@ -69,7 +69,7 @@ test("protected tokens and unknown regions never request translation", async (t)
   );
   assert.equal(calls, 0);
 });
-test("disabled switch and region/ancestor exclusions block requests", async (t) => {
+test("disabled switches block requests", async (t) => {
   let calls = 0;
   const { service } = fixture(t, async () => {
     calls++;
@@ -78,29 +78,11 @@ test("disabled switch and region/ancestor exclusions block requests", async (t) 
   await service.command("settings", { enabled: false });
   assert.equal(await service.translate(c("Save")), null);
   await service.command("settings", { enabled: true });
-  await service.command("exclude", { scope: "region", region: "community" });
+  await service.command("settings", { communityOnline: false });
   assert.equal(await service.translate(c("Save")), null);
-  await service.command("removeRule", { index: 0 });
-  await service.command("exclude", {
-    scope: "element",
-    region: "community",
-    anchor: "toolbar-group",
-  });
-  assert.equal(
-    await service.translate({ ...c("Save"), anchors: ["toolbar-group"] }),
-    null,
-  );
   assert.equal(calls, 0);
-  await service.command("removeRule", { index: 0 });
+  await service.command("settings", { communityOnline: true });
   assert.equal((await service.translate(c("Save"))).translation, "测试");
-});
-test("text exclusions persist for unanchored Community items", async (t) => {
-  let calls = 0;
-  const { service } = fixture(t, async () => { calls++; return ["测试"]; });
-  await service.command("exclude", { scope: "text", region: "community", context: "option", text: "Private choice" });
-  assert.equal(await service.translate({ text: "Private choice", region: "community", context: "option", anchor: null, anchors: [] }), null);
-  assert.equal(calls, 0);
-  assert.equal(service.snapshot().rules[0].scope, "text");
 });
 test("settings revision rejects an in-flight result without caching", async (t) => {
   let done, start;
@@ -111,7 +93,7 @@ test("settings revision rejects an in-flight result without caching", async (t) 
   });
   const result = service.translate(c("Save"));
   await began;
-  await service.command("exclude", { scope: "region", region: "community" });
+  await service.command("settings", { communityOnline: false });
   done(["保存"]);
   assert.equal(await result, null);
   assert.equal(Object.keys(service.snapshot().learned).length, 0);
@@ -137,13 +119,12 @@ test("legacy migration retains data but global machine cache is no longer usable
   fs.writeFileSync(file, JSON.stringify(old));
   const reboot = createService(options);
   const snap = reboot.snapshot();
-  assert.equal(snap.schema, 2);
+  assert.equal(snap.schema, 3);
   assert.equal(snap.credential, undefined);
   assert.equal(snap.overrides, undefined);
-  assert.equal(snap.settings.regions.native, undefined);
+  assert.equal(snap.settings.regions, undefined);
   assert.equal(snap.settings.communityOnline, true);
-  assert.equal(snap.rules[0].scope, "region");
-  await reboot.command("removeRule", { index: 0 });
+  assert.equal(snap.rules, undefined);
   assert.equal(await reboot.translate({ ...entry, translation: undefined }), null);
   assert.equal((await reboot.translate(c("Save"))).translation, "测试");
   assert.deepEqual(JSON.parse(fs.readFileSync(file)), old);
@@ -202,9 +183,9 @@ test("rate-limit cooldown automatically recovers", async (t) => {
   time = 101;
   assert.equal((await service.translate(c("Save"))).translation, "保存");
 });
-test("removed key and dictionary commands are rejected", async (t) => {
+test("removed key, dictionary and exclusion commands are rejected", async (t) => {
   const { service } = fixture(t, async () => ["测试"]);
-  for (const action of ["saveKey", "test", "override", "deleteEntry"])
+  for (const action of ["saveKey", "test", "override", "deleteEntry", "exclude", "removeRule", "pick", "ruleStatus"])
     await assert.rejects(service.command(action, {}), /不支持/);
 });
 test("closing service prevents an active result from writing cache", async (t) => {

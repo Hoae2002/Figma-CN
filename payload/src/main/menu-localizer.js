@@ -53,7 +53,7 @@
 
   function localizeDialogOptions(options) {
     if (!options || typeof options !== "object") return options;
-    if (translationHost && (!translationHost.enabled() || translationHost.nativeMode() === "original")) return options;
+    if (translationHost && !translationHost.enabled()) return options;
     const next = { ...options };
     if (translationHost) {
       if (Array.isArray(next.buttons)) next.buttons = next.buttons.map(label => translationHost.nativeLabel({ label }, value => value, true));

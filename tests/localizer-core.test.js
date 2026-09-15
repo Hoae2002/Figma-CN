@@ -67,3 +67,16 @@ test("bundled dictionary covers current Community UI wording", () => {
   assert.equal(translator.translate("Figma creations"), "Figma 创作");
   assert.equal(translator.translate("Try it..."), "试用…");
 });
+
+test("bundled dictionary covers current editor overlays", () => {
+  const dictionary = require("../payload/src/dictionary/zh-CN.js");
+  const translator = core.createTranslator(dictionary);
+  assert.equal(translator.translate("Add min width…"), "添加最小宽度…");
+  assert.equal(translator.translate("Add max width…"), "添加最大宽度…");
+  assert.equal(translator.translate("Add min height…"), "添加最小高度…");
+  assert.equal(translator.translate("Add max height…"), "添加最大高度…");
+  assert.equal(translator.translate("Alignment"), "对齐方式");
+  assert.equal(translator.translate("Fonts"), "字体");
+  assert.equal(translator.translate("Search"), "搜索");
+  assert.equal(translator.translate("No colors available"), "没有可用颜色");
+});

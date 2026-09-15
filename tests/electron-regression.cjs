@@ -59,10 +59,8 @@ app.whenReady().then(async () => {
   await settings.webContents.executeJavaScript("document.querySelector('#enabled').click()");
   await until(async () => (await page.webContents.executeJavaScript("document.querySelector('#save').textContent")) === "保存");
   assert.equal(calls.length, 1);
-  await settings.webContents.executeJavaScript("document.querySelector('#region').value='community';document.querySelector('#exclude-form').requestSubmit()");
-  await until(async () => (await page.webContents.executeJavaScript("document.querySelector('#save').textContent")) === "Save");
-  await settings.webContents.executeJavaScript("document.querySelector('#rules button').click()");
-  await until(async () => (await page.webContents.executeJavaScript("document.querySelector('#save').textContent")) === "保存");
+  assert.equal(await settings.webContents.executeJavaScript("document.querySelector('#exclude-form') === null && document.querySelector('#rules') === null"), true);
+  assert.equal((await settings.webContents.executeJavaScript("window.figBoostSettings.invoke('exclude',{scope:'region',region:'community'})")).ok, false);
   // Other windows cannot invoke the settings capability, even with the same preload.
   const outsider = new BrowserWindow({ show: false, webPreferences: { preload: path.join(runtime, "translation-settings-preload.js"), sandbox: true, contextIsolation: true } });
   await outsider.loadURL("data:text/html,<html><body>untrusted</body></html>");
@@ -92,7 +90,7 @@ app.whenReady().then(async () => {
   await command("settings", { enabled: true });
   await until(async () => (await retryPage.webContents.executeJavaScript("document.querySelector('#save').textContent")) === "保存");
   assert.equal((await command("snapshot")).state.pages.pending, 0);
-  console.log("Electron regression passed: dictionary-only regular pages and native menus, Community-only Google fallback, UI switch and cache reuse, isolated settings with default-session 404, exclusion/restore, protected inputs, untrusted IPC rejection and responsive layout.");
+  console.log("Electron regression passed: dictionary-only regular pages and native menus, Community-only Google fallback, UI switch and cache reuse, isolated settings with default-session 404, removed exclusion capability, protected inputs, untrusted IPC rejection and responsive layout.");
 }).then(() => finish(0)).catch(error => { console.error(error.stack); finish(1); });
 function finish(code) {
   if (host) host.close();

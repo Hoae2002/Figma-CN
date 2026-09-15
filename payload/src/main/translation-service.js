@@ -1,7 +1,7 @@
 "use strict";
 const fs = require("fs"), path = require("path");
 const P = require(fs.existsSync(path.join(__dirname, "translation-policy.js")) ? "./translation-policy.js" : "../shared/translation-policy.js");
-const defaults = () => ({ schema: 2, revision: 0, settings: { enabled: true, communityOnline: true, regions: {} }, learned: {}, rules: [] });
+const defaults = () => ({ schema: 3, revision: 0, settings: { enabled: true, communityOnline: true }, learned: {} });
 const validTranslation = s => typeof s === "string" && s.trim() && s.length <= 2000 && !/[<>\u0000-\u0008]/.test(s);
 const UI_GLOSSARY = [
   [/\bcomponent properties\b/i, [[/组件的?属性|部件属性|构件属性/g, "组件属性"]]],
@@ -36,20 +36,14 @@ function refineUiTranslation(source, translation) {
   return value;
 }
 function validateState(s) {
-  if (!s || ![1, 2].includes(s.schema) || !s.settings || typeof s.settings.enabled !== "boolean" || !s.learned || !Array.isArray(s.rules) || !Number.isSafeInteger(s.revision)) throw Error("缓存格式不兼容");
-  if (s.schema === 1) {
-    // Preserve machine results and exclusions, never use old credentials or manual entries.
-    s = { schema: 2, revision: s.revision + 1, settings: { enabled: s.settings.enabled, communityOnline: true, regions: Object.fromEntries(Object.entries(s.settings.regions || {}).filter(([, v]) => v === "original")) }, learned: s.learned, rules: s.rules };
+  if (!s || ![1, 2, 3].includes(s.schema) || !s.settings || typeof s.settings.enabled !== "boolean" || !s.learned || !Number.isSafeInteger(s.revision)) throw Error("缓存格式不兼容");
+  if (s.schema < 3) {
+    // Keep machine results, but retire every legacy exclusion and region mode.
+    s = { schema: 3, revision: s.revision + 1, settings: { enabled: s.settings.enabled, communityOnline: s.settings.communityOnline !== false }, learned: s.learned };
   }
   if (s.settings.communityOnline === undefined) s.settings.communityOnline = true;
   if (typeof s.settings.communityOnline !== "boolean") throw Error("社区补译设置无效");
   for (const [k, e] of Object.entries(s.learned)) if (!P.validCandidate(e) || !validTranslation(e.translation) || k !== P.key(e.text, e.region, e.context)) throw Error("缓存数据损坏");
-  for (const r of s.rules) {
-    const validRegion = r && Object.hasOwn(P.regions, r.region) && r.region !== "other";
-    const validElement = r && r.scope === "element" && /^[a-z][a-z_-]{2,100}$/i.test(r.anchor || "");
-    const validText = r && r.scope === "text" && P.safeText(r.text) && typeof r.context === "string" && /^[a-z:-]{1,40}$/.test(r.context);
-    if (!validRegion || (r.scope !== "region" && !validElement && !validText)) throw Error("排除规则损坏");
-  }
   return s;
 }
 function readState(file) {
@@ -99,7 +93,7 @@ function createService({ dir, transport, now = () => new Date(), debounceMs = 18
   }
   function change() { state.revision++; persist(); for (const fn of listeners) fn(); }
   function snapshot() { return JSON.parse(JSON.stringify({ ...state, lastError, blocked: now().getTime() < blockedUntil })); }
-  function allowed(c) { return !closed && state.settings.enabled && state.settings.communityOnline && c && c.region === "community" && P.validCandidate(c) && P.mode(state.settings, c.region) !== "original" && !P.excluded(c, state.rules); }
+  function allowed(c) { return !closed && state.settings.enabled && state.settings.communityOnline && c && c.region === "community" && P.validCandidate(c); }
   function finish(job, value) { pending.delete(job.key); job.resolve(value); }
   async function run(job) {
     try {
@@ -148,24 +142,9 @@ function createService({ dir, transport, now = () => new Date(), debounceMs = 18
       if (Object.hasOwn(data, "communityOnline")) { if (typeof data.communityOnline !== "boolean") throw Error("社区补译开关无效"); state.settings.communityOnline = data.communityOnline; changed = true; }
       if (!changed) throw Error("汉化设置无效");
       blockedUntil = 0;
-    } else if (action === "exclude") {
-      if (!Object.hasOwn(P.regions, data.region) || data.region === "other") throw Error("无法排除此区域");
-      const rule = data.scope === "region"
-        ? { region: data.region, scope: "region", text: P.regions[data.region] }
-        : data.scope === "text"
-          ? { region: data.region, scope: "text", context: data.context, text: String(data.text || "").slice(0, 100) }
-          : { region: data.region, scope: "element", anchor: data.anchor, text: String(data.text || "界面区域").slice(0, 100) };
-      if (rule.scope === "element" && !/^[a-z][a-z_-]{2,100}$/i.test(rule.anchor || "")) throw Error("此区域仅本次有效");
-      if (rule.scope === "text" && (!P.safeText(rule.text) || !/^[a-z:-]{1,40}$/.test(rule.context || ""))) throw Error("无法保存此文案排除");
-      if (!state.rules.some(r => r.region === rule.region && r.scope === rule.scope && r.anchor === rule.anchor && r.text === rule.text && r.context === rule.context)) state.rules.push(rule);
-    } else if (action === "removeRule") {
-      if (!Number.isInteger(data.index) || data.index < 0 || data.index >= state.rules.length) throw Error("排除项无效");
-      const [removed] = state.rules.splice(data.index, 1);
-      if (removed.scope === "region") delete state.settings.regions[removed.region];
     } else throw Error("不支持的操作");
     lastError = ""; change(); return snapshot();
   }
-  for (const [region, mode] of Object.entries(state.settings.regions || {})) if (mode === "original" && !state.rules.some(r => r.region === region && r.scope === "region")) state.rules.push({ region, scope: "region", text: P.regions[region] });
   return { snapshot, command, translate, localState: () => state, onChange: fn => listeners.add(fn), close: () => { closed = true; clearTimeout(timer); while (waiting.length) finish(waiting.shift(), null); } };
 }
 module.exports = { createService, googleTransport, readState, defaults, refineUiTranslation };
