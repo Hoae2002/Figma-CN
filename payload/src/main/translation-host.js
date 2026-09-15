@@ -75,7 +75,9 @@ function createHost(options = {}) {
     const focused = webContents.getFocusedWebContents();
     if (focused && attached.has(focused.id)) pickerTarget = focused;
     if (settingsWindow && !settingsWindow.isDestroyed()) { settingsWindow.show(); settingsWindow.focus(); return; }
-    settingsWindow = new BrowserWindow({ show: options.showSettings !== false, width: 980, height: 800, minWidth: 720, minHeight: 580, title: "FigBoost · 汉化设置", backgroundColor: "#202020", autoHideMenuBar: true, webPreferences: { preload: path.join(__dirname, "translation-settings-preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: true } });
+    // Figma's default session intercepts file:// and rejects files outside its bundle.
+    // A non-persistent private session keeps our local settings assets independent.
+    settingsWindow = new BrowserWindow({ show: options.showSettings !== false, width: 980, height: 800, minWidth: 720, minHeight: 580, title: "FigBoost · 汉化设置", backgroundColor: "#202020", autoHideMenuBar: true, webPreferences: { partition: "figboost-translation-settings", preload: path.join(__dirname, "translation-settings-preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: true } });
     settingsWindow.webContents.__FIGBOOST_SKIP_RENDERER_INJECTION__ = true;
     settingsWindow.removeMenu();
     settingsWindow.webContents.on("will-navigate", event => event.preventDefault());

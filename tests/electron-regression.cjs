@@ -11,6 +11,9 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(fn) { for (let i = 0; i < 40; i++) { if (await fn()) return; await wait(100); } throw Error("Regression condition timed out"); }
 let host;
 app.whenReady().then(async () => {
+  // Figma restricts file:// in its default session to its own bundled pages.
+  // Reproduce the real host's 404 without launching or modifying Figma.
+  await session.defaultSession.protocol.handle("file", () => new Response("Not found", { status: 404 }));
   const calls = [];
   const { createHost, isFigmaURL } = require(path.join(runtime, "translation-host.js"));
   assert.equal(isFigmaURL("https://figma.com.evil.test"), false);
@@ -25,9 +28,14 @@ app.whenReady().then(async () => {
   assert.equal(await page.webContents.executeJavaScript("document.querySelector('#save').textContent"), "保存");
   host.openSettings();
   const settings = BrowserWindow.getAllWindows().find(w => w !== page);
+  assert.notEqual(settings.webContents.session, session.defaultSession);
   settings.webContents.on("console-message", (_event, details) => { if (details.level === "error") console.error("Settings console:", details.message); });
   try { await until(() => settings.webContents.executeJavaScript("document.querySelector('#message')?.textContent === '设置已加载'").catch(() => false)); }
   catch (e) { console.error("Settings state:", settings.webContents.getURL(), await settings.webContents.executeJavaScript("({message:document.querySelector('#message')?.textContent, bridge:typeof window.figBoostSettings})")); throw e; }
+  assert.equal(await settings.webContents.executeJavaScript("document.styleSheets.length > 0 && getComputedStyle(document.documentElement).backgroundColor === 'rgb(32, 32, 32)'"), true);
+  const blocked = await session.defaultSession.fetch(require("node:url").pathToFileURL(path.join(runtime, "translation-settings.html")).href);
+  assert.equal(blocked.status, 404);
+  assert.equal(await blocked.text(), "Not found");
   async function command(action, data) { const result = await settings.webContents.executeJavaScript(`window.figBoostSettings.invoke(${JSON.stringify(action)},${JSON.stringify(data || {})})`); assert.equal(result.ok, true, result.error); return result; }
   await command("saveKey", { key: "test-key-abcdefghijklmnopqrstuvwxyz" });
   await command("settings", { enabled: true, online: true, dailyLimit: 20000, regions: {} });

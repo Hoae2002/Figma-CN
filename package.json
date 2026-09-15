@@ -1,6 +1,6 @@
 {
   "name": "figboost",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": true,
   "description": "Development-only regression tools for FigBoost; no Node packages are shipped with the patcher.",
   "scripts": {
