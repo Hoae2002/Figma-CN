@@ -49,10 +49,14 @@ function validateState(s) {
 function readState(file) {
   let error = "";
   for (const target of [file, file + ".bak"]) {
-    try { return { state: validateState(JSON.parse(fs.readFileSync(target, "utf8").replace(/^\uFEFF/, ""))), recovered: target !== file, error }; }
+    try {
+      const parsed = JSON.parse(fs.readFileSync(target, "utf8").replace(/^\uFEFF/, ""));
+      const state = validateState(parsed);
+      return { state, recovered: target !== file, migrated: state.schema !== parsed.schema, error };
+    }
     catch (e) { if (e.code !== "ENOENT") error = "缓存读取失败，已尝试最近备份。"; }
   }
-  return { state: defaults(), recovered: !!error, error };
+  return { state: defaults(), recovered: !!error, migrated: false, error };
 }
 // Google web translation without a developer key. Preserve phrase boundaries.
 function googleTransport(net) {
@@ -91,6 +95,7 @@ function createService({ dir, transport, now = () => new Date(), debounceMs = 18
     if (fs.existsSync(file) && !preserveBackup) fs.copyFileSync(file, file + ".bak");
     fs.renameSync(file + ".tmp", file); preserveBackup = false;
   }
+  if (loaded.migrated) persist();
   function change() { state.revision++; persist(); for (const fn of listeners) fn(); }
   function snapshot() { return JSON.parse(JSON.stringify({ ...state, lastError, blocked: now().getTime() < blockedUntil })); }
   function allowed(c) { return !closed && state.settings.enabled && state.settings.communityOnline && c && c.region === "community" && P.validCandidate(c); }

@@ -128,6 +128,10 @@ test("legacy migration retains data but global machine cache is no longer usable
   assert.equal(await reboot.translate({ ...entry, translation: undefined }), null);
   assert.equal((await reboot.translate(c("Save"))).translation, "测试");
   assert.deepEqual(JSON.parse(fs.readFileSync(file)), old);
+  const migrated = JSON.parse(fs.readFileSync(path.join(dir, "cache.json")));
+  assert.equal(migrated.schema, 3);
+  assert.equal(migrated.rules, undefined);
+  assert.equal(migrated.settings.regions, undefined);
   reboot.close();
 });
 test("corrupt current cache recovers last valid backup", async (t) => {
