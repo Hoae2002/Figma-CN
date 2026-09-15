@@ -11,21 +11,189 @@
   const FIGBOOST_DISCOVERY_TIMEOUT_MS = 30000;
   const FIGBOOST_EXPORT_TIMEOUT_MS = 60000;
   const FIGBOOST_REST_FETCH_TIMEOUT_MS = 8000;
-  // Figma labels are translated by the asynchronous service, never a built-in dictionary.
-  function localizeText(value) { return value; }
+  const labels = {
+    "New Window": "新建窗口",
+    "New Tab": "新建标签页",
+    "Open File Browser": "打开文件浏览器",
+    "Open File URL From Clipboard": "从剪贴板打开文件 URL",
+    "Close Window": "关闭窗口",
+    "Close Tab": "关闭标签页",
+    "Reopen Closed Tab": "重新打开关闭的标签页",
+    "Recently Closed Tabs": "最近关闭的标签页",
+    "Plugins": "插件",
+    "Interface Scale": "界面缩放",
+    "Preferences": "偏好设置",
+    "Help": "帮助",
+    "About Figma": "关于 Figma",
+    "Check for Updates...": "检查更新...",
+    "Check for Updates…": "检查更新…",
+    "Copyright © 2026 Figma, Inc.": "版权所有 © 2026 Figma, Inc.",
+    "Default": "默认",
+    "Exit": "退出",
+    "Figma Desktop App version 126.3.12": "Figma 桌面应用版本 126.3.12",
+    "Install now": "立即安装",
+    "Install on next launch": "下次启动时安装",
+    "Manage Plugins...": "管理插件...",
+    "Manage Plugins…": "管理插件…",
+    "Reset to Default": "重置为默认值",
+    "Make Larger": "放大",
+    "Make Smaller": "缩小",
+    "Show Figma in System Tray": "在系统托盘中显示 Figma",
+    "Help Page": "帮助页面",
+    "Support Forum": "支持论坛",
+    "Video Tutorials": "视频教程",
+    "Release Notes": "发行说明",
+    "Legal Summary": "法律摘要",
+    "Troubleshooting": "故障排查",
+    "Log Out": "退出登录",
+    "Toggle Web App Developer Tools": "切换网页应用开发者工具",
+    "Toggle Tab Bar Developer Tools": "切换标签栏开发者工具",
+    "Save Debug Info...": "保存调试信息...",
+    "Save Debug Info…": "保存调试信息…",
+    "Save Network Log...": "保存网络日志...",
+    "Save Network Log…": "保存网络日志…",
+    "Save Performance Log...": "保存性能日志...",
+    "Save Performance Log…": "保存性能日志…",
+    "Disable Hardware Acceleration": "禁用硬件加速",
+    "Prefer High-Performance CPU": "优先使用高性能 CPU",
+    "Prefer High-Performance GPU": "优先使用高性能 GPU",
+    "Graphics Backend": "图形后端",
+    "WebGL1": "WebGL1",
+    "WebGL2": "WebGL2",
+    "WebGPU": "WebGPU",
+    "Missing a new feature? Try reloading your tabs and check again. If you experience any other issues, please contact support.": "缺少新功能？请重新加载标签页后再检查。如果遇到其他问题，请联系支持。",
+    "No Update Available": "没有可用更新",
+    "Reload All Tabs": "重新加载全部标签页",
+    "Replace": "替换",
+    "Replace Existing Files": "替换现有文件",
+    "Replace existing files?": "要替换现有文件吗？",
+    "Reset Figma and Restart": "重置 Figma 并重启",
+    "Update Available": "有可用更新",
+    "Copy Link": "复制链接",
+    "Rename File": "重命名文件",
+    "Reload Tab": "重新加载标签页",
+    "Move to New Window": "移动到新窗口",
+    "Pin Tab": "固定标签页",
+    "Close Other Tabs": "关闭其他标签页",
+    "Close All Tabs": "关闭全部标签页",
+    "A new version of Figma is ready to be installed.": "新版 Figma 已准备好安装。",
+    "You are already using the latest version of Figma.": "您已经在使用最新版 Figma。",
+    "{appName} Desktop App version {version}": "{appName} 桌面应用版本 {version}",
+    "Copyright © {year} Figma, Inc.": "版权所有 © {year} Figma, Inc.",
+    "About {appName}": "关于 {appName}",
+    "This version of {appName} is not intended for use on Windows on Arm. Please download {appName} again from the Figma Downloads page to ensure that the correct version is installed.": "此版本的 {appName} 不适用于 Windows on Arm。请从 Figma 下载页面重新下载 {appName}，以确保安装正确版本。",
+    "Open downloads page": "打开下载页面",
+    "Update {appName}": "更新 {appName}",
+    "This is likely happening because your corporate network is using a proxy.{lineBreak}This can be resolved by adding non-Figma origins used by your proxy to your AllowedOriginHosts setting. Click the button below to visit our Help Center for details.": "这很可能是因为你的企业网络正在使用代理。{lineBreak}可通过将代理使用的非 Figma 来源添加到 AllowedOriginHosts 设置来解决。点击下方按钮访问帮助中心了解详情。",
+    "Blocked Navigation to ''{hostname}''": "已阻止导航到“{hostname}”",
+    "Visit Help Center": "访问帮助中心",
+    "Do not ask me again": "不再询问",
+    "Closing this tab will stop all in-progress and pending imports.": "关闭此标签页将停止所有进行中和待处理的导入。",
+    "Keep Tab Open": "保持标签页打开",
+    "File import in progress": "文件正在导入",
+    "Changes are currently being saved. Your changes will be lost if you close the window now.": "更改正在保存。如果现在关闭窗口，你的更改将会丢失。",
+    "Discard Unsaved Changes?": "放弃未保存的更改？",
+    "Export failed": "导出失败",
+    "The clipboard does not contain a valid Figma URL.": "剪贴板中没有有效的 Figma URL。",
+    "Invalid Figma URL": "无效的 Figma URL",
+    "Changes are currently being saved. Your changes will be lost if you log out now.": "更改正在保存。如果现在退出登录，你的更改将会丢失。",
+    "Log Out & Discard Changes": "退出登录并放弃更改",
+    "Hang tight! Still merging…": "请稍候，仍在合并…",
+    "Remove Other Desktop App": "移除其他桌面应用",
+    "Multiple Installations Not Supported": "不支持多个安装",
+    "You are already using the latest version of {appName}.{lineBreak}Missing a new feature? Try reloading your tabs and check again. If you experience any other issues, please contact support.": "你已经在使用最新版 {appName}。{lineBreak}缺少新功能？请重新加载标签页后再检查。如果遇到其他问题，请联系支持。",
+    "Please enable Camera & Microphone for {appName} in System Preferences → Security & Privacy → Privacy.": "请在系统偏好设置 → 安全性与隐私 → 隐私中为 {appName} 启用摄像头和麦克风。",
+    "Please enable Camera for {appName} in System Preferences → Security & Privacy → Privacy.": "请在系统偏好设置 → 安全性与隐私 → 隐私中为 {appName} 启用摄像头。",
+    "Please enable Microphone for {appName} in System Preferences → Security & Privacy → Privacy.": "请在系统偏好设置 → 安全性与隐私 → 隐私中为 {appName} 启用麦克风。",
+    "Reloading the tab won’t lose your changes, but you’ll have to reconnect to sync the changes.": "重新加载标签页不会丢失你的更改，但你需要重新连接才能同步更改。",
+    "{numFiles, plural, one {Replace existing file?} other {Replace existing files?}}": "{numFiles, plural, one {替换现有文件？} other {替换现有文件？}}",
+    "{appName} was unable to reset app data and restart. Please contact support for assistance.": "{appName} 无法重置应用数据并重启。请联系支持获取帮助。",
+    "{appName} Reset Failed": "{appName} 重置失败",
+    "{appName} app data will reset and the app will restart. You will need to log back into {appName} after this is done.": "{appName} 应用数据将被重置，应用将重新启动。完成后你需要重新登录 {appName}。",
+    "Reset {appName} and Restart?": "重置 {appName} 并重启？",
+    "{appName} needs to be restarted to apply changes.": "{appName} 需要重启才能应用更改。",
+    "Restart to apply changes": "重启以应用更改",
+    "Save Debug Info": "保存调试信息",
+    "Saving file failed": "保存文件失败",
+    "Complete the specific action in Figma that you’d like information about. You’ll get a prompt after 30 seconds to save the network log file.": "请在 Figma 中完成你想收集信息的具体操作。30 秒后会提示你保存网络日志文件。",
+    "Saving a network log": "正在保存网络日志",
+    "Complete the specific action in Figma that you’d like information about. You’ll get a prompt after 30 seconds to save the performance log file.": "请在 Figma 中完成你想收集信息的具体操作。30 秒后会提示你保存性能日志文件。",
+    "Saving a performance log": "正在保存性能日志",
+    "A new version of {appName} is ready to be installed.": "新版本 {appName} 已准备好安装。",
+    "{appName} was not able to install the update:": "{appName} 无法安装更新：",
+    "Download update manually": "手动下载更新",
+    "Update Error": "更新错误",
+    "Microphone access required to talk in Figma Audio. Please enable microphone for {appName} in System Preferences → Security & Privacy → Privacy → Microphone.": "使用 Figma Audio 通话需要麦克风权限。请在系统偏好设置 → 安全性与隐私 → 隐私 → 麦克风中为 {appName} 启用麦克风。",
+    "Choose plugin directory location": "选择插件目录位置",
+    "Choose plugin name and directory location": "选择插件名称和目录位置",
+    "Figma failed to load": "Figma 加载失败",
+    "Oops something went wrong": "糟糕，出了点问题",
+    "Error navigating to ''{url}'': {error}": "导航到“{url}”时出错：{error}",
+    "Add to Dictionary": "添加到词典",
+    "Color Management": "色彩管理",
+    "Managed": "已管理",
+    "Debug Figma Agent": "调试 Figma Agent",
+    "(empty)": "（空）",
+    "Enable Trackpad Haptic Feedback": "启用触控板触觉反馈",
+    "Export As…": "导出为…",
+    "Export Slides to PDF…": "将幻灯片导出为 PDF…",
+    "Export Slides to…": "导出幻灯片到…",
+    "Export All Slides to PDF…": "将全部幻灯片导出为 PDF…",
+    "Import From CSV…": "从 CSV 导入…",
+    "{interfaceScalePercent}%": "{interfaceScalePercent}%",
+    "Hide {appName}": "隐藏 {appName}",
+    "Quit {appName}": "退出 {appName}",
+    "Open Test Websocket Page": "打开测试 WebSocket 页面",
+    "Save Local Copy…": "保存本地副本…",
+    "Select All": "全选",
+    "Toggle Browser Preview Developer Tools": "切换浏览器预览开发者工具",
+    "Add to Tab Group": "添加到标签组",
+    "Close": "关闭",
+    "Close Tab Group": "关闭标签组",
+    "Discard Changes": "丢弃更改",
+    "Move to Another Window": "移动到另一个窗口",
+    "Group {number}": "组 {number}",
+    "New Tab Group": "新建标签组",
+    "Open in Browser": "在浏览器中打开",
+    "Open in Split Tab": "在分割标签页中打开",
+    "Figma Desktop App version 126.5.6": "Figma 桌面应用版本 126.5.6",
+    "{numOtherTabs, plural, =1 {{tabName} and # Other Tab} other {{tabName} and # Other Tabs}}": "{numOtherTabs, plural, =1 {{tabName} 和另外 # 个标签页} other {{tabName} 和另外 # 个标签页}}",
+    "Pin": "固定",
+    "Reload": "重新加载",
+    "Remove from Tab Group": "从标签组中移除",
+    "Unpin": "取消固定",
+    "{pluginName} (Community)": "{pluginName}（社区）"
+  };
 
-  function localizeItems(items, protectedBranch = false) {
+  const labelPatterns = [
+    [/^Figma Desktop App version (.+)$/, "Figma 桌面应用版本 $1"],
+    [/^Copyright © (\d{4}) Figma, Inc\.$/, "版权所有 © $1 Figma, Inc."],
+    [/^→\s*Install now$/, "→ 立即安装"],
+    [/^→\s*Install on next launch$/, "→ 下次启动时安装"],
+    [/^(\d+) files including "(.+)" already exist\. Replacing them will overwrite their existing contents\.$/, "$1 个文件（包括“$2”）已存在。替换后将覆盖其现有内容。"]
+  ];
+
+  function localizeText(value) {
+    if (typeof value !== "string") return value;
+    if (labels[value]) return labels[value];
+    for (const [pattern, replacement] of labelPatterns) {
+      if (pattern.test(value)) return value.replace(pattern, replacement);
+    }
+    return value;
+  }
+
+  function localizeItems(items) {
     let changed = false;
     for (const item of items || []) {
-      const originalLabel = translationHost ? translationHost.originalLabel(item) : item.label;
-      const unsafe = protectedBranch || /recent|plugin|font|library|open file|最近|插件|字体/i.test(originalLabel || "");
-      const label = protectedBranch ? originalLabel : translationHost ? translationHost.nativeLabel(item, localizeText, !unsafe && Boolean(item.role || item.id)) : localizeText(item.label);
+      const label = translationHost
+        ? translationHost.nativeLabel(item, localizeText, true)
+        : localizeText(item.label);
       if (item.label && label !== item.label) {
         item.label = label;
         changed = true;
       }
       if (item.submenu && item.submenu.items) {
-        changed = localizeItems(item.submenu.items, unsafe) || changed;
+        changed = localizeItems(item.submenu.items) || changed;
       }
     }
     return changed;
@@ -33,7 +201,11 @@
 
   function localizeTemplate(items) {
     for (const item of items || []) {
-      if (item.label) item.label = localizeText(item.label);
+      if (item.label) {
+        item.label = translationHost
+          ? translationHost.nativeLabel(item, localizeText, true)
+          : localizeText(item.label);
+      }
       if (Array.isArray(item.submenu)) localizeTemplate(item.submenu);
       if (item.submenu && item.submenu.items) localizeItems(item.submenu.items);
     }
@@ -55,12 +227,8 @@
     if (!options || typeof options !== "object") return options;
     if (translationHost && !translationHost.enabled()) return options;
     const next = { ...options };
-    if (translationHost) {
-      if (Array.isArray(next.buttons)) next.buttons = next.buttons.map(label => translationHost.nativeLabel({ label }, value => value, true));
-    } else {
-      for (const key of ["title", "message", "detail"]) next[key] = localizeText(next[key]);
-      if (Array.isArray(next.buttons)) next.buttons = next.buttons.map(localizeText);
-    }
+    for (const key of ["title", "message", "detail"]) next[key] = localizeText(next[key]);
+    if (Array.isArray(next.buttons)) next.buttons = next.buttons.map(localizeText);
     return next;
   }
 
@@ -83,6 +251,7 @@
     if (!app || typeof app.setAboutPanelOptions !== "function") return;
     const original = app.setAboutPanelOptions.bind(app);
     app.setAboutPanelOptions = function (options) {
+      if (translationHost && !translationHost.enabled()) return original(options);
       if (options && typeof options === "object") {
         options = { ...options };
         for (const key of ["title", "message", "detail", "applicationVersion", "version", "copyright"]) {

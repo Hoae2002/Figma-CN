@@ -11,17 +11,20 @@
   }
   function allowElement(element, source) {
     if (!state.settings.enabled) return false;
+    if (!element || !element.closest) return false;
+    if (element.closest(P.protectedSelector)) return false;
     const region = P.regionOf(element);
-    return !!region && region !== "other";
+    return !P.isProtectedDynamicValue(element, source, region);
   }
   function resolveTranslation(source, node, builtin, attr) {
-    const c = candidate(node, source);
-    const element = node.nodeType === 3 ? node.parentElement : node;
-    if (!state.settings.enabled || !c || c.region === "other") return null;
-    const k = P.key(c.text, c.region, c.context);
+    if (!state.settings.enabled) return null;
     // The maintained Figma dictionary is authoritative. Machine cache and
     // Google are fallbacks only when the dictionary has no usable result.
-    if (typeof builtin === "string" && builtin !== source && P.normalize(builtin) !== c.text) return builtin;
+    if (typeof builtin === "string" && builtin !== source) return builtin;
+    const c = candidate(node, source);
+    const element = node.nodeType === 3 ? node.parentElement : node;
+    if (!c || c.region !== "community") return null;
+    const k = P.key(c.text, c.region, c.context);
     const communityOnline = c.region === "community" && state.settings.communityOnline === true;
     if (communityOnline && state.learned[k]) return window.FigmaZhLocalizer.preserveOuterWhitespace(source, state.learned[k].translation);
     // Outside Community, dictionary misses stay in English. Legacy global

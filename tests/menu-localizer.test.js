@@ -44,14 +44,16 @@ ${marker}`);
 
 const helpers = loadMenuHelpers();
 
-test("without the translation host native menus and dynamic dialog details retain original text", () => {
-  assert.equal(helpers.localizeText("New Window"), "New Window");
+test("stable native menu dictionary remains available without the translation host", () => {
+  assert.equal(helpers.localizeText("New Window"), "新建窗口");
   const items = [{ label: "Help", submenu: { items: [{ label: "Reload" }] } }];
-  assert.equal(helpers.localizeItems(items), false);
-  assert.equal(items[0].submenu.items[0].label, "Reload");
+  assert.equal(helpers.localizeItems(items), true);
+  assert.equal(items[0].label, "帮助");
+  assert.equal(items[0].submenu.items[0].label, "重新加载");
   const options = helpers.localizeDialogOptions({ title: "Update Available", detail: "C:\\private\\file.fig", buttons: ["Install now"] });
-  assert.equal(options.title, "Update Available");
-  assert.equal(options.buttons[0], "Install now");
+  assert.equal(options.title, "有可用更新");
+  assert.equal(options.detail, "C:\\private\\file.fig");
+  assert.equal(options.buttons[0], "立即安装");
 });
 
 test("compares variable-length versions numerically", () => {

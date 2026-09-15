@@ -400,10 +400,9 @@
     allowElement: translationRuntime && translationRuntime.allowElement,
     resolveTranslation: translationRuntime && translationRuntime.resolveTranslation,
     debug: false,
-    budgetMs: 6,
-    chunkSize: 80,
+    budgetMs: 24,
+    chunkSize: 220,
     floatingTextLimit: 260,
-    immediateBudgetMs: 4,
     immediateTextLimit: 120
   });
 

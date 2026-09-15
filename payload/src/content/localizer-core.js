@@ -2,12 +2,11 @@
   "use strict";
 
   const DEFAULT_OPTIONS = {
-    budgetMs: 6,
-    chunkSize: 80,
+    budgetMs: 24,
+    chunkSize: 220,
     debug: false,
     fallbackTerms: true,
     floatingTextLimit: 160,
-    immediateBudgetMs: 4,
     immediateTextLimit: 120,
     maxTextLength: 260,
     translateAttributes: true
@@ -294,13 +293,6 @@
       return cacheResult(cacheKey, result);
     }
 
-    function translateExact(value) {
-      const normalized = normalizeText(value);
-      if (!normalized) return null;
-      const exactMatch = exact.get(normalized);
-      return exactMatch ? preserveOuterWhitespace(value, exactMatch) : null;
-    }
-
     function classifyUntranslated(value) {
       const text = normalizeText(value);
       if (!text || !/[A-Za-z]/.test(text)) return "none";
@@ -309,7 +301,7 @@
       return "ui";
     }
 
-    return { translate, translateExact, classifyUntranslated };
+    return { translate, classifyUntranslated };
   }
 
   function isSkippableElement(element) {
@@ -409,8 +401,6 @@
   }
 
   function shouldTranslateAttribute(element, name) {
-    if (window.FigBoostTranslationPolicy
-      && window.FigBoostTranslationPolicy.isProtectedDynamicValue(element, element.getAttribute(name))) return false;
     if (isLayerTreeContentElement(element)) return false;
     if (isUserNamedContentElement(element, element.getAttribute(name))) return false;
     if (isFontStyleAttributeValue(element, element.getAttribute(name))) return false;
@@ -757,7 +747,7 @@
       const hits = countGradientTypeHits(scopeText);
       if (hits >= 3) {
         element.setAttribute(GRADIENT_MENU_ATTR, "1");
-
+        normalizeGradientTypeDescendants(element);
         return translated;
       }
     }
@@ -830,13 +820,36 @@
       if (combined.length <= 260 && countGradientTypeHits(combined) >= 3) {
         if (normalizeMatches) {
           parent.setAttribute(GRADIENT_MENU_ATTR, "1");
-
+          normalizeGradientTypeDescendants(parent);
         }
         return true;
       }
     }
 
     return false;
+  }
+
+  function normalizeGradientTypeDescendants(root) {
+    if (!root || root.nodeType !== Node.ELEMENT_NODE) return;
+
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    while (node) {
+      const text = normalizeText(node.nodeValue);
+      if (isEditableElement(node.parentElement)) {
+        node = walker.nextNode();
+        continue;
+      }
+      const source = getGradientTypeSourceTerm(text);
+      const translated = GRADIENT_TYPE_TERMS.get(source);
+      if (translated && text !== translated) {
+        node[ORIGINAL_TEXT_KEY] = node[ORIGINAL_TEXT_KEY] || node.nodeValue;
+        node[TRANSLATED_TEXT_KEY] = preserveOuterWhitespace(node.nodeValue, translated);
+        node.nodeValue = node[TRANSLATED_TEXT_KEY];
+        markChangedElement(node.parentElement, text, translated);
+      }
+      node = walker.nextNode();
+    }
   }
 
   function hasNearbyGradientControlContext(startElement, normalizeMatches) {
@@ -852,7 +865,7 @@
       if (hasPaintContext && hasPaintValue && hasGradientType) {
         if (normalizeMatches) {
           element.setAttribute(GRADIENT_MENU_ATTR, "1");
-
+          normalizeGradientTypeDescendants(element);
         }
         return true;
       }
@@ -874,7 +887,7 @@
       if (hasStopContext && hasPaintValue && hasGradientType) {
         if (normalizeMatches) {
           element.setAttribute(GRADIENT_MENU_ATTR, "1");
-
+          normalizeGradientTypeDescendants(element);
         }
         return true;
       }
@@ -912,7 +925,13 @@
       "[role='button'],[role='menuitem'],[role='option'],button,a,[role='menu'],[role='listbox'],[role='dialog'],[role='tooltip'],[data-testid*='dropdown' i],[data-testid*='popover' i],[data-testid*='tooltip' i]"
     );
     if (interactiveScope) return true;
-    return Boolean(findTooltipContainer(element));
+    if (findTooltipContainer(element)) return true;
+
+    const style = window.getComputedStyle(element);
+    return (
+      (style.position === "absolute" || style.position === "fixed")
+      && element.getBoundingClientRect().width <= 160
+    );
   }
 
   function markChangedElement(element, original, translated) {
@@ -929,9 +948,24 @@
   function findTooltipContainer(element) {
     if (!element || element.nodeType !== Node.ELEMENT_NODE) return null;
 
-    const explicit = element.closest("[role='tooltip'],[data-testid*='tooltip' i],[class*='tooltip' i]");
+    const explicit = element.closest("[role='tooltip'],[data-testid*='tooltip' i]");
     if (explicit && !isTooltipTriggerElement(explicit) && !hasMenuLikeControls(explicit)) {
       return explicit;
+    }
+
+    const likely = closestLikelyFloatingTooltip(element);
+    if (likely && !isTooltipTriggerElement(likely) && !hasMenuLikeControls(likely)) {
+      return likely;
+    }
+
+    return null;
+  }
+
+  function closestLikelyFloatingTooltip(element) {
+    let current = element;
+    while (current && current !== document.body && current !== document.documentElement) {
+      if (isLikelyFloatingTooltip(current)) return current;
+      current = current.parentElement;
     }
     return null;
   }
@@ -941,7 +975,8 @@
     if (element.matches("button,a,input,textarea,select,[role='button'],[role='menuitem'],[role='option']")) return true;
     return (
       element.hasAttribute("data-tooltip")
-      && !element.matches("[role='tooltip'],[data-testid*='tooltip' i],[class*='tooltip' i]")
+      && !element.matches("[role='tooltip']")
+      && !isLikelyFloatingTooltip(element)
     );
   }
 
@@ -967,17 +1002,37 @@
     return Boolean(element.querySelector("[role='menu'],[role='listbox'],[role='option'],[role='menuitem'],button"));
   }
 
+  function isLikelyFloatingTooltip(element) {
+    const text = normalizeText(element.textContent);
+    if (!text || text.length > 80) return false;
+
+    const style = window.getComputedStyle(element);
+    if (style.position !== "fixed") return false;
+    if (style.display === "none" || style.visibility === "hidden") return false;
+
+    const rect = element.getBoundingClientRect();
+    if (!rect.width || !rect.height) return false;
+    if (rect.width > 420 || rect.height > 96) return false;
+
+    return true;
+  }
+
   function isLatencySensitiveFloatingElement(element) {
     if (!element || element.nodeType !== Node.ELEMENT_NODE) return false;
     if (element === document.body || element === document.documentElement) return false;
-    const selector = [
-      "[role='menu']", "[role='listbox']", "[role='menuitem']", "[role='option']",
-      "[role='dialog']", "[role='alertdialog']", "[role='tooltip']",
-      "[data-testid*='popover' i]", "[data-testid*='dropdown' i]", "[data-testid*='tooltip' i]",
-      "[class*='popover' i]", "[class*='dropdown' i]", "[class*='tooltip' i]",
-      "[data-floating-ui-portal]", "[data-radix-popper-content-wrapper]"
-    ].join(",");
-    return element.matches(selector);
+
+    if (element.matches("[role='menu'],[role='listbox'],[role='dialog'],[role='tooltip']")) return true;
+    if (element.querySelector("[role='menu'],[role='listbox'],[role='menuitem'],[role='option'],[role='dialog'],[role='tooltip']")) {
+      return true;
+    }
+
+    const style = window.getComputedStyle(element);
+    if (style.position !== "fixed" && style.position !== "absolute") return false;
+    if (style.display === "none" || style.visibility === "hidden") return false;
+
+    const rect = element.getBoundingClientRect();
+    if (!rect.width || !rect.height) return false;
+    return rect.width <= 520 && rect.height <= 760;
   }
 
   function restoreElement(element) {
@@ -1074,7 +1129,7 @@
 
     function translateAttributes(element) {
       if (!options.translateAttributes || !element || isAttributeSkippableElement(element)) return;
-      if (options.allowElement && !options.resolveTranslation && !options.allowElement(element, "")) return;
+      if (options.allowElement && !options.allowElement(element, "")) return;
       restoreFontStyleAttributes(element);
       for (const name of TRANSLATABLE_ATTRS) {
         if (!shouldTranslateAttribute(element, name)) continue;
@@ -1099,10 +1154,10 @@
       }
   }
 
-  function translateTextNode(node, preclassifiedKind) {
-    if (options.allowElement && !options.resolveTranslation && !options.allowElement(node.parentElement, node.nodeValue)) return;
+  function translateTextNode(node) {
+    if (options.allowElement && !options.allowElement(node.parentElement, node.nodeValue)) return;
     const fontStyleSource = getTranslatedFontStyleSourceTerm(node);
-    if (fontStyleSource && !options.resolveTranslation) {
+    if (fontStyleSource) {
       node.nodeValue = preserveFontStyleMarker(node.nodeValue, fontStyleSource);
       markChangedElement(node.parentElement);
       return;
@@ -1118,8 +1173,7 @@
       markChangedElement(node.parentElement);
       return;
     }
-    if (preclassifiedKind && preclassifiedKind !== "text") return;
-    if (preclassifiedKind !== "text" && !shouldTranslateTextNode(node)) return;
+    if (!shouldTranslateTextNode(node)) return;
     if (node.nodeValue.trim().length > options.maxTextLength) return;
     const original = node[TRANSLATED_TEXT_KEY] && node.nodeValue === node[TRANSLATED_TEXT_KEY]
         ? node[ORIGINAL_TEXT_KEY]
@@ -1135,56 +1189,12 @@
       stats.changedTexts += 1;
     }
 
-    function translateExactTextNode(node) {
-      if (!node || node.nodeType !== Node.TEXT_NODE || !node.nodeValue || !/[A-Za-z]/.test(node.nodeValue)) return false;
-      const original = node[TRANSLATED_TEXT_KEY] && node.nodeValue === node[TRANSLATED_TEXT_KEY]
-        ? node[ORIGINAL_TEXT_KEY]
-        : node.nodeValue;
-      const builtin = translator.translateExact(original);
-      if (!builtin || builtin === node.nodeValue || !shouldTranslateTextNode(node)) return false;
-      const translated = options.resolveTranslation ? options.resolveTranslation(original, node, builtin) : builtin;
-      if (!translated || translated === node.nodeValue) return false;
-
-      node[ORIGINAL_TEXT_KEY] = original;
-      node[TRANSLATED_TEXT_KEY] = translated;
-      node.nodeValue = translated;
-      markChangedElement(node.parentElement, original, translated);
-      stats.changedTexts += 1;
-      stats.processedNodes += 1;
-      return true;
-    }
-
-    function pretranslateExactDictionary(root) {
-      if (!root || !enabled || !isInBodyRegion(root)) return;
-      const element = root.nodeType === Node.TEXT_NODE ? root.parentElement : root;
-      if (!element || isEditableNode(root) || isSkippableElement(element)) return;
-      const policy = window.FigBoostTranslationPolicy;
-      if (policy && policy.isCommunityLocation(window.location)) return;
-      if (root.nodeType === Node.TEXT_NODE) {
-        translateExactTextNode(root);
-        return;
-      }
-      if (root.nodeType !== Node.ELEMENT_NODE) return;
-
-      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-      let visited = 0;
-      let node = walker.nextNode();
-      while (node && visited < 260) {
-        translateExactTextNode(node);
-        visited += 1;
-        node = walker.nextNode();
-      }
-    }
-
-    function classifyTextNode(node) {
-      if (shouldTranslateTextNode(node)) return "text";
-      if (getTranslatedFontStyleSourceTerm(node)) return "font-style";
-      if (wouldTranslateGradientType(node)) return "gradient";
-      return null;
-    }
-
     function shouldProcessTextNode(node) {
-      return Boolean(classifyTextNode(node));
+      return Boolean(
+        shouldTranslateTextNode(node)
+        || getTranslatedFontStyleSourceTerm(node)
+        || wouldTranslateGradientType(node)
+      );
     }
 
     function processElement(root) {
@@ -1201,20 +1211,17 @@
       translateAttributes(root);
       if (isSkippableElement(root)) return;
 
-      const processingKinds = new WeakMap();
       const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
         acceptNode(node) {
-          const kind = classifyTextNode(node);
-          if (!kind) return NodeFilter.FILTER_REJECT;
-          processingKinds.set(node, kind);
-          return NodeFilter.FILTER_ACCEPT;
+          return shouldProcessTextNode(node)
+            ? NodeFilter.FILTER_ACCEPT
+            : NodeFilter.FILTER_REJECT;
         }
       });
 
       let node = walker.nextNode();
       while (node) {
-        translateTextNode(node, processingKinds.get(node));
-        processingKinds.delete(node);
+        translateTextNode(node);
         stats.processedNodes += 1;
         node = walker.nextNode();
       }
@@ -1234,9 +1241,8 @@
       };
     }
 
-    function processQueueJob(job, started, deadline, budgetMs) {
+    function processQueueJob(job, started, deadline) {
       if (!job || job.done || !job.root || !enabled) return true;
-      const activeBudgetMs = Number.isFinite(budgetMs) ? budgetMs : options.budgetMs;
       const root = job.root;
       if (!isInBodyRegion(root)) {
         job.done = true;
@@ -1262,13 +1268,11 @@
 
       if (!job.initialized) {
         translateAttributes(root);
-        job.processingKinds = new WeakMap();
         job.walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
           acceptNode(node) {
-            const kind = classifyTextNode(node);
-            if (!kind) return NodeFilter.FILTER_REJECT;
-            job.processingKinds.set(node, kind);
-            return NodeFilter.FILTER_ACCEPT;
+            return shouldProcessTextNode(node)
+              ? NodeFilter.FILTER_ACCEPT
+              : NodeFilter.FILTER_REJECT;
           }
         });
         job.initialized = true;
@@ -1277,8 +1281,7 @@
       let count = 0;
       let node = job.walker && job.walker.nextNode();
       while (node) {
-        translateTextNode(node, job.processingKinds.get(node));
-        job.processingKinds.delete(node);
+        translateTextNode(node);
         stats.processedNodes += 1;
         count += 1;
 
@@ -1286,7 +1289,7 @@
         const idleRemaining = deadline && typeof deadline.timeRemaining === "function"
           ? deadline.timeRemaining()
           : Number.POSITIVE_INFINITY;
-        if (count >= options.chunkSize || spent >= activeBudgetMs || idleRemaining <= 2) {
+        if (count >= options.chunkSize || spent >= options.budgetMs || idleRemaining <= 2) {
           return false;
         }
 
@@ -1302,7 +1305,7 @@
         const idleRemaining = deadline && typeof deadline.timeRemaining === "function"
           ? deadline.timeRemaining()
           : Number.POSITIVE_INFINITY;
-        if (spent >= activeBudgetMs || idleRemaining <= 2) return false;
+        if (spent >= options.budgetMs || idleRemaining <= 2) return false;
       }
 
       job.done = true;
@@ -1334,30 +1337,12 @@
       return count;
     }
 
-    function processOrQueueMutationNode(node, inspectSize, observerStarted) {
+    function processOrQueueMutationNode(node) {
       if (!node || !enabled) return;
       if (!isInBodyRegion(node)) return;
 
       if (isEditableNode(node)) return;
-      if (!inspectSize && node.nodeType === Node.ELEMENT_NODE) pretranslateExactDictionary(node);
       const isFloatingElement = node.nodeType === Node.ELEMENT_NODE && isLatencySensitiveFloatingElement(node);
-      if (node.nodeType === Node.TEXT_NODE || isFloatingElement) {
-        processElement(node);
-        return;
-      }
-      if (!inspectSize) {
-        const started = Number.isFinite(observerStarted) ? observerStarted : performance.now();
-        if (performance.now() - started >= options.immediateBudgetMs) {
-          enqueue(node);
-          return;
-        }
-        const job = createQueueJob(node);
-        if (processQueueJob(job, started, null, options.immediateBudgetMs)) return;
-        if (node.nodeType && !queuedNodes.has(node)) queuedNodes.add(node);
-        queue.add(job);
-        schedule();
-        return;
-      }
       const textLimit = isFloatingElement ? options.floatingTextLimit : options.immediateTextLimit;
       const textCount = countTranslatableTextNodes(node, textLimit);
       if (
@@ -1434,7 +1419,7 @@
       queuedNodes = new WeakSet();
       for (const timer of warmupTimers) window.clearTimeout(timer);
       const initialRoot = root && isInBodyRegion(root) ? root : document.body;
-      if (initialRoot) processOrQueueMutationNode(initialRoot, true);
+      if (initialRoot) processOrQueueMutationNode(initialRoot);
       warmupTimers = [400, 1600].map((delay) => (
         window.setTimeout(() => {
           if (document.body) processOrQueueMutationNode(document.body);
@@ -1443,16 +1428,15 @@
       if (observer) observer.disconnect();
       observer = new MutationObserver((mutations) => {
         try {
-          const observerStarted = performance.now();
           for (const mutation of mutations) {
             if (mutation.type === "childList") {
-              for (const node of mutation.addedNodes) processOrQueueMutationNode(node, false, observerStarted);
+              for (const node of mutation.addedNodes) processOrQueueMutationNode(node);
             } else if (mutation.type === "characterData") {
               if (isOwnTextMutation(mutation.target)) continue;
-              processOrQueueMutationNode(mutation.target, false, observerStarted);
+              processOrQueueMutationNode(mutation.target);
             } else if (mutation.type === "attributes") {
               if (isOwnAttributeMutation(mutation)) continue;
-              processOrQueueMutationNode(mutation.target, false, observerStarted);
+              processOrQueueMutationNode(mutation.target);
             }
           }
         } catch (error) {

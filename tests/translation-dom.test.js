@@ -173,17 +173,8 @@ test('current clipboard, navigation, variable, and category labels use the exact
   assert.equal(search.value, "Private query");
 });
 
-test('bulk UI mutations avoid layout reads and run full candidate recognition once per text', async t => {
-  const { document, w } = fixture(t, '<main></main>', {}, { Save: "保存" });
-  let styleReads = 0, layoutReads = 0, candidateCalls = 0, preliminaryRegionCalls = 0;
-  w.getComputedStyle = () => { styleReads += 1; throw new Error("forced style calculation"); };
-  w.Element.prototype.getBoundingClientRect = () => { layoutReads += 1; throw new Error("forced layout calculation"); };
-  const policy = w.FigBoostTranslationPolicy;
-  const originalCandidate = policy.candidate;
-  const originalRegionOf = policy.regionOf;
-  policy.candidate = (...args) => { candidateCalls += 1; return originalCandidate(...args); };
-  policy.regionOf = (...args) => { preliminaryRegionCalls += 1; return originalRegionOf(...args); };
-
+test('the restored stable engine translates an ordinary rebuilt panel before its first frame', async t => {
+  const { document, runtime } = fixture(t, '<main></main>', {}, { Save: "保存" });
   const menu = document.createElement("div");
   menu.setAttribute("role", "menu");
   for (let index = 0; index < 100; index += 1) {
@@ -192,13 +183,11 @@ test('bulk UI mutations avoid layout reads and run full candidate recognition on
     menu.append(button);
   }
   document.body.append(menu);
-  await tick();
+  await Promise.resolve();
+  await Promise.resolve();
 
   assert.equal([...menu.querySelectorAll("button")].filter(button => button.textContent === "保存").length, 100);
-  assert.equal(candidateCalls, 100);
-  assert.equal(preliminaryRegionCalls, 0);
-  assert.equal(styleReads, 0);
-  assert.equal(layoutReads, 0);
+  assert.equal(runtime.drain().requests.length, 0);
 });
 test('a newly rendered dictionary label is translated in the observer pre-paint slice', async t => {
   const { document } = fixture(t, '<main></main>', {}, { Position: "位置" });
@@ -210,17 +199,6 @@ test('a newly rendered dictionary label is translated in the observer pre-paint 
   await Promise.resolve();
 
   assert.equal(panel.textContent, "位置");
-});
-test('exact dictionary labels pretranslate even when they follow a large dynamic panel subtree', async t => {
-  const { document } = fixture(t, '<main></main>', {}, { Position: "位置" });
-  const panel = document.createElement("section");
-  panel.setAttribute("aria-label", "Right sidebar");
-  panel.innerHTML = `${Array.from({ length: 180 }, (_, index) => `<span>Private value ${index}</span>`).join("")}<span data-testid="last-label">Position</span>`;
-  document.body.append(panel);
-  await Promise.resolve();
-  await Promise.resolve();
-
-  assert.equal(panel.querySelector('[data-testid="last-label"]').textContent, "位置");
 });
 test('current Figma files page uses dictionary only and protects user file names', t => {
   const {runtime, document} = fixture(t, `<body class="feature_flag_canvas_ui3 feature_flag_new_canvas">
