@@ -2,8 +2,8 @@
 const test = require("node:test"), assert = require("node:assert/strict"), fs = require("node:fs"), path = require("node:path");
 const { JSDOM } = require("jsdom");
 const P = require("../payload/src/shared/translation-policy.js");
-function fixture(t, html, custom = {}, exact = {}) {
-  const dom = new JSDOM(html, { url: "https://www.figma.com/design/test", pretendToBeVisual: true, runScripts: "outside-only" });
+function fixture(t, html, custom = {}, exact = {}, pageUrl = "https://www.figma.com/design/test") {
+  const dom = new JSDOM(html, { url: pageUrl, pretendToBeVisual: true, runScripts: "outside-only" });
   t.after(() => dom.window.close());
   const w = dom.window;
   for (const f of ["shared/translation-policy.js", "content/localizer-core.js", "content/translation-runtime.js"]) w.eval(fs.readFileSync(path.join(__dirname, "../payload/src", f), "utf8"));
@@ -113,7 +113,24 @@ test('whole-area exclusion blocks every label including cached results', t => {
 });
 
 test('current Figma sidebar landmarks admit headings and buttons, protect names and layer grids', t => {
-  const {runtime} = fixture(t, `<section role="region" aria-label="Left sidebar"><button>Pages</button><div role="grid"><button>Private page</button></div><div role="treegrid"><button>Private layer</button></div><button aria-label="Private file, file name">Private file</button></section><section aria-label="Right sidebar"><h2>Position</h2><button>Share</button></section>`);
+  const {runtime} = fixture(t, `<body class="feature_flag_canvas_ui3"><section role="region" aria-label="Left sidebar"><button>Pages</button><div role="grid"><button>Private page</button></div><div role="treegrid"><button>Private layer</button></div><button aria-label="Private file, file name">Private file</button></section><section aria-label="Right sidebar"><h2>Position</h2><span>Selection colors</span><button>Share</button></section></body>`);
   const texts = runtime.drain().requests.map(j => j.c.text);
-  assert.deepEqual(Array.from(texts).sort(), ['Pages','Position','Share'].sort());
+  assert.deepEqual(Array.from(texts).sort(), ['Left sidebar','Pages','Position','Right sidebar','Selection colors','Share'].sort());
+});
+
+test('current Figma files page is not hidden by body canvas feature flags and protects user file names', t => {
+  const {runtime} = fixture(t, `<body class="feature_flag_canvas_ui3 feature_flag_new_canvas">
+    <nav aria-label="Sidebar">
+      <ul><li><button><span>Drafts</span></button></li><li><div><span>Community</span></div></li></ul>
+      <section><button><i18n-text>Starred</i18n-text></button><div><button aria-description="Design file"><span>Private sidebar file</span></button></div></section>
+    </nav>
+    <div data-testid="file-browser-desktop-header"><h1><span>Recents</span></h1></div>
+    <div role="tablist"><button role="tab"><span>Recently viewed</span></button></div>
+    <div role="combobox"><span>All files</span></div>
+    <main><div role="listitem"><div role="group" aria-label="Private card file"><h2>Private card file</h2><button aria-label="Add to Starred"></button></div></div></main>
+  </body>`, {}, {}, "https://www.figma.com/files/team/test/recents-and-sharing/recently-viewed");
+  const texts = runtime.drain().requests.map(job => job.c.text);
+  for (const expected of ['Drafts', 'Community', 'Starred', 'Recents', 'Recently viewed', 'All files']) assert.ok(texts.includes(expected), expected);
+  assert.ok(!texts.includes('Private sidebar file'));
+  assert.ok(!texts.includes('Private card file'));
 });

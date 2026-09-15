@@ -16,11 +16,15 @@
     "canvas", "svg", "iframe", "webview", "code", "pre", "input", "textarea", "select", "option",
     "[contenteditable]:not([contenteditable='false'])", "[role='textbox']", "[role='treeitem']", "[role='treegrid']",
     "[aria-label$=', file name']", "[aria-label='Left sidebar'] [role='grid']",
-    "[data-figma-zh-skip]", "[data-testid*='canvas']", "[data-testid*='viewport']", "[class*='canvas']",
+    "[data-figma-zh-skip]", "[data-testid*='canvas']", "[data-testid*='viewport']", "[aria-label='Canvas']", "[aria-label='Canvas viewport']",
+    "[class^='canvas--']", "[class*=' canvas--']", "[class^='canvas_']", "[class*=' canvas_']",
     "[data-testid*='comment']", "[class*='comment']", "[data-testid*='plugin']", "[class*='plugin']",
     "[data-testid*='file-name']", "[data-testid*='file_name']", "[data-testid*='project-name']",
     "[data-testid*='filename' i]", "[data-testid*='file-title' i]", "[data-testid*='project-title' i]",
     "[data-testid*='workspace-name' i]", "[data-testid*='folder-name' i]", "[class*='file_title']",
+    "[data-testid='ProfileButton']", "[aria-label^='Plan: ']", "[data-card-main-action]",
+    "button[aria-description='Folder']", "button[aria-description$=' file']",
+    "nav section button[aria-description]", "main [role='group'][aria-label]",
     "[data-testid*='team-name']", "[data-testid*='layer-name']", "[data-testid*='component-name']",
     "[data-testid*='variable-name']", "[data-testid*='font']", "[class*='font_picker']",
     "[data-testid*='variant-value']", "[data-testid*='property-value']", "[data-testid*='variable-value']",
@@ -42,10 +46,12 @@
       ["home", "nav,[role='navigation'],[data-testid*='file-browser-sidebar']"]
     ];
     for (const [region, selector] of tests) if (element.closest(selector)) return region;
+    const view = element.ownerDocument && element.ownerDocument.defaultView;
+    if (view && /^\/files(?:\/|$)/.test(view.location.pathname)) return "home";
     return "other";
   }
   function contextOf(element) {
-    const control = element.closest("button,[role='button'],[role='menuitem'],label,[role='tooltip'],[role='tab']");
+    const control = element.closest("button,[role='button'],[role='menuitem'],label,[role='tooltip'],[role='tab'],[role='option'],[role='combobox'],[role='radio'],[role='checkbox'],[role='switch']");
     return control ? (control.getAttribute("role") || control.tagName.toLowerCase()) : "label";
   }
   function anchorOf(element) {

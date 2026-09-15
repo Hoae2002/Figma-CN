@@ -25,7 +25,10 @@
     if (!P.validCandidate(c)) return null;
     // User-facing tooltips can contain names. Only standalone UI labels are sent.
     if (/["“”‘’]/.test(c.text) || element.querySelector("input,textarea,[contenteditable='true'],[data-testid*='name']")) return null;
-    if (c.context === "label" && !element.closest("label,h1,h2,h3,h4,h5,h6,[role='heading']") && !/(?:^|[-_])(?:label|heading|help-text)$/.test(c.anchor || "")) return null;
+    const standaloneLabel = element.closest("label,h1,h2,h3,h4,h5,h6,[role='heading']")
+      || /(?:^|[-_])(?:label|heading|help-text)$/.test(c.anchor || "")
+      || ["menus", "right", "left", "toolbar", "home"].includes(c.region);
+    if (c.context === "label" && !standaloneLabel) return null;
     if (requests.size >= 1000) return null;
     const token = `${k}:${attr || "text"}`;
     let job = requests.get(token);
