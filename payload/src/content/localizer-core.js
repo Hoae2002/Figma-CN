@@ -7,6 +7,7 @@
     debug: false,
     fallbackTerms: true,
     floatingTextLimit: 160,
+    immediateBudgetMs: 4,
     immediateTextLimit: 120,
     maxTextLength: 260,
     translateAttributes: true
@@ -1185,8 +1186,9 @@
       };
     }
 
-    function processQueueJob(job, started, deadline) {
+    function processQueueJob(job, started, deadline, budgetMs) {
       if (!job || job.done || !job.root || !enabled) return true;
+      const activeBudgetMs = Number.isFinite(budgetMs) ? budgetMs : options.budgetMs;
       const root = job.root;
       if (!isInBodyRegion(root)) {
         job.done = true;
@@ -1236,7 +1238,7 @@
         const idleRemaining = deadline && typeof deadline.timeRemaining === "function"
           ? deadline.timeRemaining()
           : Number.POSITIVE_INFINITY;
-        if (count >= options.chunkSize || spent >= options.budgetMs || idleRemaining <= 2) {
+        if (count >= options.chunkSize || spent >= activeBudgetMs || idleRemaining <= 2) {
           return false;
         }
 
@@ -1252,7 +1254,7 @@
         const idleRemaining = deadline && typeof deadline.timeRemaining === "function"
           ? deadline.timeRemaining()
           : Number.POSITIVE_INFINITY;
-        if (spent >= options.budgetMs || idleRemaining <= 2) return false;
+        if (spent >= activeBudgetMs || idleRemaining <= 2) return false;
       }
 
       job.done = true;
@@ -1284,7 +1286,7 @@
       return count;
     }
 
-    function processOrQueueMutationNode(node, inspectSize) {
+    function processOrQueueMutationNode(node, inspectSize, observerStarted) {
       if (!node || !enabled) return;
       if (!isInBodyRegion(node)) return;
 
@@ -1295,7 +1297,16 @@
         return;
       }
       if (!inspectSize) {
-        enqueue(node);
+        const started = Number.isFinite(observerStarted) ? observerStarted : performance.now();
+        if (performance.now() - started >= options.immediateBudgetMs) {
+          enqueue(node);
+          return;
+        }
+        const job = createQueueJob(node);
+        if (processQueueJob(job, started, null, options.immediateBudgetMs)) return;
+        if (node.nodeType && !queuedNodes.has(node)) queuedNodes.add(node);
+        queue.add(job);
+        schedule();
         return;
       }
       const textLimit = isFloatingElement ? options.floatingTextLimit : options.immediateTextLimit;
@@ -1383,15 +1394,16 @@
       if (observer) observer.disconnect();
       observer = new MutationObserver((mutations) => {
         try {
+          const observerStarted = performance.now();
           for (const mutation of mutations) {
             if (mutation.type === "childList") {
-              for (const node of mutation.addedNodes) processOrQueueMutationNode(node);
+              for (const node of mutation.addedNodes) processOrQueueMutationNode(node, false, observerStarted);
             } else if (mutation.type === "characterData") {
               if (isOwnTextMutation(mutation.target)) continue;
-              processOrQueueMutationNode(mutation.target);
+              processOrQueueMutationNode(mutation.target, false, observerStarted);
             } else if (mutation.type === "attributes") {
               if (isOwnAttributeMutation(mutation)) continue;
-              processOrQueueMutationNode(mutation.target);
+              processOrQueueMutationNode(mutation.target, false, observerStarted);
             }
           }
         } catch (error) {

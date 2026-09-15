@@ -177,6 +177,17 @@ test('bulk UI mutations avoid layout reads and run full candidate recognition on
   assert.equal(styleReads, 0);
   assert.equal(layoutReads, 0);
 });
+test('a newly rendered dictionary label is translated in the observer pre-paint slice', async t => {
+  const { document } = fixture(t, '<main></main>', {}, { Position: "位置" });
+  const panel = document.createElement("section");
+  panel.setAttribute("aria-label", "Right sidebar");
+  panel.innerHTML = "<span>Position</span>";
+  document.body.append(panel);
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.equal(panel.textContent, "位置");
+});
 test('current Figma files page uses dictionary only and protects user file names', t => {
   const {runtime, document} = fixture(t, `<body class="feature_flag_canvas_ui3 feature_flag_new_canvas">
     <nav aria-label="Sidebar">
