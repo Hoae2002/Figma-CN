@@ -8,7 +8,11 @@ function fixture(t, html, custom = {}, exact = {}, pageUrl = "https://www.figma.
   const w = dom.window;
   for (const f of ["shared/translation-policy.js", "content/localizer-core.js", "content/translation-runtime.js"]) w.eval(fs.readFileSync(path.join(__dirname, "../payload/src", f), "utf8"));
   const runtime = w.__FIGBOOST_TRANSLATION_RUNTIME__;
-  const localizer = w.FigmaZhLocalizer.createLocalizer({ exact, phrases: [], uiTerms: {}, commonTerms: {}, patterns: [] }, { allowElement: runtime.allowElement, resolveTranslation: runtime.resolveTranslation });
+  const localizer = w.FigmaZhLocalizer.createLocalizer({ exact, phrases: [], uiTerms: {}, commonTerms: {}, patterns: [] }, {
+    allowElement: runtime.allowElement,
+    allowProtectedElement: runtime.allowProtectedElement,
+    resolveTranslation: runtime.resolveTranslation
+  });
   runtime.bind(localizer);
   const snapshot = { schema: 3, revision: 1, settings: { enabled: true, communityOnline: true }, learned: {}, ...custom };
   runtime.apply(snapshot);
@@ -160,7 +164,7 @@ test('current clipboard, navigation, variable, and category labels use the exact
       <h2>Variable collection</h2><div>Name</div><div>Light</div>
       <input value="Private query" placeholder="Find...">
     </section>
-    <div role="menu"><button>Go to folder</button></div>
+    <div role="menu"><a href="/design/private">Go to folder</a></div>
     <div role="tooltip">Frame link copied to clipboard</div>
     <div role="menu"><button>Content generation</button><button>Shaders</button><button>Styling</button><button>Format & resize</button><button>Fun & creative</button><button>Product & brand</button></div>`, {}, exact);
 
@@ -171,6 +175,32 @@ test('current clipboard, navigation, variable, and category labels use the exact
   const search = document.querySelector("input");
   assert.equal(search.placeholder, "查找…");
   assert.equal(search.value, "Private query");
+});
+
+test('requested Figma commands remain translatable inside protected menu and dialog wrappers', t => {
+  const exact = {
+    "Go to folder": "转到文件夹",
+    "Show/Hide comments": "显示/隐藏评论",
+    "New widget...": "新建小部件…",
+    "Import widget from manifest...": "从清单导入小部件…",
+    "Permissions from folder Design Team": "权限继承自文件夹 Design Team",
+    "People can access this file because they have access to Design Team.": "这些人员可以访问此文件，因为他们有权访问文件夹 Design Team。"
+  };
+  const {runtime, document} = fixture(t, `<div role="menu">
+      <a href="/design/private">Go to folder</a>
+      <button class="comment-action">Show/Hide comments</button>
+      <button data-testid="plugin-widget-action">New widget...</button>
+      <button data-testid="plugin-widget-import">Import widget from manifest...</button>
+    </div>
+    <div role="dialog" data-testid="folder-name-dialog">
+      <h2>Permissions from folder Design Team</h2>
+      <p>People can access this file because they have access to Design Team.</p>
+    </div>`, {}, exact);
+
+  assert.equal(runtime.drain().requests.length, 0);
+  for (const expected of ["转到文件夹", "显示/隐藏评论", "新建小部件…", "从清单导入小部件…", "权限继承自文件夹 Design Team", "这些人员可以访问此文件，因为他们有权访问文件夹 Design Team。"]) {
+    assert.ok(document.body.textContent.includes(expected), expected);
+  }
 });
 
 test('the restored stable engine translates an ordinary rebuilt panel before its first frame', async t => {

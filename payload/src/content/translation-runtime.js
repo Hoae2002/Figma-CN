@@ -9,12 +9,34 @@
   function candidate(node, source) {
     return P.candidate(node.nodeType === 3 ? node.parentElement : node, source);
   }
+  const protectedSystemLabels = [
+    /^Go to folder$/,
+    /^People invited to file$/,
+    /^Show\/Hide comments$/,
+    /^New widget(?:\.\.\.|…)?$/,
+    /^Import widget from manifest(?:\.\.\.|…)?$/,
+    /^Minimize left navigation bar$/,
+    /^Permissions from folder(?:\s+.+)?$/,
+    /^People can access this file because they have access to .+$/,
+    /^Learn more about folder permissions\.$/,
+    /^This setting applies to anyone in the file with .+$/
+  ];
+  function isProtectedSystemLabel(element, source) {
+    const text = P.normalize(source);
+    if (!text || !protectedSystemLabels.some(pattern => pattern.test(text))) return false;
+    return Boolean(element.closest(
+      "[role='menu'],[role='menuitem'],[role='dialog'],[role='alertdialog']," +
+      "[data-testid*='context-menu' i],[data-testid*='popover' i],[data-testid*='dropdown' i]," +
+      "[class*='popover' i],[class*='dropdown' i],[data-floating-ui-portal]"
+    ));
+  }
   function allowElement(element, source) {
     if (!state.settings.enabled) return false;
     if (!element || !element.closest) return false;
-    if (element.closest(P.protectedSelector)) return false;
+    const approvedSystemLabel = isProtectedSystemLabel(element, source);
+    if (element.closest(P.protectedSelector) && !approvedSystemLabel) return false;
     const region = P.regionOf(element);
-    return !P.isProtectedDynamicValue(element, source, region);
+    return approvedSystemLabel || !P.isProtectedDynamicValue(element, source, region);
   }
   function resolveTranslation(source, node, builtin, attr) {
     if (!state.settings.enabled) return null;
@@ -73,7 +95,7 @@
     }
   }
   window.__FIGBOOST_TRANSLATION_RUNTIME__ = {
-    bind: value => { localizer = value; }, allowElement, resolveTranslation, apply, accept,
+    bind: value => { localizer = value; }, allowElement, allowProtectedElement: isProtectedSystemLabel, resolveTranslation, apply, accept,
     drain: () => ({ requests: outgoing.splice(0, 50) })
   };
 })();

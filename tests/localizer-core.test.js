@@ -104,3 +104,30 @@ test("bundled dictionary covers the current clipboard, navigation, variable, and
     assert.equal(translator.translate(source), translation, source);
   }
 });
+
+test("bundled dictionary covers current sharing, widget, comment, and navigation wording", () => {
+  const dictionary = require("../payload/src/dictionary/zh-CN.js");
+  const translator = core.createTranslator(dictionary);
+  const expected = {
+    "People invited to file": "受邀访问文件的人员",
+    "This setting applies to anyone in the file with can view access.": "此设置适用于文件中拥有查看权限的所有人。",
+    "Show/Hide comments": "显示/隐藏评论",
+    "New widget...": "新建小部件…",
+    "Import widget from manifest...": "从清单导入小部件…",
+    "Minimize left navigation bar": "最小化左侧导航栏"
+  };
+
+  for (const [source, translation] of Object.entries(expected)) {
+    assert.equal(dictionary.exact[source], translation, source);
+    assert.equal(translator.translate(source), translation, source);
+  }
+  assert.equal(translator.translate("Permissions from folder Design Team"), "权限继承自文件夹 Design Team");
+  assert.equal(
+    translator.translate("People can access this file because they have access to Design Team. Learn more about folder permissions."),
+    "这些人员可以访问此文件，因为他们有权访问文件夹 Design Team。详细了解文件夹权限。"
+  );
+  assert.equal(
+    translator.translate("Permissions from folder 😢上门系统产品UI"),
+    "权限继承自文件夹 😢上门系统产品UI"
+  );
+});

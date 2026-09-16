@@ -125,7 +125,9 @@
       .sort((a, b) => b[0].length - a[0].length);
     const patterns = (dictionary.patterns || [])
       .filter((item) => Array.isArray(item) && item.length >= 2)
-      .map(([source, replacement, flags, allowAscii]) => [new RegExp(source, flags || ""), replacement, Boolean(allowAscii)]);
+      .map(([source, replacement, flags, allowAscii, preserveCaptures]) => [
+        new RegExp(source, flags || ""), replacement, Boolean(allowAscii), Boolean(preserveCaptures)
+      ]);
     const cache = new Map();
     const allowedAsciiTokens = new Set([
       "AI",
@@ -252,10 +254,10 @@
 
       if (looksLikeProtectedContent(normalized)) return null;
 
-      for (const [pattern, replacement, allowAscii] of patterns) {
+      for (const [pattern, replacement, allowAscii, preserveCaptures] of patterns) {
         if (pattern.test(normalized)) {
           let next = normalized.replace(pattern, replacement);
-          if (fallbackTerms && /[A-Za-z]/.test(next)) {
+          if (fallbackTerms && !preserveCaptures && /[A-Za-z]/.test(next)) {
             next = replaceUiTerms(next) || next;
           }
           if (!allowAscii && hasUntranslatedAscii(next)) continue;
@@ -896,7 +898,7 @@
     return false;
   }
 
-  function shouldTranslateTextNode(node) {
+  function shouldTranslateTextNode(node, options) {
     if (!node || node.nodeType !== Node.TEXT_NODE) return false;
     if (!node.nodeValue || !/[A-Za-z]/.test(node.nodeValue)) return false;
     if (node.nodeValue.trim().length > DEFAULT_OPTIONS.maxTextLength) return false;
@@ -905,7 +907,8 @@
     const parent = node.parentElement;
     if (!parent || isSkippableElement(parent)) return false;
     if (isLayerTreeContentElement(parent)) return false;
-    if (isUserNamedContentElement(parent, node.nodeValue)) return false;
+    if (isUserNamedContentElement(parent, node.nodeValue)
+      && !(options && options.allowProtectedElement && options.allowProtectedElement(parent, node.nodeValue))) return false;
     if (isEditableElement(parent)) return false;
     return true;
   }
@@ -1173,7 +1176,7 @@
       markChangedElement(node.parentElement);
       return;
     }
-    if (!shouldTranslateTextNode(node)) return;
+    if (!shouldTranslateTextNode(node, options)) return;
     if (node.nodeValue.trim().length > options.maxTextLength) return;
     const original = node[TRANSLATED_TEXT_KEY] && node.nodeValue === node[TRANSLATED_TEXT_KEY]
         ? node[ORIGINAL_TEXT_KEY]
@@ -1191,7 +1194,7 @@
 
     function shouldProcessTextNode(node) {
       return Boolean(
-        shouldTranslateTextNode(node)
+        shouldTranslateTextNode(node, options)
         || getTranslatedFontStyleSourceTerm(node)
         || wouldTranslateGradientType(node)
       );
@@ -1524,7 +1527,7 @@
       const inspectTextNode = (node) => {
         const text = normalizeText(node.nodeValue);
         if (!text || !/[A-Za-z]/.test(text)) return false;
-        if (!shouldTranslateTextNode(node)) {
+        if (!shouldTranslateTextNode(node, options)) {
           const category = getSkippedCategory(node.parentElement);
           if (category) {
             addUntranslatedItem(items, seen, {
@@ -1553,7 +1556,7 @@
       } else if (root.nodeType === Node.ELEMENT_NODE && !isSkippableElement(root)) {
         const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
           acceptNode(node) {
-            return shouldTranslateTextNode(node)
+            return shouldTranslateTextNode(node, options)
               ? NodeFilter.FILTER_ACCEPT
               : NodeFilter.FILTER_REJECT;
           }
