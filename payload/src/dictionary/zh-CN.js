@@ -4203,7 +4203,16 @@
     "Use skills": "使用技能",
     "Add skill": "添加技能",
     "Manage skills": "管理技能",
-    "Browse Community": "浏览社区"
+    "Browse Community": "浏览社区",
+    "Search for internal resources": "搜索内部资源",
+    "Shared chat": "共享聊天",
+    "Available to all file editors": "所有文件编辑者均可访问",
+    "Private chat": "私密聊天",
+    "Only you can access": "仅你可以访问",
+    "Copy link to chat": "复制聊天链接",
+    "Add variations": "添加设计变体",
+    "Adapt for mobile or desktop": "适配移动端或桌面端",
+    "Improve roughest screen": "完善最粗糙的页面"
   };
 
   const phrases = [
@@ -5098,6 +5107,7 @@
     ["^Updated (\\d+) minutes? ago$","$1 分钟前更新"],
     ["^Updated (\\d+) hours? ago$","$1 小时前更新"],
     ["^Updated (\\d+) days? ago$","$1 天前更新"],
+    ["^Updated (\\d+) months? ago$","$1 个月前更新"],
     ["^Updated (.+) ago$","$1前更新"],
     ["^Updated just now$","刚刚更新"],
     ["^Created (\\d+) minutes? ago$","$1 分钟前创建"],
