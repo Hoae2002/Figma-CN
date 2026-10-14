@@ -5,6 +5,8 @@
   let state = { settings: { enabled: false, communityOnline: false }, learned: {}, revision: -1 };
   let retryTimer = null;
   let generation = 0, sequence = 0, localizer = null;
+  let communityRoute = P.isCommunityLocation(window.location);
+  let pageRoute = window.location.href;
   const requests = new Map(), outgoing = [], attempted = new Set();
   function candidate(node, source) {
     return P.candidate(node.nodeType === 3 ? node.parentElement : node, source);
@@ -70,12 +72,29 @@
   }
   function apply(snapshot, reconnect = false) {
     if (!snapshot || (!reconnect && snapshot.revision === state.revision)) return;
-    if (localizer) localizer.stop();
+    const nextCommunityRoute = P.isCommunityLocation(window.location);
+    const settingsChanged = state.settings.enabled !== snapshot.settings.enabled
+      || state.settings.communityOnline !== snapshot.settings.communityOnline;
+    const routeChanged = pageRoute !== window.location.href;
+    const communityBoundaryChanged = communityRoute !== nextCommunityRoute;
+    if (!settingsChanged && !routeChanged && !reconnect) {
+      state = snapshot;
+      return;
+    }
+    // New snapshots/reconnections must not restore dictionary labels to English.
+    // Restore only when changing translation mode or crossing Community's boundary.
+    if (localizer && (settingsChanged || communityBoundaryChanged)) localizer.stop();
     clearTimeout(retryTimer); retryTimer = null;
     state = snapshot; generation++; requests.clear(); outgoing.length = 0; attempted.clear();
-    if (localizer && state.settings.enabled) localizer.start(document.body);
+    communityRoute = nextCommunityRoute;
+    pageRoute = window.location.href;
+    if (localizer && state.settings.enabled) {
+      if (settingsChanged || communityBoundaryChanged) localizer.start(document.body);
+      else localizer.enqueue(document.body);
+    }
   }
   function accept(results) {
+    P.beginBatch();
     for (const result of results || []) {
       for (const [token, job] of requests) {
         if (job.id !== result.id) continue;
@@ -95,7 +114,7 @@
     }
   }
   window.__FIGBOOST_TRANSLATION_RUNTIME__ = {
-    bind: value => { localizer = value; }, allowElement, allowProtectedElement: isProtectedSystemLabel, resolveTranslation, apply, accept,
+    bind: value => { localizer = value; }, beginBatch: P.beginBatch, allowElement, allowProtectedElement: isProtectedSystemLabel, resolveTranslation, apply, accept,
     drain: () => ({ requests: outgoing.splice(0, 50) })
   };
 })();

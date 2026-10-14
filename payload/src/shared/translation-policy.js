@@ -15,7 +15,9 @@
   const protectedSelector = [
     "canvas", "svg", "iframe", "webview", "code", "pre",
     "[contenteditable]:not([contenteditable='false'])", "[role='textbox']", "[role='treeitem']", "[role='treegrid']",
-    "[aria-label$=', file name']", "[aria-label='Left sidebar'] [role='grid']",
+    "[aria-label$=', file name']", "[aria-label='Left sidebar'] [role='grid']", "[aria-label='左侧边栏'] [role='grid']",
+    "[data-testid*='page-name' i]", "[data-testid*='page_name' i]", "[data-testid*='page-row' i]", "[data-testid*='page_row' i]",
+    "[class*='page_name' i]", "[class*='page_row' i]", "[class*='pageName']", "[class*='pageRow']",
     "[data-figma-zh-skip]", "[data-testid*='canvas']", "[data-testid*='viewport']", "[aria-label='Canvas']", "[aria-label='Canvas viewport']",
     "[class^='canvas--']", "[class*=' canvas--']", "[class^='canvas_']", "[class*=' canvas_']",
     "[data-testid*='comment']", "[class*='comment']", "[data-testid*='plugin']", "[class*='plugin']",
@@ -49,8 +51,8 @@
     const tests = [
       ["menus", "[role='menu'],[role='menuitem'],[role='listbox'],[role='option'],[aria-haspopup='menu'],[aria-haspopup='listbox'],[data-testid*='context-menu']"],
       ["floating", "[role='tooltip'],[role='dialog'],[role='alertdialog'],[data-testid*='popover' i],[data-testid*='dropdown' i],[data-testid*='tooltip' i],[class*='popover' i],[class*='dropdown' i],[class*='tooltip' i],[data-floating-ui-portal],[data-radix-popper-content-wrapper]"],
-      ["right", "[aria-label='Right sidebar'],[data-testid*='properties-panel'],[data-testid*='right-panel'],[class*='properties_panel'],[class*='right_panel']"],
-      ["left", "[aria-label='Left sidebar'],[data-testid*='left-panel'],[class*='left_panel'],[data-testid*='layers-panel']"],
+      ["right", "[aria-label='Right sidebar'],[aria-label='右侧边栏'],[data-testid*='properties-panel'],[data-testid*='right-panel'],[class*='properties_panel'],[class*='right_panel']"],
+      ["left", "[aria-label='Left sidebar'],[aria-label='左侧边栏'],[data-testid*='left-panel'],[class*='left_panel'],[data-testid*='layers-panel']"],
       ["toolbar", "[role='toolbar'],[data-testid*='toolbar'],[class*='toolbar']"],
       ["home", "nav,[role='navigation'],[data-testid*='file-browser-sidebar']"]
     ];
@@ -69,6 +71,8 @@
     return /^[a-z][a-z_-]{2,100}$/i.test(value || "") ? value : null;
   }
   const toolSectionTitles = new Set(["Tools", "工具"]);
+  let toolTitlesByElement = new WeakMap();
+  function beginBatch() { toolTitlesByElement = new WeakMap(); }
   function isLikelyFontFamilyText(text) {
     const value = normalize(text);
     if (!value || value.length > 96 || /[。！？?:;；]/.test(value)) return false;
@@ -106,11 +110,15 @@
     const item = element.closest("button,[role='button'],[role='menuitem'],[role='option'],[role='listitem']");
     if (!item) return false;
     for (let current = item, depth = 0; current && depth < 6; current = current.parentElement, depth += 1) {
-      let title = null;
-      for (const child of Array.from(current.children || [])) {
-        if (toolSectionTitles.has(normalize(child.textContent))) { title = child; break; }
-        const heading = child.querySelector && child.querySelector("h1,h2,h3,h4,h5,h6,[role='heading']");
-        if (heading && normalize(child.textContent).length <= 64 && toolSectionTitles.has(normalize(heading.textContent))) { title = heading; break; }
+      let title = toolTitlesByElement.get(current);
+      if (title === undefined) {
+        title = null;
+        for (const child of Array.from(current.children || [])) {
+          if (toolSectionTitles.has(normalize(child.textContent))) { title = child; break; }
+          const heading = child.querySelector && child.querySelector("h1,h2,h3,h4,h5,h6,[role='heading']");
+          if (heading && normalize(child.textContent).length <= 64 && toolSectionTitles.has(normalize(heading.textContent))) { title = heading; break; }
+        }
+        toolTitlesByElement.set(current, title);
       }
       if (!title) continue;
       // Keep the section title translatable, but protect installed tool and
@@ -144,5 +152,5 @@
     return !!c && Object.hasOwn(regions, c.region) && c.region !== "other" && safeText(c.text)
       && typeof c.context === "string" && /^[a-z:-]{1,40}$/.test(c.context);
   }
-  return { regions, normalize, key, safeText, protectedSelector, isCommunityLocation, regionOf, contextOf, anchorOf, isLikelyFontFamilyText, isToolSectionContent, isProtectedDynamicValue, candidate, validCandidate };
+  return { regions, normalize, key, safeText, protectedSelector, isCommunityLocation, regionOf, contextOf, anchorOf, isLikelyFontFamilyText, isToolSectionContent, isProtectedDynamicValue, candidate, validCandidate, beginBatch };
 });

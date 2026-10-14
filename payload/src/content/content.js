@@ -397,14 +397,13 @@
 
   const translationRuntime = window.__FIGBOOST_TRANSLATION_RUNTIME__;
   const localizer = core.createLocalizer(dictionary, {
+    beginBatch: translationRuntime && translationRuntime.beginBatch,
     allowElement: translationRuntime && translationRuntime.allowElement,
     allowProtectedElement: translationRuntime && translationRuntime.allowProtectedElement,
     resolveTranslation: translationRuntime && translationRuntime.resolveTranslation,
     debug: false,
-    budgetMs: 24,
-    chunkSize: 220,
-    floatingTextLimit: 260,
-    immediateTextLimit: 120
+    budgetMs: 8,
+    chunkSize: 220
   });
 
   if (translationRuntime) translationRuntime.bind(localizer);

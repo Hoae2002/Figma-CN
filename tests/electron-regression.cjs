@@ -90,6 +90,43 @@ app.whenReady().then(async () => {
   await command("settings", { enabled: true });
   await until(async () => (await retryPage.webContents.executeJavaScript("document.querySelector('#save').textContent")) === "保存");
   assert.equal((await command("snapshot")).state.pages.pending, 0);
+  const editor = code => retryPage.webContents.executeJavaScriptInIsolatedWorld(1004, [{ code }]);
+  // Exercise the real Chromium DOM/observer/RAF path with the complete embedded
+  // dictionary. These are synthetic documents; no real Figma client is opened.
+  await editor(`(() => {
+    const sidebar = document.createElement('section');
+    sidebar.setAttribute('aria-label', 'Left sidebar');
+    sidebar.innerHTML = '<button>Pages</button><div role="grid"><span title="Page 29">Page 29</span><span>Design</span></div>';
+    document.body.append(sidebar);
+    const panel = document.createElement('section'); panel.id = 'stress-panel';
+    panel.setAttribute('aria-label', 'Right sidebar');
+    panel.innerHTML = '<button>Save</button>'.repeat(600);
+    document.body.append(panel);
+  })()`);
+  try { await until(() => editor(`document.querySelector('#stress-panel').textContent === '保存'.repeat(600) && window.__figmaZhLocalizer.getStats().queueSize === 0`)); }
+  catch (error) {
+    console.error('Chromium stress state:', await editor(`({ hidden: document.hidden, translated: document.querySelector('#stress-panel').textContent.split('保存').length - 1, stats: window.__figmaZhLocalizer.getStats() })`));
+    throw error;
+  }
+  assert.equal(await editor(`document.querySelector('[role=grid]').textContent`), "Page 29Design");
+  assert.equal(await editor(`document.querySelector('[role=grid] [title]').title`), "Page 29");
+  const beforeAttributes = await editor(`window.__figmaZhLocalizer.getStats().processedNodes`);
+  await editor(`document.querySelector('#stress-panel').title = 'Position'`);
+  await until(() => editor(`document.querySelector('#stress-panel').title === '位置'`));
+  assert.equal(await editor(`window.__figmaZhLocalizer.getStats().processedNodes`), beforeAttributes);
+  await editor(`(() => {
+    window.__stressWrites = [];
+    const observer = new MutationObserver(records => window.__stressWrites.push(...records));
+    observer.observe(document.querySelector('#stress-panel'), { subtree: true, characterData: true });
+  })()`);
+  const currentSnapshot = (await command('snapshot')).state;
+  await editor(`window.__FIGBOOST_TRANSLATION_RUNTIME__.apply(${JSON.stringify(currentSnapshot)}, true)`);
+  await until(() => editor(`window.__figmaZhLocalizer.getStats().queueSize === 0`));
+  assert.equal(await editor(`window.__stressWrites.length`), 0);
+  // Recycled text nodes must regain their translation without restoring siblings.
+  await editor(`document.querySelector('#stress-panel button').firstChild.nodeValue = 'Save'`);
+  await until(() => editor(`document.querySelector('#stress-panel button').textContent === '保存'`));
+  console.log("Chromium localization regression passed: 600 labels converge, page names and landmarks remain original, attributes do not rescan text, reconnects make zero restore writes, recycled labels translate again.");
   console.log("Electron regression passed: dictionary-only regular pages and native menus, Community-only Google fallback, UI switch and cache reuse, isolated settings with default-session 404, removed exclusion capability, protected inputs, untrusted IPC rejection and responsive layout.");
 }).then(() => finish(0)).catch(error => { console.error(error.stack); finish(1); });
 function finish(code) {

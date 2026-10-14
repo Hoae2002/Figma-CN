@@ -2,12 +2,10 @@
   "use strict";
 
   const DEFAULT_OPTIONS = {
-    budgetMs: 24,
+    budgetMs: 8,
     chunkSize: 220,
     debug: false,
     fallbackTerms: true,
-    floatingTextLimit: 160,
-    immediateTextLimit: 120,
     maxTextLength: 260,
     translateAttributes: true
   };
@@ -50,6 +48,16 @@
   ].join(",");
 
   const USER_NAMED_CONTENT_SELECTOR = [
+    "[data-testid*='page-name' i]",
+    "[data-testid*='page_name' i]",
+    "[data-testid*='page-row' i]",
+    "[data-testid*='page_row' i]",
+    "[class*='page_name' i]",
+    "[class*='page_row' i]",
+    "[class*='pageName']",
+    "[class*='pageRow']",
+    "[aria-label='Left sidebar'] [role='grid']",
+    "[aria-label='左侧边栏'] [role='grid']",
     "[data-testid*='file-name' i]",
     "[data-testid*='filename' i]",
     "[data-testid*='project-name' i]",
@@ -120,6 +128,14 @@
       .filter(([from, to]) => from && to);
     const fallbackTermPairs = [...uiTerms, ...commonTerms]
       .sort((a, b) => b[0].length - a[0].length);
+    const fallbackTermRules = fallbackTermPairs.map(([from, to]) => {
+      const boundary = /^[A-Za-z0-9 ]+$/.test(from);
+      const flags = from.length > 1 && /^[A-Za-z][A-Za-z0-9 ]*$/.test(from) ? "gi" : "g";
+      const pattern = boundary
+        ? new RegExp(`(?<![A-Za-z0-9_])${escapeRegExp(from)}(?![A-Za-z0-9_])`, flags)
+        : new RegExp(escapeRegExp(from), flags);
+      return [pattern, to];
+    });
     const phrases = (dictionary.phrases || [])
       .filter((item) => Array.isArray(item) && item.length === 2)
       .sort((a, b) => b[0].length - a[0].length);
@@ -215,12 +231,7 @@
 
       let next = value;
       let changed = false;
-      for (const [from, to] of fallbackTermPairs) {
-        const boundary = /^[A-Za-z0-9 ]+$/.test(from);
-        const flags = from.length > 1 && /^[A-Za-z][A-Za-z0-9 ]*$/.test(from) ? "gi" : "g";
-        const pattern = boundary
-          ? new RegExp(`(?<![A-Za-z0-9_])${escapeRegExp(from)}(?![A-Za-z0-9_])`, flags)
-          : new RegExp(escapeRegExp(from), flags);
+      for (const [pattern, to] of fallbackTermRules) {
         next = next.replace(pattern, () => {
           changed = true;
           return to;
@@ -364,9 +375,9 @@
 
   function isUserNamedContentElement(element, text) {
     if (!element || element.nodeType !== Node.ELEMENT_NODE) return false;
+    if (element.closest(USER_NAMED_CONTENT_SELECTOR)) return true;
     if (!looksLikeUserProvidedName(text)) return false;
     if (FILE_BROWSER_SYSTEM_TITLES.has(normalizeText(text))) return false;
-    if (element.closest(USER_NAMED_CONTENT_SELECTOR)) return true;
     if (!isFileBrowserRoute()) return false;
     return Boolean(element.closest("h1,h2,[role='heading']"));
   }
@@ -403,6 +414,8 @@
   }
 
   function shouldTranslateAttribute(element, name) {
+    // These accessibility landmarks also define the content protection boundary.
+    if (name === "aria-label" && /^(?:Left sidebar|Right sidebar|Canvas|Canvas viewport)$/.test(element.getAttribute(name) || "")) return false;
     if (isLayerTreeContentElement(element)) return false;
     if (isUserNamedContentElement(element, element.getAttribute(name))) return false;
     if (isFontStyleAttributeValue(element, element.getAttribute(name))) return false;
@@ -950,6 +963,9 @@
 
   function findTooltipContainer(element) {
     if (!element || element.nodeType !== Node.ELEMENT_NODE) return null;
+    // Text inside a control is its label, not a floating tooltip. Avoid layout
+    // reads up the ancestor chain after each translated button write.
+    if (element.closest("button,a,input,textarea,select,[role='button'],[role='menuitem'],[role='option']")) return null;
 
     const explicit = element.closest("[role='tooltip'],[data-testid*='tooltip' i]");
     if (explicit && !isTooltipTriggerElement(explicit) && !hasMenuLikeControls(explicit)) {
@@ -1020,24 +1036,6 @@
     return true;
   }
 
-  function isLatencySensitiveFloatingElement(element) {
-    if (!element || element.nodeType !== Node.ELEMENT_NODE) return false;
-    if (element === document.body || element === document.documentElement) return false;
-
-    if (element.matches("[role='menu'],[role='listbox'],[role='dialog'],[role='tooltip']")) return true;
-    if (element.querySelector("[role='menu'],[role='listbox'],[role='menuitem'],[role='option'],[role='dialog'],[role='tooltip']")) {
-      return true;
-    }
-
-    const style = window.getComputedStyle(element);
-    if (style.position !== "fixed" && style.position !== "absolute") return false;
-    if (style.display === "none" || style.visibility === "hidden") return false;
-
-    const rect = element.getBoundingClientRect();
-    if (!rect.width || !rect.height) return false;
-    return rect.width <= 520 && rect.height <= 760;
-  }
-
   function restoreElement(element) {
     if (!element || element.nodeType !== Node.ELEMENT_NODE) return;
 
@@ -1074,6 +1072,7 @@
     const options = { ...DEFAULT_OPTIONS, ...(rawOptions || {}) };
     const translator = createTranslator(dictionary || {});
     const queue = new Set();
+    const attributeQueue = new Set();
     let queuedNodes = new WeakSet();
     const stats = {
       processedNodes: 0,
@@ -1086,7 +1085,11 @@
     let enabled = true;
     let scheduled = false;
     let observer = null;
-    let warmupTimers = [];
+    let scheduledHandle = null;
+    let scheduledWithFrame = false;
+    let scheduledTimeout = null;
+    let scheduleToken = 0;
+    let mutationStarted = null;
 
     function log(...args) {
       if (options.debug) console.debug("[FigmaZh]", ...args);
@@ -1131,7 +1134,9 @@
     }
 
     function translateAttributes(element) {
-      if (!options.translateAttributes || !element || isAttributeSkippableElement(element)) return;
+      if (!options.translateAttributes || !element || element.nodeType !== Node.ELEMENT_NODE) return;
+      if (![...TRANSLATABLE_ATTRS, ...FONT_STYLE_RESTORABLE_ATTRS].some(name => element.hasAttribute(name))) return;
+      if (isAttributeSkippableElement(element)) return;
       if (options.allowElement && !options.allowElement(element, "")) return;
       restoreFontStyleAttributes(element);
       for (const name of TRANSLATABLE_ATTRS) {
@@ -1158,6 +1163,10 @@
   }
 
   function translateTextNode(node) {
+    const parent = node.parentElement;
+    if (!parent || isSkippableElement(parent) || isLayerTreeContentElement(parent) || isEditableElement(parent)) return;
+    if (isUserNamedContentElement(parent, node.nodeValue)
+      && !(options.allowProtectedElement && options.allowProtectedElement(parent, node.nodeValue))) return;
     if (options.allowElement && !options.allowElement(node.parentElement, node.nodeValue)) return;
     const fontStyleSource = getTranslatedFontStyleSourceTerm(node);
     if (fontStyleSource) {
@@ -1167,7 +1176,8 @@
     }
     const gradientTypeTranslation = getGradientTypeTranslation(node);
     if (gradientTypeTranslation) {
-      const original = node.nodeValue;
+      const original = node[TRANSLATED_TEXT_KEY] && node.nodeValue === node[TRANSLATED_TEXT_KEY]
+        ? node[ORIGINAL_TEXT_KEY] : node.nodeValue;
       const translated = options.resolveTranslation ? options.resolveTranslation(original, node, gradientTypeTranslation) : gradientTypeTranslation;
       if (!translated) return;
       node[ORIGINAL_TEXT_KEY] = original;
@@ -1192,176 +1202,59 @@
       stats.changedTexts += 1;
     }
 
-    function shouldProcessTextNode(node) {
-      return Boolean(
-        shouldTranslateTextNode(node, options)
-        || getTranslatedFontStyleSourceTerm(node)
-        || wouldTranslateGradientType(node)
-      );
-    }
-
-    function processElement(root) {
-      if (!root || !enabled) return;
-      if (!isInBodyRegion(root)) return;
-
-      if (isEditableNode(root)) return;
-      if (root.nodeType === Node.TEXT_NODE) {
-        translateTextNode(root);
-        stats.processedNodes += 1;
-        return;
-      }
-      if (root.nodeType !== Node.ELEMENT_NODE) return;
-      translateAttributes(root);
-      if (isSkippableElement(root)) return;
-
-      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-        acceptNode(node) {
-          return shouldProcessTextNode(node)
-            ? NodeFilter.FILTER_ACCEPT
-            : NodeFilter.FILTER_REJECT;
-        }
-      });
-
-      let node = walker.nextNode();
-      while (node) {
-        translateTextNode(node);
-        stats.processedNodes += 1;
-        node = walker.nextNode();
-      }
-
-      const attrNodes = root.querySelectorAll(getFontStyleAttributeSelector());
-      for (const element of attrNodes) translateAttributes(element);
-    }
-
     function createQueueJob(root) {
-      return {
-        root,
-        walker: null,
-        attrNodes: null,
-        attrIndex: 0,
-        initialized: false,
-        done: false
-      };
+      return { root, walker: null, initialized: false, done: false };
     }
 
-    function processQueueJob(job, started, deadline) {
-      if (!job || job.done || !job.root || !enabled) return true;
+    function processQueueJob(job, started) {
+      if (!job || job.done || !enabled) return true;
       const root = job.root;
-      if (!isInBodyRegion(root)) {
-        job.done = true;
-        return true;
-      }
-
-      if (isEditableNode(root)) {
-        job.done = true;
-        return true;
-      }
-
-      if (root.nodeType === Node.TEXT_NODE) {
-        translateTextNode(root);
-        stats.processedNodes += 1;
-        job.done = true;
-        return true;
-      }
-
-      if (root.nodeType !== Node.ELEMENT_NODE || isSkippableElement(root)) {
-        job.done = true;
-        return true;
-      }
-
-      if (!job.initialized) {
-        translateAttributes(root);
-        job.walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-          acceptNode(node) {
-            return shouldProcessTextNode(node)
-              ? NodeFilter.FILTER_ACCEPT
-              : NodeFilter.FILTER_REJECT;
-          }
-        });
-        job.initialized = true;
-      }
+      if (!isInBodyRegion(root) || isEditableNode(root)) return true;
+      if (root.nodeType !== Node.TEXT_NODE && root.nodeType !== Node.ELEMENT_NODE) return true;
 
       let count = 0;
-      let node = job.walker && job.walker.nextNode();
+      let node = job.initialized ? job.walker && job.walker.nextNode() : root;
       while (node) {
-        translateTextNode(node);
-        stats.processedNodes += 1;
-        count += 1;
-
-        const spent = performance.now() - started;
-        const idleRemaining = deadline && typeof deadline.timeRemaining === "function"
-          ? deadline.timeRemaining()
-          : Number.POSITIVE_INFINITY;
-        if (count >= options.chunkSize || spent >= options.budgetMs || idleRemaining <= 2) {
-          return false;
+        if (node.nodeType === Node.TEXT_NODE) {
+          if (!isOwnTextMutation(node) && node.nodeValue && (/[A-Za-z]/.test(node.nodeValue) || getFontStyleSourceTerm(node.nodeValue))) {
+            translateTextNode(node);
+            stats.processedNodes += 1;
+          }
+        } else {
+          translateAttributes(node);
         }
-
+        count += 1;
+        if (!job.initialized) {
+          if (root.nodeType === Node.TEXT_NODE || isSkippableElement(root)) return true;
+          job.walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
+            acceptNode(child) {
+              // Prune canvas/editable subtrees. Inputs still need placeholders.
+              if (child.nodeType === Node.ELEMENT_NODE && !child.matches("input,textarea,select") && isSkippableElement(child)) return NodeFilter.FILTER_REJECT;
+              return NodeFilter.FILTER_ACCEPT;
+            }
+          });
+          job.initialized = true;
+        }
+        if (count >= options.chunkSize || performance.now() - started >= options.budgetMs) return false;
         node = job.walker.nextNode();
       }
-
-      if (!job.attrNodes) job.attrNodes = root.querySelectorAll(getFontStyleAttributeSelector());
-      while (job.attrIndex < job.attrNodes.length) {
-        translateAttributes(job.attrNodes[job.attrIndex]);
-        job.attrIndex += 1;
-
-        const spent = performance.now() - started;
-        const idleRemaining = deadline && typeof deadline.timeRemaining === "function"
-          ? deadline.timeRemaining()
-          : Number.POSITIVE_INFINITY;
-        if (spent >= options.budgetMs || idleRemaining <= 2) return false;
-      }
-
       job.done = true;
       return true;
     }
 
-    function countTranslatableTextNodes(root, limit) {
-      if (!root) return 0;
-      if (!isInBodyRegion(root)) return 0;
-      if (root.nodeType === Node.TEXT_NODE) {
-        return shouldProcessTextNode(root) ? 1 : 0;
-      }
-      if (root.nodeType !== Node.ELEMENT_NODE || isSkippableElement(root) || isEditableNode(root)) return 0;
-
-      let count = 0;
-      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-        acceptNode(node) {
-          return shouldProcessTextNode(node)
-            ? NodeFilter.FILTER_ACCEPT
-            : NodeFilter.FILTER_REJECT;
-        }
-      });
-      let node = walker.nextNode();
-      while (node) {
-        count += 1;
-        if (count > limit) return count;
-        node = walker.nextNode();
-      }
-      return count;
-    }
-
     function processOrQueueMutationNode(node) {
-      if (!node || !enabled) return;
-      if (!isInBodyRegion(node)) return;
-
-      if (isEditableNode(node)) return;
-      const isFloatingElement = node.nodeType === Node.ELEMENT_NODE && isLatencySensitiveFloatingElement(node);
-      const textLimit = isFloatingElement ? options.floatingTextLimit : options.immediateTextLimit;
-      const textCount = countTranslatableTextNodes(node, textLimit);
-      if (
-        textCount <= options.immediateTextLimit
-        || (isFloatingElement && textCount <= options.floatingTextLimit)
-      ) {
-        processElement(node);
-        return;
-      }
-
-      if (isFloatingElement) node.setAttribute(PENDING_ATTR, "1");
-      enqueue(node);
+      if (!node || !enabled || !isInBodyRegion(node) || queuedNodes.has(node)) return;
+      const job = createQueueJob(node);
+      const started = mutationStarted === null ? performance.now() : mutationStarted;
+      if (performance.now() - started < options.budgetMs && processQueueJob(job, started)) return;
+      queuedNodes.add(node);
+      queue.add(job);
+      schedule();
     }
 
-    function flushQueue(deadline) {
+    function flushQueue() {
       scheduled = false;
+      scheduledHandle = null;
       if (!enabled) {
         queue.clear();
         queuedNodes = new WeakSet();
@@ -1369,10 +1262,11 @@
       }
 
       const started = performance.now();
+      if (options.beginBatch) options.beginBatch();
       let count = 0;
       for (const job of Array.from(queue)) {
         queue.delete(job);
-        const done = processQueueJob(job, started, deadline);
+        const done = processQueueJob(job, started);
         count += 1;
         if (done) {
           if (job.root && job.root.nodeType) queuedNodes.delete(job.root);
@@ -1382,68 +1276,88 @@
         }
 
         const spent = performance.now() - started;
-        const idleRemaining = deadline && typeof deadline.timeRemaining === "function"
-          ? deadline.timeRemaining()
-          : Number.POSITIVE_INFINITY;
-        if (count >= options.chunkSize || spent >= options.budgetMs || idleRemaining <= 2) {
+        if (count >= options.chunkSize || spent >= options.budgetMs) {
           break;
         }
       }
 
+      for (const element of attributeQueue) {
+        if (performance.now() - started >= options.budgetMs) break;
+        attributeQueue.delete(element);
+        if (isInBodyRegion(element)) translateAttributes(element);
+      }
       stats.batches += 1;
       stats.lastBatchMs = Math.round((performance.now() - started) * 10) / 10;
-      log("batch", { count, remaining: queue.size, ms: stats.lastBatchMs });
-
-      if (queue.size > 0) schedule();
+      log("batch", { count, remaining: queue.size + attributeQueue.size, ms: stats.lastBatchMs });
+      if (queue.size > 0 || attributeQueue.size > 0) schedule();
     }
 
     function schedule() {
       if (scheduled) return;
       scheduled = true;
-      const runner = (deadline) => flushQueue(deadline);
-      if (typeof window.requestIdleCallback === "function") {
-        window.requestIdleCallback(runner, { timeout: 120 });
+      const token = ++scheduleToken;
+      const runner = () => {
+        if (!scheduled || token !== scheduleToken) return;
+        if (scheduledWithFrame) window.cancelAnimationFrame(scheduledHandle);
+        window.clearTimeout(scheduledTimeout);
+        scheduledTimeout = null;
+        flushQueue();
+      };
+      // Idle callbacks can leave recycled labels in English for several frames.
+      scheduledWithFrame = typeof window.requestAnimationFrame === "function" && !document.hidden;
+      if (scheduledWithFrame) {
+        scheduledHandle = window.requestAnimationFrame(runner);
+        // Electron can throttle RAF even when document.hidden is still false.
+        scheduledTimeout = window.setTimeout(runner, 50);
       } else {
-        window.setTimeout(runner, 32);
+        scheduledHandle = scheduledTimeout = window.setTimeout(runner, 16);
       }
     }
 
     function enqueue(node) {
-      if (!node || !enabled) return;
-      if (node.nodeType && queuedNodes.has(node)) return;
-      if (node.nodeType) queuedNodes.add(node);
+      if (!node || !enabled || queuedNodes.has(node)) return;
+      queuedNodes.add(node);
       queue.add(createQueueJob(node));
       schedule();
     }
 
     function start(root) {
+      if (observer && enabled) return;
       enabled = true;
-      queue.clear();
-      queuedNodes = new WeakSet();
-      for (const timer of warmupTimers) window.clearTimeout(timer);
-      const initialRoot = root && isInBodyRegion(root) ? root : document.body;
-      if (initialRoot) processOrQueueMutationNode(initialRoot);
-      warmupTimers = [400, 1600].map((delay) => (
-        window.setTimeout(() => {
-          if (document.body) processOrQueueMutationNode(document.body);
-        }, delay)
-      ));
-      if (observer) observer.disconnect();
       observer = new MutationObserver((mutations) => {
+        mutationStarted = performance.now();
+        if (options.beginBatch) options.beginBatch();
         try {
+          const roots = new Set();
+          const attributes = new Set();
           for (const mutation of mutations) {
             if (mutation.type === "childList") {
-              for (const node of mutation.addedNodes) processOrQueueMutationNode(node);
+              if (mutation.addedNodes.length > 1 && mutation.target.nodeType === Node.ELEMENT_NODE) roots.add(mutation.target);
+              else for (const node of mutation.addedNodes) roots.add(node);
             } else if (mutation.type === "characterData") {
-              if (isOwnTextMutation(mutation.target)) continue;
-              processOrQueueMutationNode(mutation.target);
-            } else if (mutation.type === "attributes") {
-              if (isOwnAttributeMutation(mutation)) continue;
-              processOrQueueMutationNode(mutation.target);
+              if (!isOwnTextMutation(mutation.target)) roots.add(mutation.target);
+            } else if (mutation.type === "attributes" && !isOwnAttributeMutation(mutation)) {
+              attributes.add(mutation.target);
             }
           }
+          for (const node of roots) {
+            let covered = false;
+            for (let parent = node.parentNode; parent; parent = parent.parentNode) {
+              if (roots.has(parent)) { covered = true; break; }
+            }
+            if (!covered) processOrQueueMutationNode(node);
+          }
+          // Attribute changes do not require a pass over the whole sidebar.
+          for (const element of attributes) {
+            if (!isInBodyRegion(element)) continue;
+            if (performance.now() - mutationStarted < options.budgetMs) translateAttributes(element);
+            else attributeQueue.add(element);
+          }
+          if (attributeQueue.size) schedule();
         } catch (error) {
           log("observer error", error);
+        } finally {
+          mutationStarted = null;
         }
       });
       observer.observe(document.documentElement, {
@@ -1453,16 +1367,28 @@
         attributes: true,
         attributeFilter: Array.from(new Set([...TRANSLATABLE_ATTRS, ...FONT_STYLE_RESTORABLE_ATTRS]))
       });
+      const initialRoot = root && isInBodyRegion(root) ? root : document.body;
+      if (options.beginBatch) options.beginBatch();
+      if (initialRoot) processOrQueueMutationNode(initialRoot);
       log("started");
     }
 
     function stop() {
       enabled = false;
       queue.clear();
+      attributeQueue.clear();
       queuedNodes = new WeakSet();
-      for (const timer of warmupTimers) window.clearTimeout(timer);
-      warmupTimers = [];
+      if (scheduledHandle !== null) {
+        if (scheduledWithFrame) window.cancelAnimationFrame(scheduledHandle);
+        else window.clearTimeout(scheduledHandle);
+      }
+      scheduled = false;
+      scheduleToken += 1;
+      window.clearTimeout(scheduledTimeout);
+      scheduledTimeout = null;
+      scheduledHandle = null;
       if (observer) observer.disconnect();
+      observer = null;
       restoreElement(document.documentElement);
       log("stopped");
     }
@@ -1516,6 +1442,7 @@
     }
 
     function scanUntranslated(rawScanOptions) {
+      if (options.beginBatch) options.beginBatch();
       const scanOptions = { limit: 200, ...(rawScanOptions || {}) };
       const limit = Math.max(1, scanOptions.limit || 200);
       const root = scanOptions.root || document.body || document.documentElement;
@@ -1610,7 +1537,7 @@
       stop,
       setOptions,
       scanUntranslated,
-      getStats: () => ({ ...stats, queueSize: queue.size, enabled })
+      getStats: () => ({ ...stats, queueSize: queue.size + attributeQueue.size, enabled })
     };
   }
 

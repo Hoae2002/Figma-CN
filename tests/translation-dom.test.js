@@ -2,13 +2,17 @@
 const test = require("node:test"), assert = require("node:assert/strict"), fs = require("node:fs"), path = require("node:path");
 const { JSDOM } = require("jsdom");
 const P = require("../payload/src/shared/translation-policy.js");
-function fixture(t, html, custom = {}, exact = {}, pageUrl = "https://www.figma.com/design/test") {
+function fixture(t, html, custom = {}, exact = {}, pageUrl = "https://www.figma.com/design/test", dictionaryOverrides = {}) {
   const dom = new JSDOM(html, { url: pageUrl, pretendToBeVisual: true, runScripts: "outside-only" });
   t.after(() => dom.window.close());
   const w = dom.window;
+  // Content assertions use a deterministic clock. Budget tests below advance it
+  // explicitly; jsdom selector/style timings do not represent Chromium frames.
+  w.performance.now = () => 0;
   for (const f of ["shared/translation-policy.js", "content/localizer-core.js", "content/translation-runtime.js"]) w.eval(fs.readFileSync(path.join(__dirname, "../payload/src", f), "utf8"));
   const runtime = w.__FIGBOOST_TRANSLATION_RUNTIME__;
-  const localizer = w.FigmaZhLocalizer.createLocalizer({ exact, phrases: [], uiTerms: {}, commonTerms: {}, patterns: [] }, {
+  const localizer = w.FigmaZhLocalizer.createLocalizer({ exact, phrases: [], uiTerms: {}, commonTerms: {}, patterns: [], ...dictionaryOverrides }, {
+    beginBatch: runtime.beginBatch,
     allowElement: runtime.allowElement,
     allowProtectedElement: runtime.allowProtectedElement,
     resolveTranslation: runtime.resolveTranslation
@@ -23,6 +27,7 @@ test("reconnecting the same settings revision requeues requests and rejects old 
   const { document, runtime, snapshot } = fixture(t, '<div role="toolbar"><button>Save</button></div>', {}, {}, "https://www.figma.com/community");
   const first = runtime.drain().requests[0];
   runtime.apply(snapshot, true);
+  await tick();
   const second = runtime.drain().requests[0];
   assert.ok(second.id > first.id);
   runtime.accept([{ id: first.id, entry: { ...first.c, translation: "旧结果" } }]);
@@ -255,4 +260,127 @@ test("Community route owns Google requests and its switch preserves dictionary t
   assert.equal(document.querySelectorAll("button")[0].textContent, "保存");
   assert.equal(document.querySelectorAll("button")[1].textContent, "New design resource");
   assert.equal(runtime.drain().requests.length, 0);
+});
+
+test("page names stay original with the full dictionary, repeated scans and translated landmarks", async t => {
+  const dictionary = require("../payload/src/dictionary/zh-CN.js");
+  const { document, runtime, localizer, snapshot } = fixture(t, `<section aria-label="Left sidebar">
+    <button>Pages</button><div role="grid"><div role="row"><span title="Page 29">Page 29</span></div><div>Design</div></div>
+    <div data-testid="page-name">Save</div><div class="pages_panel--pageName--abc">Drafts</div>
+    <div class="pages_panel--pageRow--abc"><span>Linear</span></div>
+  </section><section aria-label="Right sidebar"><h2>Position</h2></section>`, {}, {}, undefined, dictionary);
+  const left = document.querySelector("section");
+  assert.equal(left.getAttribute("aria-label"), "Left sidebar");
+  assert.equal(left.querySelector("button").textContent, "页面");
+  assert.equal(document.querySelector("h2").textContent, "位置");
+  left.setAttribute("aria-label", "左侧边栏");
+  localizer.enqueue(document.body);
+  await tick();
+  runtime.apply({ ...snapshot, revision: 2 });
+  for (const [selector, text] of [["[title]", "Page 29"], ["[role=grid]", "Page 29Design"], ["[data-testid]", "Save"], ["[class*=pageName]", "Drafts"], ["[class*=pageRow]", "Linear"]]) {
+    assert.equal(left.querySelector(selector).textContent, text, selector);
+  }
+  assert.equal(left.querySelector("[title]").title, "Page 29");
+  assert.equal(runtime.drain().requests.length, 0);
+});
+
+test("attribute-only updates never rescan a panel's descendant text", async t => {
+  const { document, localizer } = fixture(t, '<section aria-label="Right sidebar"><button>Save</button><span>Unknown label</span></section>', {}, { Save: "保存", Position: "位置" });
+  await tick();
+  const before = localizer.getStats().processedNodes;
+  const section = document.querySelector("section");
+  section.setAttribute("title", "Position");
+  section.setAttribute("aria-label", "Right sidebar");
+  await tick();
+  assert.equal(section.title, "位置");
+  assert.equal(localizer.getStats().processedNodes, before);
+  assert.equal(section.querySelector("button").textContent, "保存");
+});
+
+test("same-mode snapshots, reconnections and editor routes preserve translated text without restore writes", async t => {
+  const { w, document, runtime, localizer, snapshot } = fixture(t, '<div role="toolbar"><button>Save</button></div>', {}, { Save: "保存" });
+  await tick();
+  const writes = [];
+  const observer = new w.MutationObserver(records => writes.push(...records));
+  observer.observe(document.body, { subtree: true, characterData: true, characterDataOldValue: true });
+  const before = localizer.getStats().processedNodes;
+  for (let revision = 2; revision < 20; revision++) runtime.apply({ ...snapshot, revision });
+  localizer.start(document.body);
+  assert.equal(localizer.getStats().processedNodes, before);
+  runtime.apply(snapshot, true);
+  w.history.replaceState({}, "", "/design/another");
+  runtime.apply({ ...snapshot, revision: 20 });
+  await tick();
+  assert.equal(document.querySelector("button").textContent, "保存");
+  assert.equal(writes.length, 0);
+  observer.disconnect();
+});
+
+test("a mutation burst shares one time budget and resumes before paint without hiding the panel", async t => {
+  const { w, document, localizer } = fixture(t, "<main></main>", {}, { Save: "保存" });
+  let clock = 0;
+  w.performance.now = () => clock++;
+  const frames = [];
+  w.requestAnimationFrame = callback => { frames.push(callback); return frames.length; };
+  w.cancelAnimationFrame = () => {};
+  // More than one root in the same observer delivery used to bypass batching.
+  for (let index = 0; index < 100; index++) {
+    const button = document.createElement("button");
+    button.textContent = "Save";
+    document.querySelector("main").append(button);
+  }
+  await Promise.resolve();
+  await Promise.resolve();
+  const translatedCount = () => [...document.querySelectorAll("button")].filter(button => button.textContent === "保存").length;
+  assert.ok(translatedCount() > 0 && translatedCount() < 100);
+  assert.equal(document.querySelector("[data-figma-zh-pending]"), null);
+  assert.equal(frames.length, 1);
+  for (let attempts = 0; localizer.getStats().queueSize && attempts < 200; attempts++) {
+    const frame = frames.shift();
+    assert.ok(frame);
+    frame();
+    assert.ok(localizer.getStats().lastBatchMs <= 11);
+    await Promise.resolve();
+  }
+  assert.equal(localizer.getStats().queueSize, 0);
+  assert.equal(translatedCount(), 100);
+  // Figma can recycle a translated text node back to its English source.
+  document.querySelector("button").firstChild.nodeValue = "Save";
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(document.querySelector("button").textContent, "保存");
+});
+
+test("canvas subtrees are pruned and disabled queues cannot write after a scheduled frame", async t => {
+  const { w, document, localizer, runtime, snapshot } = fixture(t, "<main></main>", {}, { Save: "保存" });
+  const visitedBefore = localizer.getStats().processedNodes;
+  const canvas = document.createElement("div");
+  canvas.setAttribute("data-testid", "canvas");
+  canvas.innerHTML = "<span>Save</span>".repeat(1000);
+  document.querySelector("main").append(canvas);
+  await tick();
+  assert.equal(localizer.getStats().processedNodes, visitedBefore);
+  let canceled = null, frame;
+  w.requestAnimationFrame = callback => { frame = callback; return 123; };
+  w.cancelAnimationFrame = handle => { canceled = handle; };
+  localizer.enqueue(document.body);
+  runtime.apply({ ...snapshot, revision: 2, settings: { ...snapshot.settings, enabled: false } });
+  assert.equal(canceled, 123);
+  frame();
+  assert.equal(canvas.querySelector("span").textContent, "Save");
+  assert.equal(localizer.getStats().queueSize, 0);
+});
+
+test("tool-section protection refreshes when a property panel is reused", async t => {
+  const { document } = fixture(t, '<section aria-label="Right sidebar"><h2>Position</h2><div role="listitem"><span>Save</span></div></section>', {}, { Position: "位置", Tools: "工具", Save: "保存", Export: "导出" });
+  assert.equal(document.querySelector("span").textContent, "保存");
+  document.querySelector("h2").textContent = "Tools";
+  document.querySelector("span").textContent = "Save";
+  await tick();
+  assert.equal(document.querySelector("h2").textContent, "工具");
+  assert.equal(document.querySelector("span").textContent, "Save");
+  document.querySelector("h2").textContent = "Position";
+  document.querySelector("span").textContent = "Export";
+  await tick();
+  assert.equal(document.querySelector("span").textContent, "导出");
 });
