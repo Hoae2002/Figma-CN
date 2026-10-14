@@ -26,7 +26,7 @@
   function isProtectedSystemLabel(element, source) {
     const text = P.normalize(source);
     if (!text || !protectedSystemLabels.some(pattern => pattern.test(text))) return false;
-    return Boolean(element.closest(
+    return Boolean(P.closestInBatch(element,
       "[role='menu'],[role='menuitem'],[role='dialog'],[role='alertdialog']," +
       "[data-testid*='context-menu' i],[data-testid*='popover' i],[data-testid*='dropdown' i]," +
       "[class*='popover' i],[class*='dropdown' i],[data-floating-ui-portal]"
@@ -36,7 +36,7 @@
     if (!state.settings.enabled) return false;
     if (!element || !element.closest) return false;
     const approvedSystemLabel = isProtectedSystemLabel(element, source);
-    if (element.closest(P.protectedSelector) && !approvedSystemLabel) return false;
+    if (P.closestInBatch(element, P.protectedSelector) && !approvedSystemLabel) return false;
     const region = P.regionOf(element);
     return approvedSystemLabel || !P.isProtectedDynamicValue(element, source, region);
   }
@@ -57,7 +57,7 @@
     if (!P.validCandidate(c)) return null;
     // User-facing tooltips can contain names. Only standalone UI labels are sent.
     if (/["“”‘’]/.test(c.text) || element.querySelector("input,textarea,[contenteditable='true'],[data-testid*='name']")) return null;
-    const standaloneLabel = element.closest("label,h1,h2,h3,h4,h5,h6,[role='heading']")
+    const standaloneLabel = P.closestInBatch(element, "label,h1,h2,h3,h4,h5,h6,[role='heading']")
       || /(?:^|[-_])(?:label|heading|help-text)$/.test(c.anchor || "")
       || ["community", "menus", "right", "left", "toolbar", "home"].includes(c.region);
     if (c.context === "label" && !standaloneLabel) return null;

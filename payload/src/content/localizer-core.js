@@ -12,6 +12,8 @@
   const MAX_TRANSLATION_CACHE_SIZE = 6000;
 
   const SKIP_SELECTOR = [
+    "#hidden-input-activedescendant",
+    "[class*='fullscreen_accessibility_tree']",
     "canvas",
     "svg",
     "img",
@@ -77,6 +79,8 @@
   ].join(",");
 
   const ATTR_SKIP_SELECTOR = [
+    "#hidden-input-activedescendant",
+    "[class*='fullscreen_accessibility_tree']",
     "canvas",
     "svg",
     "img",
@@ -108,6 +112,24 @@
   const TRANSLATED_ATTR_KEY = "__figmaZhTranslatedAttrs";
   const TRANSLATABLE_ATTRS = ["aria-label", "title", "placeholder"];
   const FONT_STYLE_RESTORABLE_ATTRS = ["aria-label", "title", "data-value", "aria-valuetext"];
+  const ATTRIBUTE_NAMES = [...new Set([...TRANSLATABLE_ATTRS, ...FONT_STYLE_RESTORABLE_ATTRS])];
+  const SKIP_TAGS = new Set(["canvas", "svg", "img", "video", "audio", "option", "script", "style", "noscript", "code", "pre"]);
+  const SKIP_TEST_IDS = new Set(["canvas", "canvas-root", "canvas_viewport", "fullscreen-viewport", "viewport"]);
+
+  // The walker has already checked the root's ancestors. Test only the child
+  // itself here, without running a long selector for every decorative wrapper.
+  function isSkippableSubtree(element) {
+    const editable = element.getAttribute("contenteditable");
+    return SKIP_TAGS.has(element.localName)
+      || element.id === "hidden-input-activedescendant"
+      || String(element.className).includes("fullscreen_accessibility_tree")
+      || (editable !== null && editable !== "false")
+      || element.getAttribute("role") === "textbox"
+      || SKIP_TEST_IDS.has(element.getAttribute("data-testid"))
+      || element.getAttribute("data-onboarding-key") === "canvas"
+      || element.getAttribute("data-figma-canvas") === "true"
+      || element.getAttribute("data-figma-zh-skip") === "1";
+  }
 
   function normalizeText(value) {
     return String(value || "").replace(/\s+/g, " ").trim();
@@ -319,14 +341,12 @@
 
   function isSkippableElement(element) {
     if (!element || element.nodeType !== Node.ELEMENT_NODE) return false;
-    if (element.matches(SKIP_SELECTOR)) return true;
-    return Boolean(element.closest(SKIP_SELECTOR));
+    return Boolean(closestInBatch(element, SKIP_SELECTOR));
   }
 
   function isAttributeSkippableElement(element) {
     if (!element || element.nodeType !== Node.ELEMENT_NODE) return false;
-    if (element.matches(ATTR_SKIP_SELECTOR)) return true;
-    return Boolean(element.closest(ATTR_SKIP_SELECTOR));
+    return Boolean(closestInBatch(element, ATTR_SKIP_SELECTOR));
   }
 
   function isEditableElement(element) {
@@ -334,9 +354,8 @@
       element
       && element.nodeType === Node.ELEMENT_NODE
       && (
-        element.matches(EDITABLE_SELECTOR)
-        || element.isContentEditable
-        || Boolean(element.closest(EDITABLE_SELECTOR))
+        element.isContentEditable
+        || Boolean(closestInBatch(element, EDITABLE_SELECTOR))
       )
     );
   }
@@ -349,7 +368,7 @@
 
   function isLayerTreeContentElement(element) {
     if (!element || element.nodeType !== Node.ELEMENT_NODE) return false;
-    return Boolean(element.closest(
+    return Boolean(closestInBatch(element,
       "[role='treeitem'],[data-testid*='layer-row' i],[data-testid*='layer_item' i],[data-testid*='layer-item' i],[data-testid*='layer-node' i],[data-testid*='layer_node' i]"
     ));
   }
@@ -375,11 +394,11 @@
 
   function isUserNamedContentElement(element, text) {
     if (!element || element.nodeType !== Node.ELEMENT_NODE) return false;
-    if (element.closest(USER_NAMED_CONTENT_SELECTOR)) return true;
+    if (closestInBatch(element, USER_NAMED_CONTENT_SELECTOR)) return true;
     if (!looksLikeUserProvidedName(text)) return false;
     if (FILE_BROWSER_SYSTEM_TITLES.has(normalizeText(text))) return false;
     if (!isFileBrowserRoute()) return false;
-    return Boolean(element.closest("h1,h2,[role='heading']"));
+    return Boolean(closestInBatch(element, "h1,h2,[role='heading']"));
   }
 
   function isTextInputElement(element) {
@@ -938,7 +957,7 @@
     if (!/^[A-Za-z][A-Za-z0-9 +&/.-]{0,24}$/.test(source)) return false;
     if (isEditableElement(element)) return false;
 
-    const interactiveScope = element.closest(
+    const interactiveScope = closestInBatch(element,
       "[role='button'],[role='menuitem'],[role='option'],button,a,[role='menu'],[role='listbox'],[role='dialog'],[role='tooltip'],[data-testid*='dropdown' i],[data-testid*='popover' i],[data-testid*='tooltip' i]"
     );
     if (interactiveScope) return true;
@@ -963,21 +982,26 @@
     }
   }
 
+  function closestInBatch(element, selector) {
+    const policy = window.FigBoostTranslationPolicy;
+    return policy && policy.closestInBatch ? policy.closestInBatch(element, selector) : element.closest(selector);
+  }
+
   function isEditorPanelLabel(element) {
-    return Boolean(element.closest(
+    return Boolean(closestInBatch(element,
       "[aria-label='Right sidebar'],[aria-label='右侧边栏'],[aria-label='Left sidebar'],[aria-label='左侧边栏']," +
       "[data-testid*='properties-panel'],[data-testid*='right-panel'],[class*='properties_panel'],[class*='right_panel']," +
       "[data-testid*='left-panel'],[class*='left_panel'],[role='toolbar']"
-    )) && !element.closest("[role='tooltip'],[role='dialog'],[role='menu'],[data-testid*='tooltip' i],[data-testid*='popover' i],[class*='popover' i]");
+    )) && !closestInBatch(element, "[role='tooltip'],[role='dialog'],[role='menu'],[data-testid*='tooltip' i],[data-testid*='popover' i],[class*='popover' i]");
   }
 
   function findTooltipContainer(element) {
     if (!element || element.nodeType !== Node.ELEMENT_NODE) return null;
     // Text inside a control is its label, not a floating tooltip. Avoid layout
     // reads up the ancestor chain after each translated button write.
-    if (element.closest("button,a,input,textarea,select,[role='button'],[role='menuitem'],[role='option']")) return null;
+    if (closestInBatch(element, "button,a,input,textarea,select,[role='button'],[role='menuitem'],[role='option']")) return null;
 
-    const explicit = element.closest("[role='tooltip'],[data-testid*='tooltip' i]");
+    const explicit = closestInBatch(element, "[role='tooltip'],[data-testid*='tooltip' i]");
     if (explicit && !isTooltipTriggerElement(explicit) && !hasMenuLikeControls(explicit)) {
       return explicit;
     }
@@ -1105,6 +1129,12 @@
     let scheduleToken = 0;
     let mutationStarted = null;
 
+    function beginBatch() {
+      const policy = window.FigBoostTranslationPolicy;
+      if (policy) policy.beginBatch();
+      if (options.beginBatch && (!policy || options.beginBatch !== policy.beginBatch)) options.beginBatch();
+    }
+
     function log(...args) {
       if (options.debug) console.debug("[FigmaZh]", ...args);
     }
@@ -1149,7 +1179,7 @@
 
     function translateAttributes(element) {
       if (!options.translateAttributes || !element || element.nodeType !== Node.ELEMENT_NODE) return;
-      if (![...TRANSLATABLE_ATTRS, ...FONT_STYLE_RESTORABLE_ATTRS].some(name => element.hasAttribute(name))) return;
+      if (!ATTRIBUTE_NAMES.some(name => element.hasAttribute(name))) return;
       if (isAttributeSkippableElement(element)) return;
       if (options.allowElement && !options.allowElement(element, "")) return;
       restoreFontStyleAttributes(element);
@@ -1235,7 +1265,9 @@
             stats.processedNodes += 1;
           }
         } else {
-          translateAttributes(node);
+          // Attribute-only accessibility updates can wait until the visible
+          // labels have been translated, without walking this subtree again.
+          if (options.translateAttributes && ATTRIBUTE_NAMES.some(name => node.hasAttribute(name))) attributeQueue.add(node);
         }
         // Chunk size limits labels, not decorative wrappers/icons. Deeply
         // nested property rows should not split a small panel across frames.
@@ -1245,7 +1277,7 @@
           job.walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
             acceptNode(child) {
               // Prune canvas/editable subtrees. Inputs still need placeholders.
-              if (child.nodeType === Node.ELEMENT_NODE && !child.matches("input,textarea,select") && isSkippableElement(child)) return NodeFilter.FILTER_REJECT;
+              if (child.nodeType === Node.ELEMENT_NODE && isSkippableSubtree(child)) return NodeFilter.FILTER_REJECT;
               return NodeFilter.FILTER_ACCEPT;
             }
           });
@@ -1283,7 +1315,7 @@
       }
 
       const started = performance.now();
-      if (options.beginBatch) options.beginBatch();
+      beginBatch();
       let count = 0;
       for (const job of Array.from(queue)) {
         queue.delete(job);
@@ -1302,15 +1334,19 @@
         }
       }
 
+      flushAttributes(started);
+      stats.batches += 1;
+      stats.lastBatchMs = Math.round((performance.now() - started) * 10) / 10;
+      log("batch", { count, remaining: queue.size + attributeQueue.size, ms: stats.lastBatchMs });
+      if (queue.size > 0 || attributeQueue.size > 0) schedule();
+    }
+
+    function flushAttributes(started) {
       for (const element of attributeQueue) {
         if (performance.now() - started >= options.budgetMs) break;
         attributeQueue.delete(element);
         if (isInBodyRegion(element)) translateAttributes(element);
       }
-      stats.batches += 1;
-      stats.lastBatchMs = Math.round((performance.now() - started) * 10) / 10;
-      log("batch", { count, remaining: queue.size + attributeQueue.size, ms: stats.lastBatchMs });
-      if (queue.size > 0 || attributeQueue.size > 0) schedule();
     }
 
     function schedule() {
@@ -1348,7 +1384,7 @@
       enabled = true;
       observer = new MutationObserver((mutations) => {
         mutationStarted = performance.now();
-        if (options.beginBatch) options.beginBatch();
+        beginBatch();
         try {
           const roots = new Set();
           const attributes = new Set();
@@ -1389,11 +1425,14 @@
         subtree: true,
         characterData: true,
         attributes: true,
-        attributeFilter: Array.from(new Set([...TRANSLATABLE_ATTRS, ...FONT_STYLE_RESTORABLE_ATTRS]))
+        attributeFilter: ATTRIBUTE_NAMES
       });
       const initialRoot = root && isInBodyRegion(root) ? root : document.body;
-      if (options.beginBatch) options.beginBatch();
+      beginBatch();
+      const started = performance.now();
       if (initialRoot) processOrQueueMutationNode(initialRoot);
+      if (!queue.size) flushAttributes(started);
+      if (attributeQueue.size) schedule();
       log("started");
     }
 
@@ -1444,13 +1483,13 @@
 
     function getSkippedCategory(element) {
       if (!element || element.nodeType !== Node.ELEMENT_NODE) return null;
-      if (element.closest("canvas, svg, [data-testid='canvas'], [data-testid='canvas-root'], [data-testid='canvas_viewport'], [data-testid='fullscreen-viewport'], [data-testid='viewport'], [data-onboarding-key='canvas'], [data-figma-canvas='true']")) {
+      if (closestInBatch(element, "canvas, svg, [data-testid='canvas'], [data-testid='canvas-root'], [data-testid='canvas_viewport'], [data-testid='fullscreen-viewport'], [data-testid='viewport'], [data-onboarding-key='canvas'], [data-figma-canvas='true']")) {
         return "canvas";
       }
-      if (element.closest("input, textarea, select, option, [contenteditable='true'], [role='textbox']")) {
+      if (closestInBatch(element, "input, textarea, select, option, [contenteditable='true'], [role='textbox']")) {
         return "userContent";
       }
-      if (element.closest("code, pre")) return "protected";
+      if (closestInBatch(element, "code, pre")) return "protected";
       return null;
     }
 
@@ -1466,7 +1505,7 @@
     }
 
     function scanUntranslated(rawScanOptions) {
-      if (options.beginBatch) options.beginBatch();
+      beginBatch();
       const scanOptions = { limit: 200, ...(rawScanOptions || {}) };
       const limit = Math.max(1, scanOptions.limit || 200);
       const root = scanOptions.root || document.body || document.documentElement;

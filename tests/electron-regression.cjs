@@ -129,16 +129,19 @@ app.whenReady().then(async () => {
   // Sample after the observer microtask, before a renderer can paint the next
   // task. The recording shows ordinary nested property labels, not buttons.
   const redraw = await editor(`(async () => {
+    const mirror = document.createElement('div'); mirror.id = 'hidden-input-activedescendant'; document.body.append(mirror);
     const panel = document.createElement('section'); panel.id = 'redraw-panel';
     panel.setAttribute('aria-label', 'Right sidebar'); document.body.append(panel);
     const labels = ['Content', 'Position', 'Alignment', 'Constraints', 'Rotation', 'Layout', 'Resizing', 'Appearance', 'Opacity', 'Corner radius', 'Blend mode', 'Typography', 'Line height', 'Letter spacing'].flatMap(text => [text, text]);
     const expected = ${JSON.stringify(['Content', 'Position', 'Alignment', 'Constraints', 'Rotation', 'Layout', 'Resizing', 'Appearance', 'Opacity', 'Corner radius', 'Blend mode', 'Typography', 'Line height', 'Letter spacing'].flatMap(text => [require('../payload/src/dictionary/zh-CN.js').exact[text], require('../payload/src/dictionary/zh-CN.js').exact[text]]))};
     const failures = [];
     for (let round = 0; round < 12; round++) {
-      panel.innerHTML = labels.map(text => '<div><div><div><div><div><div><span>' + text + '</span><svg><path></path></svg><input value="24"><div><div><span>24</span></div></div></div></div></div></div></div></div>').join('');
+      mirror.innerHTML = '<div><dl><dt>Variants</dt><dt>Dimensions</dt></dl></div>'.repeat(300);
+      panel.innerHTML = '<input value="Private value" title="Save">'.repeat(60) + labels.map(text => '<div><div><div><div><div><div><span>' + text + '</span><svg><path></path></svg><input value="24" aria-label="Width"><div><div><span>24</span></div></div></div></div></div></div></div></div>').join('');
       await Promise.resolve(); await Promise.resolve();
       const actual = [...panel.querySelectorAll('span')].filter(element => element.textContent !== '24').map(element => element.textContent);
       if (actual.some((text, index) => text !== expected[index])) failures.push({ round, actual });
+      if (mirror.textContent !== 'VariantsDimensions'.repeat(300)) failures.push({ round, mirror: 'changed' });
       await new Promise(resolve => setTimeout(resolve, 20));
     }
     return failures;

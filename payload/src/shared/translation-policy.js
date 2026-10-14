@@ -13,6 +13,7 @@
       && !/(?:https?:|www\.|[\w-]+\.(?:com|org|net|fig|png|jpg|svg|js|ts|json)\b|\b[0-9a-f]{8}-|\b\d{3,}\b)/i.test(text);
   }
   const protectedSelector = [
+    "#hidden-input-activedescendant", "[class*='fullscreen_accessibility_tree']",
     "canvas", "svg", "iframe", "webview", "code", "pre",
     "[contenteditable]:not([contenteditable='false'])", "[role='textbox']", "[role='treeitem']", "[role='treegrid']",
     "[aria-label$=', file name']", "[aria-label='Left sidebar'] [role='grid']", "[aria-label='左侧边栏'] [role='grid']",
@@ -43,7 +44,7 @@
     return /(?:^|[/?#=&])community(?:[/?#=&]|$)/.test(route);
   }
   function regionOf(element) {
-    if (!element || !element.closest || element.closest(protectedSelector)) return null;
+    if (!element || !element.closest || closestInBatch(element, protectedSelector)) return null;
     const view = element.ownerDocument && element.ownerDocument.defaultView;
     // Community is the only online-translation boundary. Classify the whole
     // route first so layout changes cannot leak candidates into other regions.
@@ -56,23 +57,35 @@
       ["toolbar", "[role='toolbar'],[data-testid*='toolbar'],[class*='toolbar']"],
       ["home", "nav,[role='navigation'],[data-testid*='file-browser-sidebar']"]
     ];
-    for (const [region, selector] of tests) if (element.closest(selector)) return region;
+    for (const [region, selector] of tests) if (closestInBatch(element, selector)) return region;
     if (view && /^\/files(?:\/|$)/.test(view.location.pathname)) return "home";
     return "other";
   }
   function contextOf(element) {
-    const control = element.closest("button,[role='button'],[role='menuitem'],label,[role='tooltip'],[role='tab'],[role='option'],[role='combobox'],[role='radio'],[role='checkbox'],[role='switch']");
+    const control = closestInBatch(element, "button,[role='button'],[role='menuitem'],label,[role='tooltip'],[role='tab'],[role='option'],[role='combobox'],[role='radio'],[role='checkbox'],[role='switch']");
     return control ? (control.getAttribute("role") || control.tagName.toLowerCase()) : "label";
   }
   function anchorOf(element) {
-    const anchor = element.closest("[data-testid]");
+    const anchor = closestInBatch(element, "[data-testid]");
     if (!anchor) return null;
     const value = anchor.getAttribute("data-testid");
     return /^[a-z][a-z_-]{2,100}$/i.test(value || "") ? value : null;
   }
   const toolSectionTitles = new Set(["Tools", "工具"]);
   let toolTitlesByElement = new WeakMap();
-  function beginBatch() { toolTitlesByElement = new WeakMap(); }
+  let closestCaches = new Map();
+  // Ancestors are shared by many labels. Cache structural lookups only for
+  // this synchronous batch; React can move or repurpose them before the next.
+  function closestInBatch(element, selector) {
+    if (!element) return null;
+    let cache = closestCaches.get(selector);
+    if (!cache) closestCaches.set(selector, cache = new WeakMap());
+    if (cache.has(element)) return cache.get(element);
+    const found = element.matches(selector) ? element : closestInBatch(element.parentElement, selector);
+    cache.set(element, found);
+    return found;
+  }
+  function beginBatch() { toolTitlesByElement = new WeakMap(); closestCaches = new Map(); }
   function isLikelyFontFamilyText(text) {
     const value = normalize(text);
     if (!value || value.length > 96 || /[。！？?:;；]/.test(value)) return false;
@@ -91,7 +104,7 @@
   }
   function hasTypographyFieldContext(element, text) {
     const value = normalize(text);
-    if (!element.closest("[role='combobox'],[aria-haspopup='listbox'],[aria-label*='font' i],[data-testid*='font' i]")) return false;
+    if (!closestInBatch(element, "[role='combobox'],[aria-haspopup='listbox'],[aria-label*='font' i],[data-testid*='font' i]")) return false;
     if (!/^[A-Za-z][A-Za-z0-9 .+'-]{1,72}$/.test(value)) return false;
     if (/^(?:Typography|Font|Font size|Line height|Letter spacing|Text align|Auto|Default|Thin|ExtraLight|Light|Normal|Regular|Medium|SemiBold|Bold|ExtraBold|Black|Heavy|Italic)$/i.test(value)) return false;
     for (let current = element, depth = 0; current && depth < 6; current = current.parentElement, depth += 1) {
@@ -107,7 +120,7 @@
   function isToolSectionContent(element, text) {
     const value = normalize(text);
     if (!element || toolSectionTitles.has(value)) return false;
-    const item = element.closest("button,[role='button'],[role='menuitem'],[role='option'],[role='listitem']");
+    const item = closestInBatch(element, "button,[role='button'],[role='menuitem'],[role='option'],[role='listitem']");
     if (!item) return false;
     for (let current = item, depth = 0; current && depth < 6; current = current.parentElement, depth += 1) {
       let title = toolTitlesByElement.get(current);
@@ -133,11 +146,11 @@
     if (!currentRegion || currentRegion === "other") return false;
     if (["right", "menus", "floating"].includes(currentRegion)) {
       if (isLikelyFontFamilyText(text)) return true;
-      const typographyControl = element.closest("[role='combobox'],[role='option'],[role='listbox'],[aria-haspopup='listbox']");
+      const typographyControl = closestInBatch(element, "[role='combobox'],[role='option'],[role='listbox'],[aria-haspopup='listbox']");
       if (typographyControl && (hasFontFamilyContext(element) || hasTypographyFieldContext(element, text))) return true;
     }
     if (currentRegion === "right" && isToolSectionContent(element, text)) return true;
-    return Boolean(element.closest(
+    return Boolean(closestInBatch(element,
       "[data-testid*='tool-item' i],[data-testid*='tool-card' i],[data-testid*='installed-tool' i]," +
       "[data-testid*='widget-name' i],[class*='tool_item' i],[class*='tool-card' i],[class*='installed_tool' i]"
     ));
@@ -152,5 +165,5 @@
     return !!c && Object.hasOwn(regions, c.region) && c.region !== "other" && safeText(c.text)
       && typeof c.context === "string" && /^[a-z:-]{1,40}$/.test(c.context);
   }
-  return { regions, normalize, key, safeText, protectedSelector, isCommunityLocation, regionOf, contextOf, anchorOf, isLikelyFontFamilyText, isToolSectionContent, isProtectedDynamicValue, candidate, validCandidate, beginBatch };
+  return { closestInBatch, regions, normalize, key, safeText, protectedSelector, isCommunityLocation, regionOf, contextOf, anchorOf, isLikelyFontFamilyText, isToolSectionContent, isProtectedDynamicValue, candidate, validCandidate, beginBatch };
 });

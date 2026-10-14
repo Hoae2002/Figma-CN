@@ -435,3 +435,61 @@ test("direct label rewrites precede a large panel scan in the same mutation deli
   assert.equal(panel.querySelector('span').textContent, '位置');
   assert.ok(bulk.textContent.includes('Save'), 'bulk work still yields to the frame budget');
 });
+
+test("canvas accessibility mirrors do not consume a rebuilt property panel's slice", async t => {
+  const { w, document, runtime, localizer } = fixture(t,
+    '<div id="hidden-input-activedescendant"></div><section aria-label="Right sidebar"></section>',
+    {}, { Dimensions: "尺寸", Variants: "变体", Position: "位置", Layout: "布局" });
+  const mirror = document.querySelector('#hidden-input-activedescendant');
+  const panel = document.querySelector('section');
+  const originalStyle = w.getComputedStyle;
+  w.getComputedStyle = element => {
+    assert.ok(!mirror.contains(element), 'the invisible canvas mirror must never trigger layout reads');
+    return originalStyle.call(w, element);
+  };
+  const before = localizer.getStats().processedNodes;
+  // Figma delivers its canvas accessibility tree before the visible panel.
+  mirror.innerHTML = '<div><dl><dt>Variants</dt><dt>Dimensions</dt></dl></div>'.repeat(300);
+  panel.innerHTML = '<h2>Position</h2><h2>Layout</h2>';
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(panel.textContent, '位置布局');
+  assert.equal(mirror.textContent, 'VariantsDimensions'.repeat(300));
+  assert.equal(localizer.getStats().processedNodes - before, 2);
+  assert.equal(runtime.drain().requests.length, 0);
+  assert.equal(P.candidate(mirror.querySelector('dt'), 'Variants'), null);
+});
+
+test("control attributes wait behind visible labels within a shared mutation budget", async t => {
+  const { w, document, runtime, localizer } = fixture(t,
+    '<section aria-label="Right sidebar"></section>', {}, { Save: "保存", Position: "位置", Layout: "布局" });
+  let clock = 0;
+  w.performance.now = () => clock;
+  w.requestAnimationFrame = () => 1;
+  w.cancelAnimationFrame = () => {};
+  localizer.setOptions({ allowElement(element, source) {
+    if (!source) clock += 2; // Model costly attribute/context checks, independently of text.
+    return runtime.allowElement(element, source);
+  } });
+  const panel = document.querySelector('section');
+  panel.innerHTML = '<input value="Private value" title="Save">'.repeat(60) + '<h2>Position</h2><h2>Layout</h2>';
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(panel.textContent, '位置布局');
+  assert.ok(localizer.getStats().queueSize > 0, 'remaining attribute work must still yield');
+  assert.equal(panel.querySelector('input').value, 'Private value');
+});
+
+test("ancestor caches refresh after an existing label moves into named content", async t => {
+  const { document } = fixture(t,
+    '<section aria-label="Right sidebar"><span>Save</span></section><section aria-label="Left sidebar"><div role="grid"></div></section>',
+    {}, { Save: "保存" });
+  const label = document.querySelector('span');
+  assert.equal(label.textContent, '保存');
+  document.querySelector('[role="grid"]').append(label);
+  label.firstChild.nodeValue = 'Save';
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(label.textContent, 'Save', 'a previously allowed node must obey its new protected ancestors');
+  document.querySelector('[aria-label="Right sidebar"]').append(label);
+  label.firstChild.nodeValue = 'Save';
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(label.textContent, '保存', 'moving back must not retain a stale protected result');
+});
