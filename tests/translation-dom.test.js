@@ -384,3 +384,54 @@ test("tool-section protection refreshes when a property panel is reused", async 
   await tick();
   assert.equal(document.querySelector("span").textContent, "导出");
 });
+
+test("static property labels translate without layout reads, including attribute-marked labels", async t => {
+  const { w, document } = fixture(t, '<main></main>', {}, { Position: "位置", Opacity: "不透明度" });
+  w.getComputedStyle = () => { assert.fail('property labels must not measure ancestor styles'); };
+  w.Element.prototype.getBoundingClientRect = () => { assert.fail('property labels must not force layout'); };
+  const panel = document.createElement('section');
+  panel.setAttribute('aria-label', 'Right sidebar');
+  panel.innerHTML = '<div><span title="Position">Position</span></div><div><span>Opacity</span></div>';
+  document.body.append(panel);
+  await tick();
+  assert.equal(panel.textContent, '位置不透明度');
+  assert.equal(panel.querySelector('span').title, '位置');
+  assert.equal(panel.querySelector('span').getAttribute('data-figma-zh-compact-text'), '1');
+});
+
+test("a queued panel rebuild replaces its detached walker instead of losing new children", async t => {
+  const { w, document, localizer } = fixture(t, '<section aria-label="Right sidebar"></section>', {}, { Save: "保存", Export: "导出" });
+  const frames = [];
+  w.requestAnimationFrame = callback => { frames.push(callback); return frames.length; };
+  w.cancelAnimationFrame = () => {};
+  localizer.setOptions({ chunkSize: 3 });
+  const panel = document.querySelector('section');
+  panel.innerHTML = '<div><span>Save</span></div>'.repeat(8);
+  await Promise.resolve(); await Promise.resolve();
+  assert.ok(localizer.getStats().queueSize > 0);
+  panel.innerHTML = '<div><span>Export</span></div>'.repeat(8);
+  await Promise.resolve(); await Promise.resolve();
+  for (let rounds = 0; localizer.getStats().queueSize && rounds < 50; rounds++) {
+    assert.ok(frames.length);
+    frames.shift()();
+    await Promise.resolve(); await Promise.resolve();
+  }
+  assert.equal(localizer.getStats().queueSize, 0);
+  assert.equal(panel.textContent, '导出'.repeat(8));
+});
+
+test("direct label rewrites precede a large panel scan in the same mutation delivery", async t => {
+  const { w, document } = fixture(t, '<section aria-label="Right sidebar"><span>Position</span></section>', {}, { Position: "位置", Save: "保存" });
+  let clock = 0;
+  w.performance.now = () => clock++;
+  w.requestAnimationFrame = () => 1;
+  w.cancelAnimationFrame = () => {};
+  const panel = document.querySelector('section');
+  const bulk = document.createElement('div');
+  bulk.innerHTML = '<button>Save</button>'.repeat(200);
+  panel.append(bulk);
+  panel.querySelector('span').firstChild.nodeValue = 'Position';
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(panel.querySelector('span').textContent, '位置');
+  assert.ok(bulk.textContent.includes('Save'), 'bulk work still yields to the frame budget');
+});

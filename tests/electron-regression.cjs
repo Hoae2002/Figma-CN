@@ -126,7 +126,25 @@ app.whenReady().then(async () => {
   // Recycled text nodes must regain their translation without restoring siblings.
   await editor(`document.querySelector('#stress-panel button').firstChild.nodeValue = 'Save'`);
   await until(() => editor(`document.querySelector('#stress-panel button').textContent === '保存'`));
-  console.log("Chromium localization regression passed: 600 labels converge, page names and landmarks remain original, attributes do not rescan text, reconnects make zero restore writes, recycled labels translate again.");
+  // Sample after the observer microtask, before a renderer can paint the next
+  // task. The recording shows ordinary nested property labels, not buttons.
+  const redraw = await editor(`(async () => {
+    const panel = document.createElement('section'); panel.id = 'redraw-panel';
+    panel.setAttribute('aria-label', 'Right sidebar'); document.body.append(panel);
+    const labels = ['Content', 'Position', 'Alignment', 'Constraints', 'Rotation', 'Layout', 'Resizing', 'Appearance', 'Opacity', 'Corner radius', 'Blend mode', 'Typography', 'Line height', 'Letter spacing'].flatMap(text => [text, text]);
+    const expected = ${JSON.stringify(['Content', 'Position', 'Alignment', 'Constraints', 'Rotation', 'Layout', 'Resizing', 'Appearance', 'Opacity', 'Corner radius', 'Blend mode', 'Typography', 'Line height', 'Letter spacing'].flatMap(text => [require('../payload/src/dictionary/zh-CN.js').exact[text], require('../payload/src/dictionary/zh-CN.js').exact[text]]))};
+    const failures = [];
+    for (let round = 0; round < 12; round++) {
+      panel.innerHTML = labels.map(text => '<div><div><div><div><div><div><span>' + text + '</span><svg><path></path></svg><input value="24"><div><div><span>24</span></div></div></div></div></div></div></div></div>').join('');
+      await Promise.resolve(); await Promise.resolve();
+      const actual = [...panel.querySelectorAll('span')].filter(element => element.textContent !== '24').map(element => element.textContent);
+      if (actual.some((text, index) => text !== expected[index])) failures.push({ round, actual });
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    return failures;
+  })()`);
+  assert.deepEqual(redraw, [], 'property labels must stay localized at every redraw, before paint');
+  console.log("Chromium localization regression passed: 12 nested property-panel redraws have zero untranslated samples before paint; 600 labels converge, page names remain original, attributes do not rescan text, reconnects make zero restore writes, recycled labels translate again.");
   console.log("Electron regression passed: dictionary-only regular pages and native menus, Community-only Google fallback, UI switch and cache reuse, isolated settings with default-session 404, removed exclusion capability, protected inputs, untrusted IPC rejection and responsive layout.");
 }).then(() => finish(0)).catch(error => { console.error(error.stack); finish(1); });
 function finish(code) {

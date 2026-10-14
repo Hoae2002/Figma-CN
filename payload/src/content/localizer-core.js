@@ -911,12 +911,13 @@
     return false;
   }
 
-  function shouldTranslateTextNode(node, options) {
+  function shouldTranslateTextNode(node, options, protectionChecked) {
     if (!node || node.nodeType !== Node.TEXT_NODE) return false;
     if (!node.nodeValue || !/[A-Za-z]/.test(node.nodeValue)) return false;
     if (node.nodeValue.trim().length > DEFAULT_OPTIONS.maxTextLength) return false;
     if (isProductFilterTerm(node)) return false;
     if (isFontStyleControlTerm(node)) return false;
+    if (protectionChecked) return true;
     const parent = node.parentElement;
     if (!parent || isSkippableElement(parent)) return false;
     if (isLayerTreeContentElement(parent)) return false;
@@ -941,6 +942,7 @@
       "[role='button'],[role='menuitem'],[role='option'],button,a,[role='menu'],[role='listbox'],[role='dialog'],[role='tooltip'],[data-testid*='dropdown' i],[data-testid*='popover' i],[data-testid*='tooltip' i]"
     );
     if (interactiveScope) return true;
+    if (isEditorPanelLabel(element)) return true;
     if (findTooltipContainer(element)) return true;
 
     const style = window.getComputedStyle(element);
@@ -952,13 +954,21 @@
 
   function markChangedElement(element, original, translated) {
     if (element && element.nodeType === Node.ELEMENT_NODE) {
-      element.setAttribute(STATE_ATTR, "1");
-      if (shouldKeepTranslatedTextOnOneLine(element, original, translated)) {
+      if (element.getAttribute(STATE_ATTR) !== "1") element.setAttribute(STATE_ATTR, "1");
+      if (element.getAttribute(COMPACT_TEXT_ATTR) !== "1" && shouldKeepTranslatedTextOnOneLine(element, original, translated)) {
         element.setAttribute(COMPACT_TEXT_ATTR, "1");
       }
       const tooltip = findTooltipContainer(element);
       if (tooltip) tooltip.setAttribute(TOOLTIP_ATTR, "1");
     }
+  }
+
+  function isEditorPanelLabel(element) {
+    return Boolean(element.closest(
+      "[aria-label='Right sidebar'],[aria-label='右侧边栏'],[aria-label='Left sidebar'],[aria-label='左侧边栏']," +
+      "[data-testid*='properties-panel'],[data-testid*='right-panel'],[class*='properties_panel'],[class*='right_panel']," +
+      "[data-testid*='left-panel'],[class*='left_panel'],[role='toolbar']"
+    )) && !element.closest("[role='tooltip'],[role='dialog'],[role='menu'],[data-testid*='tooltip' i],[data-testid*='popover' i],[class*='popover' i]");
   }
 
   function findTooltipContainer(element) {
@@ -971,6 +981,10 @@
     if (explicit && !isTooltipTriggerElement(explicit) && !hasMenuLikeControls(explicit)) {
       return explicit;
     }
+
+    // Property labels live in a known static panel. Measuring every ancestor
+    // after text writes forces layout and delays later labels past the paint.
+    if (isEditorPanelLabel(element)) return null;
 
     const likely = closestLikelyFloatingTooltip(element);
     if (likely && !isTooltipTriggerElement(likely) && !hasMenuLikeControls(likely)) {
@@ -1073,7 +1087,7 @@
     const translator = createTranslator(dictionary || {});
     const queue = new Set();
     const attributeQueue = new Set();
-    let queuedNodes = new WeakSet();
+    let queuedNodes = new WeakMap();
     const stats = {
       processedNodes: 0,
       changedTexts: 0,
@@ -1186,7 +1200,7 @@
       markChangedElement(node.parentElement);
       return;
     }
-    if (!shouldTranslateTextNode(node, options)) return;
+    if (!shouldTranslateTextNode(node, options, true)) return;
     if (node.nodeValue.trim().length > options.maxTextLength) return;
     const original = node[TRANSLATED_TEXT_KEY] && node.nodeValue === node[TRANSLATED_TEXT_KEY]
         ? node[ORIGINAL_TEXT_KEY]
@@ -1223,7 +1237,9 @@
         } else {
           translateAttributes(node);
         }
-        count += 1;
+        // Chunk size limits labels, not decorative wrappers/icons. Deeply
+        // nested property rows should not split a small panel across frames.
+        if (node.nodeType === Node.TEXT_NODE) count += 1;
         if (!job.initialized) {
           if (root.nodeType === Node.TEXT_NODE || isSkippableElement(root)) return true;
           job.walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
@@ -1243,11 +1259,16 @@
     }
 
     function processOrQueueMutationNode(node) {
-      if (!node || !enabled || !isInBodyRegion(node) || queuedNodes.has(node)) return;
+      if (!node || !enabled || !isInBodyRegion(node)) return;
+      // React may rebuild a queued root before its walker resumes. Start from
+      // its current children instead of continuing inside the detached tree.
+      const previous = queuedNodes.get(node);
+      if (previous) queue.delete(previous);
+      queuedNodes.delete(node);
       const job = createQueueJob(node);
       const started = mutationStarted === null ? performance.now() : mutationStarted;
       if (performance.now() - started < options.budgetMs && processQueueJob(job, started)) return;
-      queuedNodes.add(node);
+      queuedNodes.set(node, job);
       queue.add(job);
       schedule();
     }
@@ -1257,7 +1278,7 @@
       scheduledHandle = null;
       if (!enabled) {
         queue.clear();
-        queuedNodes = new WeakSet();
+        queuedNodes = new WeakMap();
         return;
       }
 
@@ -1316,8 +1337,9 @@
 
     function enqueue(node) {
       if (!node || !enabled || queuedNodes.has(node)) return;
-      queuedNodes.add(node);
-      queue.add(createQueueJob(node));
+      const job = createQueueJob(node);
+      queuedNodes.set(node, job);
+      queue.add(job);
       schedule();
     }
 
@@ -1340,9 +1362,11 @@
               attributes.add(mutation.target);
             }
           }
-          for (const node of roots) {
+          // Direct label rewrites must not wait behind ancestor panel scans.
+          const orderedRoots = [...roots].sort((a, b) => (b.nodeType === Node.TEXT_NODE) - (a.nodeType === Node.TEXT_NODE));
+          for (const node of orderedRoots) {
             let covered = false;
-            for (let parent = node.parentNode; parent; parent = parent.parentNode) {
+            for (let parent = node.nodeType === Node.TEXT_NODE ? null : node.parentNode; parent; parent = parent.parentNode) {
               if (roots.has(parent)) { covered = true; break; }
             }
             if (!covered) processOrQueueMutationNode(node);
@@ -1377,7 +1401,7 @@
       enabled = false;
       queue.clear();
       attributeQueue.clear();
-      queuedNodes = new WeakSet();
+      queuedNodes = new WeakMap();
       if (scheduledHandle !== null) {
         if (scheduledWithFrame) window.cancelAnimationFrame(scheduledHandle);
         else window.clearTimeout(scheduledHandle);
