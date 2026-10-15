@@ -251,6 +251,62 @@ test('current Figma files page uses dictionary only and protects user file names
   assert.ok(document.body.textContent.includes('Private sidebar file'));
   assert.ok(document.body.textContent.includes('Private card file'));
 });
+test("folder card timestamps translate split i18n text without changing protected card content", async t => {
+  const dictionary = require("../payload/src/dictionary/zh-CN.js");
+  const times = ["1 minute ago", "19 hours ago", "5 days ago", "25 days ago", "4 months ago", "9 months ago", "just now"];
+  const { document, runtime, localizer, snapshot } = fixture(t, `<main>${times.map((time, index) => `
+    <div role="group" aria-label="Updated 4 months ago">
+      <button data-card-main-action aria-label="Updated 4 months ago"></button>
+      <h2>Updated 4 months ago</h2>
+      <button aria-description="Design file"><i18n-text>Updated <span>${time}</span></i18n-text></button>
+      <span data-testid="folder-name"><i18n-text>Updated ${time}</i18n-text></span>
+      <span data-fpl-sr-only="true">Updated 4 months ago, </span>
+      <i18n-text data-timestamp="${index}">Updated <span>${time}</span></i18n-text>
+      <i18n-text data-whole>Updated ${time}</i18n-text>
+    </div>`).join("")}</main>`, {}, {}, "https://www.figma.com/files/team/test/all-folders", dictionary);
+  const labels = [...document.querySelectorAll("[data-timestamp]")];
+  const expected = ["已更新 1 分钟前", "已更新 19 小时前", "已更新 5 天前", "已更新 25 天前", "已更新 4 个月前", "已更新 9 个月前", "已更新 刚刚"];
+  assert.deepEqual(labels.map(label => label.textContent), expected);
+  assert.deepEqual([...document.querySelectorAll("[data-whole]")].map(label => label.textContent),
+    ["1 分钟前更新", "19 小时前更新", "5 天前更新", "25 天前更新", "4 个月前更新", "9 个月前更新", "刚刚更新"]);
+  labels[0].querySelector("span").textContent = "2 minutes ago";
+  await tick();
+  assert.equal(labels[0].textContent, "已更新 2 分钟前");
+  localizer.enqueue(document.body);
+  await tick();
+  for (const card of document.querySelectorAll("[role=group]")) {
+    assert.equal(card.getAttribute("aria-label"), "Updated 4 months ago");
+    assert.equal(card.querySelector("h2").textContent, "Updated 4 months ago");
+    assert.equal(card.querySelector("[data-fpl-sr-only]").textContent, "Updated 4 months ago, ");
+    assert.ok(card.querySelector("[aria-description]").textContent.startsWith("Updated "));
+    assert.ok(card.querySelector("[data-testid]").textContent.startsWith("Updated "));
+  }
+  assert.equal(runtime.drain().requests.length, 0);
+  runtime.apply({ ...snapshot, revision: 2, settings: { enabled: false, communityOnline: false } });
+  assert.equal(labels[0].textContent, "Updated 2 minutes ago");
+  assert.deepEqual(labels.slice(1).map(label => label.textContent), times.slice(1).map(time => `Updated ${time}`));
+  runtime.apply({ ...snapshot, revision: 3 });
+  assert.deepEqual(labels.slice(1).map(label => label.textContent), expected.slice(1));
+});
+
+test("timestamp exception cannot translate arbitrary card prose, headings or non-file routes", t => {
+  const dictionary = require("../payload/src/dictionary/zh-CN.js");
+  const html = `<main><div role="group" aria-label="Private folder">
+    <h2><i18n-text>Updated <span>4 months ago</span></i18n-text></h2>
+    <span>Updated 4 months ago</span>
+    <i18n-text>Updated private roadmap</i18n-text>
+    <a href="/design/private"><i18n-text>Updated 4 months ago</i18n-text></a>
+  </div></main>`;
+  for (const url of ["https://www.figma.com/files/team/test/all-folders", "https://www.figma.com/design/test", "https://www.figma.com/files/team/test/community"]) {
+    const { document, runtime } = fixture(t, html, {}, {}, url, dictionary);
+    assert.equal(document.querySelector("h2").textContent, "Updated 4 months ago", url);
+    assert.equal(document.querySelector("span:not(h2 span)").textContent, "Updated 4 months ago", url);
+    assert.ok(document.body.textContent.includes("Updated private roadmap"), url);
+    assert.equal(document.querySelector("a").textContent, "Updated 4 months ago", url);
+    assert.equal(runtime.drain().requests.length, 0, url);
+  }
+});
+
 test("Community route owns Google requests and its switch preserves dictionary translation", t => {
   const { runtime, document, snapshot } = fixture(t, '<nav><button>Save</button><button>New design resource</button></nav>', {}, { Save: "保存" }, "https://www.figma.com/files/team/test/community");
   assert.equal(P.regionOf(document.querySelector("button")).toString(), "community");

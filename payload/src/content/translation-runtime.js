@@ -23,7 +23,23 @@
     /^Learn more about folder permissions\.$/,
     /^This setting applies to anyone in the file with .+$/
   ];
+  const fileBrowserTime = "(?:\\d+ (?:minutes?|hours?|days?|months?) ago|just now)";
+  const fileBrowserTimestampSource = new RegExp(`^(?:Updated(?: ${fileBrowserTime})?|${fileBrowserTime})$`);
+  const fileBrowserTimestampLabel = new RegExp(`^(?:Updated|已更新) (?:${fileBrowserTime}|\\d+\\s*(?:分钟|小时|天|个月)前|刚刚)$`);
+  function isFileBrowserTimestamp(element, source) {
+    if (!/^\/files(?:\/|$)/.test(window.location.pathname) || P.isCommunityLocation(window.location)) return false;
+    const group = P.closestInBatch(element, "main [role='group'][aria-label]");
+    // Only the card wrapper may be bypassed; names, previews and editable
+    // content nested inside it must retain their own protection boundary.
+    if (!group || P.closestInBatch(element, P.protectedSelector) !== group) return false;
+    if (P.closestInBatch(element, "h1,h2,h3,h4,h5,h6,[role='heading']")) return false;
+    const label = P.closestInBatch(element, "i18n-text");
+    if (!label || !group.contains(label)) return false;
+    return fileBrowserTimestampLabel.test(P.normalize(label.textContent))
+      && fileBrowserTimestampSource.test(P.normalize(source));
+  }
   function isProtectedSystemLabel(element, source) {
+    if (isFileBrowserTimestamp(element, source)) return true;
     const text = P.normalize(source);
     if (!text || !protectedSystemLabels.some(pattern => pattern.test(text))) return false;
     return Boolean(P.closestInBatch(element,
