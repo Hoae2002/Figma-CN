@@ -398,6 +398,12 @@
     if (!looksLikeUserProvidedName(text)) return false;
     if (FILE_BROWSER_SYSTEM_TITLES.has(normalizeText(text))) return false;
     if (!isFileBrowserRoute()) return false;
+    // These titles are also valid user names. Exempt only the system heading
+    // on its own route, outside the file list and named controls.
+    const routeTitle = (normalizeText(text) === "Trash" && /^\/files\/team\/[^/]+\/trashed\/?$/.test(window.location.pathname))
+      || (normalizeText(text) === "Resources" && /^\/files\/team\/[^/]+\/resources\/(?:internal|community)\/?$/.test(window.location.pathname));
+    if (routeTitle
+      && closestInBatch(element, "h1") && !closestInBatch(element, "main,button,[role='button']")) return false;
     return Boolean(closestInBatch(element, "h1,h2,[role='heading']"));
   }
 

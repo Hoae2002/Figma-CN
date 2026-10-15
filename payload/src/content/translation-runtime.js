@@ -23,10 +23,11 @@
     /^Learn more about folder permissions\.$/,
     /^This setting applies to anyone in the file with .+$/
   ];
-  const fileBrowserTime = "(?:\\d+ (?:minutes?|hours?|days?|months?) ago|just now)";
-  const fileBrowserTimestampSource = new RegExp(`^(?:Updated(?: ${fileBrowserTime})?|${fileBrowserTime})$`);
-  const fileBrowserTimestampLabel = new RegExp(`^(?:Updated|已更新) (?:${fileBrowserTime}|\\d+\\s*(?:分钟|小时|天|个月)前|刚刚)$`);
-  function isFileBrowserTimestamp(element, source) {
+  const fileBrowserTime = "(?:\\d+ (?:seconds?|minutes?|hours?|days?|weeks?|months?|years?) ago|just now|yesterday)";
+  const fileBrowserAction = "(?:Updated|Edited|Viewed|Trashed by you)";
+  const fileBrowserTimestampSource = new RegExp(`^(?:${fileBrowserAction}(?: ${fileBrowserTime})?|${fileBrowserTime})$`);
+  const fileBrowserTimestampLabel = new RegExp(`^(?:${fileBrowserAction}|已更新|编辑于|查看于|由你删除于) (?:${fileBrowserTime}|\\d+\\s*(?:秒|分钟|小时|天|周|个月|年)前|刚刚|昨天)$`);
+  function isFileBrowserMetadata(element, source) {
     if (!/^\/files(?:\/|$)/.test(window.location.pathname) || P.isCommunityLocation(window.location)) return false;
     const group = P.closestInBatch(element, "main [role='group'][aria-label]");
     // Only the card wrapper may be bypassed; names, previews and editable
@@ -35,11 +36,14 @@
     if (P.closestInBatch(element, "h1,h2,h3,h4,h5,h6,[role='heading']")) return false;
     const label = P.closestInBatch(element, "i18n-text");
     if (!label || !group.contains(label)) return false;
-    return fileBrowserTimestampLabel.test(P.normalize(label.textContent))
-      && fileBrowserTimestampSource.test(P.normalize(source));
+    const labelText = P.normalize(label.textContent), sourceText = P.normalize(source);
+    if (/^\/files\/team\/[^/]+\/recents-and-sharing\/shared-with-you\/?$/.test(window.location.pathname)
+      && /^From .{1,96}$/.test(labelText)
+      && (sourceText === labelText || sourceText === "From")) return true;
+    return fileBrowserTimestampLabel.test(labelText) && fileBrowserTimestampSource.test(sourceText);
   }
   function isProtectedSystemLabel(element, source) {
-    if (isFileBrowserTimestamp(element, source)) return true;
+    if (isFileBrowserMetadata(element, source)) return true;
     const text = P.normalize(source);
     if (!text || !protectedSystemLabels.some(pattern => pattern.test(text))) return false;
     return Boolean(P.closestInBatch(element,

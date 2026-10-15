@@ -289,12 +289,125 @@ test("folder card timestamps translate split i18n text without changing protecte
   assert.deepEqual(labels.slice(1).map(label => label.textContent), expected.slice(1));
 });
 
+test("file browser metadata translates whole and split labels across redraws and mode changes", async t => {
+  const dictionary = require("../payload/src/dictionary/zh-CN.js");
+  const times = ["1 second ago", "9 minutes ago", "18 hours ago", "22 days ago", "2 weeks ago", "1 month ago", "2 months ago", "1 year ago", "just now", "yesterday"];
+  const translated = ["1 秒前", "9 分钟前", "18 小时前", "22 天前", "2 周前", "1 个月前", "2 个月前", "1 年前", "刚刚", "昨天"];
+  for (const [action, prefix, suffix, route] of [
+    ["Edited", "编辑于", "编辑", "folder/123"],
+    ["Edited", "编辑于", "编辑", "drafts"],
+    ["Viewed", "查看于", "查看", "recents-and-sharing/recently-viewed"],
+    ["Trashed by you", "由你删除于", "由你删除", "trashed"]
+  ]) {
+    const { document, runtime, localizer, snapshot } = fixture(t, `<main>${times.map(time => `
+      <div role="group" aria-label="${action} ${time}">
+        <button data-card-main-action aria-label="${action} ${time}"></button>
+        <h2><i18n-text>${action} ${time}</i18n-text></h2>
+        <span class="generic_tile_title_contents--itemsViewTitle--test"><i18n-text>${action} ${time}</i18n-text></span>
+        <i18n-text data-whole>${action} ${time}</i18n-text>
+        <i18n-text data-split>${action} <span>${time}</span></i18n-text>
+      </div>`).join("")}</main>`, {}, {}, `https://www.figma.com/files/team/test/${route}`, dictionary);
+    const whole = [...document.querySelectorAll("[data-whole]")];
+    const split = [...document.querySelectorAll("[data-split]")];
+    assert.deepEqual(whole.map(e => e.textContent), translated.map(time => `${time}${suffix}`), route);
+    assert.deepEqual(split.map(e => e.textContent), translated.map(time => `${prefix} ${time}`), route);
+    split[0].querySelector("span").textContent = "2 years ago";
+    whole[0].textContent = `${action} 2 years ago`;
+    await tick();
+    localizer.enqueue(document.body);
+    await tick();
+    assert.equal(split[0].textContent, `${prefix} 2 年前`);
+    assert.equal(whole[0].textContent, `2 年前${suffix}`);
+    for (const [index, card] of [...document.querySelectorAll("[role=group]")].entries()) {
+      const name = `${action} ${times[index]}`;
+      assert.equal(card.getAttribute("aria-label"), name);
+      assert.equal(card.querySelector("button").getAttribute("aria-label"), name);
+      assert.equal(card.querySelector("h2").textContent, name);
+      assert.equal(card.querySelector("[class]").textContent, name);
+    }
+    assert.equal(runtime.drain().requests.length, 0);
+    runtime.apply({ ...snapshot, revision: 2, settings: { enabled: false, communityOnline: false } });
+    assert.equal(split[0].textContent, `${action} 2 years ago`);
+    assert.equal(whole[0].textContent, `${action} 2 years ago`);
+    runtime.apply({ ...snapshot, revision: 3 });
+    assert.equal(split[0].textContent, `${prefix} 2 年前`);
+    assert.equal(whole[0].textContent, `2 年前${suffix}`);
+  }
+});
+
+test("trash title is scoped to its system route while list names and metadata stay separate", async t => {
+  const dictionary = require("../payload/src/dictionary/zh-CN.js");
+  const { w, document, localizer, runtime } = fixture(t, `
+    <h1><span>Trash</span></h1><h2>Trash</h2><h1><button>Trash</button></h1>
+    <div data-testid="folder-name"><h1>Trash</h1></div>
+    <button role="combobox">All types</button><button role="tab">Shared folders</button>
+    <main><table><tbody>${["Untitled", "Trash", "All types", "Shared folders", "Edited 1 year ago"].map(name => `
+      <tr><td><button data-card-main-action aria-label="${name}, Design file"></button></td>
+      <td><div class="generic_tile_title_contents--itemsViewTitle--kn9Ur"><span>${name}</span></div></td>
+      <td><span>1 year ago</span></td></tr>`).join("")}</tbody><thead><tr><th>Trashed</th><th>Previous Location</th></tr></thead></table>
+      <h1>Trash</h1></main>`, {}, {}, "https://www.figma.com/files/team/test/trashed", dictionary);
+  assert.equal(document.querySelector("h1").textContent, "回收站");
+  assert.equal(document.querySelector("h2").textContent, "Trash");
+  assert.equal(document.querySelector("h1 button").textContent, "Trash");
+  assert.equal(document.querySelector("[data-testid]").textContent, "Trash");
+  assert.equal(document.querySelector("main h1").textContent, "Trash");
+  assert.equal(document.querySelector("[role=combobox]").textContent, "所有类型");
+  assert.equal(document.querySelector("[role=tab]").textContent, "共享文件夹");
+  assert.deepEqual([...document.querySelectorAll("td:nth-child(2)")].map(e => e.textContent),
+    ["Untitled", "Trash", "All types", "Shared folders", "Edited 1 year ago"]);
+  assert.ok([...document.querySelectorAll("td:nth-child(3)")].every(e => e.textContent === "1 年前"));
+  assert.equal(document.querySelector("th").textContent, "删除时间");
+  assert.equal(document.querySelectorAll("th")[1].textContent, "原位置");
+  w.history.pushState({}, "", "/files/team/test/folder/123");
+  document.querySelector("h1 span").textContent = "Trash";
+  localizer.enqueue(document.body);
+  await tick();
+  assert.equal(document.querySelector("h1").textContent, "Trash");
+  assert.equal(runtime.drain().requests.length, 0);
+});
+
+test("shared file sender labels translate the prefix without translating captured or split names", async t => {
+  const dictionary = require("../payload/src/dictionary/zh-CN.js");
+  const html = `<main>${["Save", "JIU", "Richard", "过期的荷尔蒙", "Shared folders"].map(name => `
+    <div role="group" aria-label="From ${name}"><h2><i18n-text>From ${name}</i18n-text></h2>
+    <i18n-text data-whole>From ${name}</i18n-text><i18n-text data-split>From <span>${name}</span></i18n-text></div>`).join("")}</main>`;
+  const { document, runtime, localizer } = fixture(t, html, {}, {},
+    "https://www.figma.com/files/team/test/recents-and-sharing/shared-with-you", dictionary);
+  const names = ["Save", "JIU", "Richard", "过期的荷尔蒙", "Shared folders"];
+  for (const selector of ["[data-whole]", "[data-split]"]) {
+    assert.deepEqual([...document.querySelectorAll(selector)].map(e => e.textContent), names.map(name => `来自 ${name}`));
+  }
+  localizer.enqueue(document.body);
+  await tick();
+  assert.deepEqual([...document.querySelectorAll("h2")].map(e => e.textContent), names.map(name => `From ${name}`));
+  assert.deepEqual([...document.querySelectorAll("[data-split] span")].map(e => e.textContent), names);
+  assert.equal(runtime.drain().requests.length, 0);
+  const outside = fixture(t, html, {}, {}, "https://www.figma.com/files/team/test/drafts", dictionary);
+  assert.deepEqual([...outside.document.querySelectorAll("[data-whole]")].map(e => e.textContent), names.map(name => `From ${name}`));
+});
+
+test("resources system heading translates only on its own routes", t => {
+  const dictionary = require("../payload/src/dictionary/zh-CN.js");
+  for (const route of ["resources/internal", "resources/community", "folder/123"]) {
+    const { document } = fixture(t, `<h1>Resources</h1><h1><button>Resources</button></h1>
+      <span data-testid="folder-name"><h1>Resources</h1></span><main><h2>Resources</h2></main>`,
+      {}, {}, `https://www.figma.com/files/team/test/${route}`, dictionary);
+    assert.equal(document.querySelector("h1").textContent, route.startsWith("resources/") ? "资源" : "Resources");
+    assert.equal(document.querySelector("button").textContent, "Resources");
+    assert.equal(document.querySelector("[data-testid]").textContent, "Resources");
+    assert.equal(document.querySelector("h2").textContent, "Resources");
+  }
+});
+
 test("timestamp exception cannot translate arbitrary card prose, headings or non-file routes", t => {
   const dictionary = require("../payload/src/dictionary/zh-CN.js");
   const html = `<main><div role="group" aria-label="Private folder">
     <h2><i18n-text>Updated <span>4 months ago</span></i18n-text></h2>
     <span>Updated 4 months ago</span>
     <i18n-text>Updated private roadmap</i18n-text>
+    <i18n-text>Edited private roadmap</i18n-text>
+    <i18n-text>Trashed by Alice 2 months ago</i18n-text>
+    <i18n-text>Viewed private roadmap</i18n-text>
     <a href="/design/private"><i18n-text>Updated 4 months ago</i18n-text></a>
   </div></main>`;
   for (const url of ["https://www.figma.com/files/team/test/all-folders", "https://www.figma.com/design/test", "https://www.figma.com/files/team/test/community"]) {
@@ -302,6 +415,9 @@ test("timestamp exception cannot translate arbitrary card prose, headings or non
     assert.equal(document.querySelector("h2").textContent, "Updated 4 months ago", url);
     assert.equal(document.querySelector("span:not(h2 span)").textContent, "Updated 4 months ago", url);
     assert.ok(document.body.textContent.includes("Updated private roadmap"), url);
+    assert.ok(document.body.textContent.includes("Edited private roadmap"), url);
+    assert.ok(document.body.textContent.includes("Trashed by Alice 2 months ago"), url);
+    assert.ok(document.body.textContent.includes("Viewed private roadmap"), url);
     assert.equal(document.querySelector("a").textContent, "Updated 4 months ago", url);
     assert.equal(runtime.drain().requests.length, 0, url);
   }

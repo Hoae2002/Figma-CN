@@ -28,6 +28,7 @@
     "[data-testid='ProfileButton']", "[aria-label^='Plan: ']", "[data-card-main-action]",
     "button[aria-description='Folder']", "button[aria-description$=' file']",
     "nav section button[aria-description]", "main [role='group'][aria-label]",
+    "[class*='generic_tile_title_contents--itemsViewTitle--']",
     "[data-testid*='team-name']", "[data-testid*='layer-name']", "[data-testid*='component-name']",
     "[data-testid*='variable-name']", "[data-testid*='font']", "[class*='font_picker']",
     "[data-testid*='variant-value']", "[data-testid*='property-value']", "[data-testid*='variable-value']",
