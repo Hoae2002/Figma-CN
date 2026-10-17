@@ -16,6 +16,9 @@ function loadContent(overrides = {}) {
     getFigBoostBulkExportBridge,
     FIGBOOST_MENU_ITEMS,
     isFigBoostUpdateButtonEnabled,
+    SHOULD_INSTALL_UPDATE_BUTTON,
+    scheduleUpdateButtonInstall,
+    installUpdateButton,
     openFigBoostFeatureMenuFromTitlebar,
     toggleFigBoostMenu,
     getCurrentHref: () => window.location.href
@@ -56,8 +59,24 @@ test("bridge discovery only returns callable renderer bridges", () => {
   assert.equal(hooks.getFigBoostUpdateBridge(), update);
   assert.equal(hooks.getFigBoostFeatureMenuBridge(), null);
   assert.equal(hooks.getFigBoostBulkExportBridge(), null);
-  assert.equal(hooks.isFigBoostUpdateButtonEnabled(), true);
-  assert.deepEqual(Array.from(hooks.FIGBOOST_MENU_ITEMS, item => item.id), ["translation-settings"]);
+  assert.equal(hooks.isFigBoostUpdateButtonEnabled(), false);
+  assert.deepEqual(Array.from(hooks.FIGBOOST_MENU_ITEMS), []);
+});
+
+test("titlebar entry stays disabled with legacy flags and never starts DOM work", () => {
+  const hooks = loadContent({ window: {
+    __FIGBOOST_UPDATE_BUTTON_ENABLED__: true,
+    __FIGBOOST_TITLEBAR_BUTTON_ENABLED__: true,
+    __FIGMA_ZH_TEST_UPDATE_BUTTON__: true,
+    __FIGBOOST_OPEN_FEATURE_MENU__: () => { throw Error("Disabled menu opened"); },
+    __FIGBOOST_CHECK_OFFICIAL_UPDATE__: () => { throw Error("Unexpected update check"); }
+  } });
+  assert.equal(hooks.SHOULD_INSTALL_UPDATE_BUTTON, false);
+  assert.equal(hooks.isFigBoostUpdateButtonEnabled(), false);
+  // This DOM stub has no observer, element creation or event APIs. Any attempted
+  // button installation, listener or timer setup would fail immediately.
+  hooks.scheduleUpdateButtonInstall();
+  hooks.installUpdateButton();
 });
 
 test("tab host selection rejects undersized candidates", () => {

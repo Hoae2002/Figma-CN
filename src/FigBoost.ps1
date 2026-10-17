@@ -24,7 +24,7 @@ if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClo
 
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V7"
 $UpdaterDisableMarker = "FIGMA_ZH_DISABLE_BUILTIN_UPDATER"
-$PatcherVersion = "0.5.35"
+$PatcherVersion = "0.5.36"
 $PayloadFile = "i.js"
 $MainPayloadFile = "m.js"
 $FeatureConfigFile = "features.json"
@@ -1555,14 +1555,14 @@ function Invoke-SelfTest {
     if ($runtimeMainSource.Contains("scheduleOfficial" + "UpdateCheck")) { throw "Self-test runtime still schedules automatic update checks." }
     if ($runtimeMainSource.Contains('"second-instance"')) { throw "Self-test runtime still checks updates on second instance." }
     if (-not $runtimeMainSource.Contains("figboost:check-official-update")) { throw "Self-test runtime does not register manual update IPC." }
-    if (-not $runtimeMainSource.Contains("figboost:open-feature-menu")) { throw "Self-test runtime does not register feature menu IPC." }
+    if (-not $runtimeMainSource.Contains("// registerFigBoostFeatureMenu();")) { throw "Self-test runtime does not suspend feature menu registration." }
     if (-not $featureUpgradeHook.Contains("__FIGMA_ZH_RENDERER_PAYLOAD_PATH__")) { throw "Self-test hook does not pass renderer payload path." }
     $featureUpgradeMainPayload = Build-MainPayload
     if (-not $featureUpgradeMainPayload.Contains("figboost:\/\/check-official-update")) { throw "Self-test main payload does not handle manual update fallback navigation." }
     if (-not $featureUpgradeMainPayload.Contains("figboost:\/\/open-feature-menu")) { throw "Self-test main payload does not handle feature menu fallback navigation." }
     if (-not $featureUpgradeMainPayload.Contains("__FIGBOOST_OPEN_FEATURE_MENU__")) { throw "Self-test main payload does not expose feature menu bridge." }
-    if (-not $featureUpgradeMainPayload.Contains("__FIGBOOST_UPDATE_BUTTON_ENABLED__")) { throw "Self-test main payload does not enable update button injection." }
-    if (-not $featureUpgradeMainPayload.Contains("__FIGBOOST_TITLEBAR_BUTTON_ENABLED__")) { throw "Self-test main payload does not enable titlebar button injection." }
+    if (-not $runtimeContentSource.Contains("const SHOULD_INSTALL_UPDATE_BUTTON = false;")) { throw "Self-test content payload does not suspend the titlebar button." }
+    if (-not $featureUpgradeMainPayload.Contains("if (!isFigmaPage) return;")) { throw "Self-test main payload still injects into native titlebar pages." }
     if (-not $runtimeMainSource.Contains("autoUpdater")) { throw "Self-test runtime does not guard built-in updater." }
     if (-not $runtimeMainSource.Contains("shouldSuppressBuiltInUpdateCheck")) { throw "Self-test runtime does not include downgrade suppression." }
     if (-not $runtimeMainSource.Contains('"-ShowProgress"')) { throw "Self-test runtime update launch does not request progress UI." }

@@ -6,8 +6,8 @@ const { EventEmitter } = require("node:events");
 const test = require("node:test");
 
 // Boot the shipped main script, with no Figma process or external network.
-function boot({ enabled = true, response = 1, offline = false, missing = false, current = "126.10.7" } = {}) {
-  const calls = { requests: [], spawns: [], dialogs: [], timers: [], settings: 0, windows: [] };
+function boot({ enabled = true, response = 1, offline = false, missing = false, current = "126.10.7", contents = [] } = {}) {
+  const calls = { requests: [], spawns: [], dialogs: [], timers: [], settings: 0, windows: [], attached: [] };
   const handlers = new Map();
   const config = { enabledFeatures: ["auto-check-official-latest", "bulk-export-figma-files"], patcherPath: "E:/FigBoost/FigBoost.exe", runtimeDir: "C:/FZ" };
   class Menu {
@@ -35,7 +35,8 @@ function boot({ enabled = true, response = 1, offline = false, missing = false, 
       if (!labels.has(item)) labels.set(item, item.label);
       return enabled ? translate(labels.get(item)) : labels.get(item);
     },
-    openSettings() { calls.settings++; }
+    openSettings() { calls.settings++; },
+    attach(contents) { calls.attached.push(contents); return Promise.resolve(true); }
   };
   const electron = {
     app: { on() {}, getVersion: () => current, whenReady: () => Promise.resolve() },
@@ -43,7 +44,7 @@ function boot({ enabled = true, response = 1, offline = false, missing = false, 
     Menu, BrowserWindow, clipboard: {},
     dialog: { async showMessageBox(options) { calls.dialogs.push(options); return { response }; } },
     ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
-    webContents: { getAllWebContents: () => [] }
+    webContents: { getAllWebContents: () => contents }
   };
   const https = { get(url, options, callback) {
     calls.requests.push(url);
@@ -141,10 +142,34 @@ test("legacy feature flags cannot register exports or start background discovery
   assert.equal(state.global.__FIGMA_ZH_AUTO_UPDATER_GUARD__, undefined);
   assert.equal(state.calls.requests.length, 0);
   assert.equal(state.calls.windows.length, 0);
-  // The retained titlebar popup exposes translation settings only.
-  let popup;
-  state.electron.Menu.prototype.popup = function () { popup = this; };
-  await state.handlers.get("figboost:open-feature-menu")({ sender: null });
-  assert.deepEqual(Array.from(popup.items, item => item.label), ["汉化设置…"]);
-  popup.items[0].click(); assert.equal(state.calls.settings, 1);
+  assert.equal(state.handlers.has("figboost:open-feature-menu"), false);
+  assert.equal(state.global.__FIGBOOST_OPEN_FEATURE_MENU__, undefined);
+  assert.equal(state.calls.settings, 0);
+});
+
+test("native titlebar gets no renderer payload and stale settings routes cannot open a window", async () => {
+  function makeContents(url) {
+    const contents = new EventEmitter();
+    contents.scripts = [];
+    contents.getURL = () => url;
+    contents.executeJavaScript = code => { contents.scripts.push(code); return Promise.resolve(); };
+    contents.setWindowOpenHandler = handler => { contents.openWindow = handler; };
+    return contents;
+  }
+  const titlebar = makeContents("file:///Figma/titlebar.html");
+  const page = makeContents("https://www.figma.com/design/test");
+  const state = boot({ contents: [titlebar, page] });
+  for (const timer of [...state.calls.timers]) timer.fn();
+  await Promise.resolve();
+  assert.equal(titlebar.scripts.length, 0);
+  assert.ok(state.calls.attached.includes(page), "Figma content must still receive localization");
+  for (const url of ["figboost://translation-settings", "figboost://open-feature-menu"]) {
+    let prevented = false;
+    titlebar.emit("will-navigate", { preventDefault() { prevented = true; } }, url);
+    assert.equal(prevented, true);
+    assert.equal(titlebar.openWindow({ url }).action, "deny");
+  }
+  assert.equal(state.calls.settings, 0);
+  assert.equal(state.calls.windows.length, 0);
+  assert.equal(state.calls.requests.length, 0);
 });

@@ -3174,7 +3174,8 @@
 
   function buildFigBoostFeatureMenuTemplate() {
     const template = [
-      { label: "汉化设置…", click: () => translationHost && translationHost.openSettings() },
+      // Suspended: retain the settings entry for future restoration.
+      // { label: "汉化设置…", click: () => translationHost && translationHost.openSettings() },
       /* Suspended: update checks now use Figma's native checkForUpdates entry.
       {
         label: "检查更新",
@@ -3394,13 +3395,15 @@
     try {
       if (url === "figboost://translation-settings") {
         if (event && event.preventDefault) event.preventDefault();
-        if (translationHost) translationHost.openSettings();
+        // Suspended: consume stale navigation without opening settings.
+        // if (translationHost) translationHost.openSettings();
         return true;
       }
       if (/^figboost:\/\/open-feature-menu/i.test(url || "")) {
         if (event && event.preventDefault) event.preventDefault();
-        const openMenu = global.__FIGBOOST_OPEN_FEATURE_MENU__;
-        if (typeof openMenu === "function") openMenu(contents, parseFigBoostMenuBoundsFromUrl(url));
+        // Suspended: consume stale navigation without opening a feature menu.
+        // const openMenu = global.__FIGBOOST_OPEN_FEATURE_MENU__;
+        // if (typeof openMenu === "function") openMenu(contents, parseFigBoostMenuBoundsFromUrl(url));
         return true;
       }
       if (/^figboost:\/\/bulk-export-files/i.test(url || "")) {
@@ -3447,14 +3450,15 @@
         const url = contents.getURL();
         let isFigmaPage = false;
         try { const parsed = new URL(url); isFigmaPage = parsed.protocol === "https:" && /(^|\.)figma\.com$/.test(parsed.hostname); } catch (_) {}
-        if (!isFigmaPage && !/^file:\/\//i.test(url)) return;
-        const bridge = buildFigBoostRendererBridgeScript(!isFigmaPage);
+        // Only content pages need localization; leave the native titlebar alone.
+        if (!isFigmaPage) return;
+        // const bridge = buildFigBoostRendererBridgeScript(!isFigmaPage);
         const payload = getRendererPayload();
         if (isFigmaPage && translationHost) {
           // The host retries initialization in the isolated world. A main-world
           // fallback cannot receive settings/results and only hides the failure.
           translationHost.attach(contents, payload).catch(() => {});
-        } else contents.executeJavaScript(bridge + payload, true).catch(() => {});
+        } else contents.executeJavaScript(payload, true).catch(() => {});
       } catch (_) {}
     };
     setTimeout(run, 0);
@@ -3492,7 +3496,8 @@
     registerManualOfficialUpdateCheck();
     // Suspended: no IPC/global export entry, discovery or export jobs.
     // registerBulkFigmaFileExport();
-    registerFigBoostFeatureMenu();
+    // Suspended: no titlebar feature-menu IPC or global bridge.
+    // registerFigBoostFeatureMenu();
     registerRendererInjection();
     app.whenReady().then(scheduleLocalize).catch(() => {});
     app.on("browser-window-created", scheduleLocalize);

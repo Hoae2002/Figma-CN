@@ -99,8 +99,8 @@ if ($content -notmatch "right:250px;top:0;border-left:solid 1px var\(--color-bor
 if ($content -match "data-overlapped='true'\]\{visibility:hidden;pointer-events:none;\}" -or $content -match "startTitlebarButtonVisibilityMonitor\(wrap\);") {
   throw "Update button titlebar placement must remain clickable on Windows 10 instead of auto-hiding behind native controls."
 }
-if ($content -notmatch "SHOULD_INSTALL_UPDATE_BUTTON = IS_TEST_PAGE \|\| \(IS_TITLEBAR_PAGE && !IS_FIGMA_PAGE\)") {
-  throw "Update button must not install inside figma.com content pages."
+if ($content -notmatch "const SHOULD_INSTALL_UPDATE_BUTTON = false;" -or $content -match '(?m)^\s*if \(SHOULD_INSTALL_UPDATE_BUTTON\) scheduleUpdateButtonInstall\(\);') {
+  throw "Suspended titlebar entry must not schedule DOM observers or button installation."
 }
 if ($content -notmatch "width:50px;height:38px") {
   throw "Update button visual hit area must match the native titlebar caption button."
@@ -174,7 +174,10 @@ if ($content -notmatch "svg\{width:14px;height:14px" -or $content -notmatch 'str
 
 $main = Get-Content -LiteralPath (Join-Path $root "payload\src\main\menu-localizer.js") -Raw
 if ($main -notmatch 'ipcMain\.handle\("figboost:open-feature-menu"' -or $main -notmatch "Menu\.buildFromTemplate\(buildFigBoostFeatureMenuTemplate\(\)\)" -or $main -notmatch 'item.id !== "checkForUpdates"' -or $main -notmatch 'item.click = checkOfficialUpdateManually') {
-  throw "Main process must preserve translation settings and route the native update command through FigBoost."
+  throw "Retain the suspended feature-menu implementation and route the native update command through FigBoost."
+}
+if ($main -match '(?m)^\s*registerFigBoostFeatureMenu\(\);' -or $main -notmatch 'if \(!isFigmaPage\) return;') {
+  throw "Suspended titlebar entry must not register its menu or inject renderer scripts into native titlebar pages."
 }
 if ($figBoost -notmatch 'Id = "bulk-export-figma-files"' -or $figBoost -notmatch 'Install-Feature "bulk-export-figma-files"' -or $figBoost -notmatch 'Uninstall-Feature "bulk-export-figma-files"') {
   throw "Suspended feature manager code must remain available for future restoration."

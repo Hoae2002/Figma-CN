@@ -4,7 +4,9 @@
   const IS_TEST_PAGE = Boolean(window.__FIGMA_ZH_TEST__);
   const IS_FIGMA_PAGE = /(^|\.)figma\.com$/.test(location.hostname);
   const IS_TITLEBAR_PAGE = Boolean(window.__FIGBOOST_TITLEBAR_BUTTON_ENABLED__);
-  const SHOULD_INSTALL_UPDATE_BUTTON = IS_TEST_PAGE || (IS_TITLEBAR_PAGE && !IS_FIGMA_PAGE);
+  // Suspended: no extra FigBoost titlebar entry, including on older preloads.
+  const SHOULD_INSTALL_UPDATE_BUTTON = false;
+  // const SHOULD_INSTALL_UPDATE_BUTTON = IS_TEST_PAGE || (IS_TITLEBAR_PAGE && !IS_FIGMA_PAGE);
   if (!IS_TEST_PAGE && !IS_FIGMA_PAGE && !IS_TITLEBAR_PAGE) return;
 
   const DEFAULT_SETTINGS = {
@@ -66,11 +68,13 @@
   }
 
   function isFigBoostUpdateButtonEnabled() {
-    return Boolean(window.__FIGBOOST_UPDATE_BUTTON_ENABLED__ || getFigBoostUpdateBridge() || window.__FIGMA_ZH_TEST_UPDATE_BUTTON__);
+    return false;
+    // return Boolean(window.__FIGBOOST_UPDATE_BUTTON_ENABLED__ || getFigBoostUpdateBridge() || window.__FIGMA_ZH_TEST_UPDATE_BUTTON__);
   }
 
   const FIGBOOST_MENU_ITEMS = [
-    { id: "translation-settings", label: "汉化设置…", title: "管理词库汉化与社区补译", run: () => { window.location.href = "figboost://translation-settings"; } },
+    // Suspended: retain the settings entry for future restoration.
+    // { id: "translation-settings", label: "汉化设置…", title: "管理词库汉化与社区补译", run: () => { window.location.href = "figboost://translation-settings"; } },
     /* Suspended: updates use the native menu; board discovery/export is disabled.
     {
       id: "check-official-update",
@@ -391,7 +395,8 @@
   }
 
   scheduleAntiFlashStyleInstall();
-  if (SHOULD_INSTALL_UPDATE_BUTTON) scheduleUpdateButtonInstall();
+  // Suspended: do not create the button or its observer/timers.
+  // if (SHOULD_INSTALL_UPDATE_BUTTON) scheduleUpdateButtonInstall();
   if (IS_TITLEBAR_PAGE && !IS_FIGMA_PAGE && !IS_TEST_PAGE) return;
 
   const extensionApi = typeof chrome === "undefined" ? null : chrome;
