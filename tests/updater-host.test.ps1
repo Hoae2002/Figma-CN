@@ -39,6 +39,9 @@ try {
     'passed'
   } @('__TEMP__'))[-1]
   if ($result -cne 'passed') { throw 'Background updater returned no result.' }
+  $UpdatePreview = $true
+  $preview = @(Invoke-UpdateWorker { Get-LatestFigBoostUpdate })[-1]
+  if ($preview.client.version -ne '999.0.0' -or $preview.payload.version -ne '999.0.0') { throw 'Compiled preview worker did not return the simulated release.' }
   [IO.File]::WriteAllText('__REPORT__', 'passed')
 } catch { [IO.File]::WriteAllText('__REPORT__', $_.ToString()); exit 1 }
 '@

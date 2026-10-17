@@ -55,7 +55,7 @@ if ($LASTEXITCODE -ne 0) { throw "FigBoost compiled update worker tests failed."
 if ($LASTEXITCODE -ne 0) { throw "FigBoost compiled bundled update tests failed." }
 & powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File (Join-Path $root "tests\button.test.ps1")
 if ($LASTEXITCODE -ne 0) { throw "FigBoost button interaction tests failed." }
-foreach ($mode in @(@(), @('-Windows10'), @('-MissingClient'))) {
+foreach ($mode in @(@(), @('-Windows10'), @('-MissingClient'), @('-UpdatePreview'))) {
   & powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File (Join-Path $root "tests\updater-gui.test.ps1") @mode
   if ($LASTEXITCODE -ne 0) { throw "FigBoost update GUI tests failed." }
 }

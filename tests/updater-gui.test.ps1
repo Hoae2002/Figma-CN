@@ -1,5 +1,5 @@
 ﻿# Exercise the real WinForms entry and states using a fake Figma installation and update service.
-param([switch]$Windows10, [switch]$MissingClient)
+param([switch]$Windows10, [switch]$MissingClient, [switch]$UpdatePreview)
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 $tokens = $null; $errors = $null
@@ -41,6 +41,7 @@ function Invoke-PatcherSelfUpdate {
 }
 function Invoke-UpdateWorker {
   param([scriptblock]$Action, [object[]]$Arguments)
+  if ($UpdatePreview) { return (& $Action @Arguments) }
   $activeDialog = [Windows.Forms.Application]::OpenForms | Where-Object { $_.Text -eq 'FigBoost 更新' } | Select-Object -First 1
   if (-not $activeDialog) {
     $script:autoCheckCount++
@@ -121,8 +122,33 @@ $timer.Add_Tick({
   try {
     if (([DateTime]::UtcNow - $script:started).TotalSeconds -gt 15) { throw 'GUI regression timed out.' }
     $windows = @([Windows.Forms.Application]::OpenForms)
-    $main = $windows | Where-Object { $_.Text -eq "FigBoost v$PatcherVersion" } | Select-Object -First 1
+    $mainTitle = "FigBoost v$PatcherVersion" + $(if ($UpdatePreview) { ' · 更新样式验证版' } else { '' })
+    $main = $windows | Where-Object { $_.Text -eq $mainTitle } | Select-Object -First 1
     $dialog = $windows | Where-Object { $_.Text -eq 'FigBoost 更新' } | Select-Object -First 1
+    if ($UpdatePreview) {
+      if ($script:phase -eq 0 -and $main -and $main.Controls.Find('UpdateIndicator', $true)[0].Visible) {
+        Assert-HomeLayout $main
+        $script:phase = 1
+        $main.Controls.Find('UpdateIndicator', $true)[0].PerformClick()
+      } elseif ($script:phase -eq 1 -and $dialog -and (Get-ChildControl $dialog '立即更新').Enabled) {
+        Assert-Gui ($null -ne (Get-ChildControl $dialog '发现新版本')) 'Preview must always offer an update.'
+        Assert-HomeLayout $dialog
+        $script:phase = 10
+        (Get-ChildControl $dialog '立即更新').PerformClick()
+        Assert-Gui ($null -ne (Get-ChildControl $dialog '更新完成（样式验证，可再次更新）')) 'Preview completion missing.'
+        (Get-ChildControl $dialog '立即更新').PerformClick()
+        Assert-Gui ((Get-ChildControl $dialog '立即更新').Enabled) 'Preview cannot be repeated.'
+        (Get-ChildControl $dialog '重新检查').PerformClick()
+        Assert-Gui ($null -ne (Get-ChildControl $dialog '发现新版本')) 'Preview update was consumed.'
+        Assert-Gui ($script:downloadCount -eq 0 -and $script:handoffCount -eq 0) 'Preview invoked the real updater.'
+        Assert-Gui ($null -eq $script:uiError) 'Preview reported an error.'
+        $script:phase = 6
+        (Get-ChildControl $dialog '关闭').PerformClick()
+        $main.Close()
+        $timer.Stop()
+      }
+      return
+    }
     if ($script:phase -eq 0 -and $main -and $script:autoCheckCount -gt 0) {
       $entry = Get-ChildControl $main '检查更新'
       Assert-Gui ($null -ne $entry) 'Update entry missing.'

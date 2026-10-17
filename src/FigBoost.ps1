@@ -28,6 +28,7 @@ if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClo
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V7"
 $UpdaterDisableMarker = "FIGMA_ZH_DISABLE_BUILTIN_UPDATER"
 $PatcherVersion = "0.5.45"
+$UpdatePreview = $false # Enabled only in the separate style-preview build.
 $PayloadFile = "i.js"
 $MainPayloadFile = "m.js"
 $FeatureConfigFile = "features.json"
@@ -48,6 +49,12 @@ function Assert-UpdateVersion {
 }
 
 function Get-LatestFigBoostUpdate {
+  if ($UpdatePreview) {
+    return [pscustomobject]@{
+      client = [pscustomobject]@{ version = '999.0.0' }
+      payload = [pscustomobject]@{ version = '999.0.0'; minPatcherVersion = $PatcherVersion }
+    }
+  }
   $headers = @{ "User-Agent" = "FigBoost/$PatcherVersion"; "Accept" = "application/vnd.github+json" }
   $commit = Invoke-RestMethod -Uri $UpdateCommitApi -Headers $headers -UseBasicParsing -TimeoutSec 20
   if ([string]$commit.sha -notmatch '^[a-f0-9]{40}$') { throw "无法读取更新发布版本。" }
@@ -183,6 +190,7 @@ function Invoke-UpdateWorker {
   $worker = [PowerShell]::Create()
   try {
     $setup = '$ErrorActionPreference = "Stop"; [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12;'
+    $setup += "`$UpdatePreview = `$$([bool]$UpdatePreview);`n"
     foreach ($name in @('Assert-UpdateVersion', 'Get-LatestFigBoostUpdate', 'Get-Sha256Hex', 'Save-VerifiedUpdateDownload')) { $setup += (Get-Command $name).Definition.Insert(0, "function $name {") + "}`n" }
     foreach ($name in @('PatcherVersion', 'UpdateRepository', 'UpdateCommitApi')) { $setup += "`$$name = '" + (Get-Variable $name -ValueOnly).Replace("'", "''") + "';`n" }
     [void]$worker.AddScript($setup + "function Invoke-Work {" + $Action.ToString() + "}`nInvoke-Work @args")
@@ -1698,6 +1706,7 @@ function Show-Gui {
   $isWindows11OrNewer = Test-IsWindows11OrNewer
   $form = New-Object System.Windows.Forms.Form
   $form.Text = "FigBoost v$PatcherVersion"
+  if ($UpdatePreview) { $form.Text += ' · 更新样式验证版' }
   $form.StartPosition = "CenterScreen"
   $form.ClientSize = New-Object System.Drawing.Size(856, 576)
   if ($isWindows11OrNewer) { $form.ClientSize = New-Object System.Drawing.Size(936, 576) }
@@ -1998,6 +2007,12 @@ function Show-Gui {
       try {
         $message.Text = '正在下载并校验更新包…'
         $dialog.Refresh()
+        if ($UpdatePreview) {
+          $previewClock = [Diagnostics.Stopwatch]::StartNew()
+          while ($previewClock.ElapsedMilliseconds -lt 900) { [Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 30 }
+          $message.Text = '更新完成（样式验证，可再次更新）'
+          return
+        }
         Invoke-UpdateWorker { param($release, $path) Save-VerifiedUpdateDownload $release $path } @($state.Info.client, $download)
         Invoke-PatcherSelfUpdate $state.Info.client $download $txtRuntime.Text $txtApp.Text $state.Info.payload.version
         $download = '' # The replacement helper now owns the verified package.

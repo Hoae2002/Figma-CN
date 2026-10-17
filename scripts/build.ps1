@@ -1,12 +1,17 @@
 ﻿param(
   [string]$OutputPath = "$PSScriptRoot\..\FigBoost.exe",
-  [string]$Version = "0.5.45"
+  [string]$Version = "0.5.45",
+  [switch]$UpdatePreview
 )
 
 $ErrorActionPreference = "Stop"
 $root = Resolve-Path (Join-Path $PSScriptRoot "..")
+if ($UpdatePreview -and -not $PSBoundParameters.ContainsKey('OutputPath')) {
+  $OutputPath = Join-Path $root 'dist\FigBoost-更新样式验证.exe'
+}
 $source = Join-Path $root "src\FigBoost.ps1"
 $output = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputPath)
+if ($UpdatePreview -and $output -eq (Join-Path $root 'FigBoost.exe')) { throw '样式验证版不能覆盖正式 FigBoost.exe。' }
 $generatedSource = Join-Path ([System.IO.Path]::GetTempPath()) ("FigBoost.embedded." + [Guid]::NewGuid().ToString("N") + ".ps1")
 $iconFile = Join-Path $root "assets\figboost.ico"
 
@@ -38,6 +43,7 @@ foreach ($relativePath in $payloadFiles) {
 $embeddedLines += '}'
 
 $sourceText = [System.IO.File]::ReadAllText($source, [System.Text.Encoding]::UTF8)
+if ($UpdatePreview) { $sourceText = $sourceText.Replace('$UpdatePreview = $false', '$UpdatePreview = $true') }
 $sourceText = $sourceText.Replace('$EmbeddedPayloadFiles = @{}', ($embeddedLines -join "`r`n"))
 $buttonSource = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $root 'src\ActionButton.cs')))
 $sourceText = $sourceText.Replace('$EmbeddedButtonSource = ""', ('$EmbeddedButtonSource = "' + $buttonSource + '"'))
@@ -62,6 +68,10 @@ try {
 }
 
 Write-Host "Built $output v$Version"
+if ($UpdatePreview) {
+  Write-Host 'Style preview only: update availability and completion are simulated; release metadata is unchanged.'
+  return
+}
 
 # Publish the exact build and payload together; the updater pins downloads to one Git commit.
 $updateDir = Join-Path $root "updates"
