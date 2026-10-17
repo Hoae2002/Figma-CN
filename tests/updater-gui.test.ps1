@@ -1,5 +1,5 @@
 ﻿# Exercise the real WinForms entry and states using a fake Figma installation and update service.
-param([switch]$Windows10, [switch]$MissingClient, [switch]$UpdatePreview)
+param([switch]$Windows10, [switch]$MissingClient)
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 $tokens = $null; $errors = $null
@@ -41,7 +41,6 @@ function Invoke-PatcherSelfUpdate {
 }
 function Invoke-UpdateWorker {
   param([scriptblock]$Action, [object[]]$Arguments)
-  if ($UpdatePreview) { return (& $Action @Arguments) }
   $activeDialog = [Windows.Forms.Application]::OpenForms | Where-Object { $_.Text -eq 'FigBoost 更新' } | Select-Object -First 1
   if (-not $activeDialog) {
     $script:autoCheckCount++
@@ -111,6 +110,7 @@ $script:uiError = $null
 function Show-InfoMessage { param([string]$Text, [string]$Title) }
 function Show-ErrorMessage { param([string]$Text) $script:uiError = $Text }
 # Never write real shortcuts when exercising the main-window install/migration actions.
+function Start-Process { param([string]$FilePath) $script:openedUrl = $FilePath }
 function Repair-FigmaShortcuts { param([string]$AppDir, [string[]]$ShortcutRoots) }
 $timer = New-Object Windows.Forms.Timer
 $timer.Interval = 100
@@ -121,53 +121,37 @@ $timer.Add_Tick({
   try {
     if (([DateTime]::UtcNow - $script:started).TotalSeconds -gt 15) { throw 'GUI regression timed out.' }
     $windows = @([Windows.Forms.Application]::OpenForms)
-    $mainTitle = "FigBoost v$PatcherVersion" + $(if ($UpdatePreview) { ' · 更新样式验证版' } else { '' })
+    $mainTitle = "FigBoost v$PatcherVersion"
     $main = $windows | Where-Object { $_.Text -eq $mainTitle } | Select-Object -First 1
     $dialog = $windows | Where-Object { $_.Text -eq 'FigBoost 更新' } | Select-Object -First 1
     if ($script:reopenUpdate -and $main -and -not $dialog) {
       $script:reopenUpdate = $false
-      $arrow = $main.Controls.Find('UpdateIndicator', $true)[0]
-      if ($arrow.Visible) { $arrow.PerformClick() } else { (Get-ChildControl $main '检查更新').PerformClick() }
+      $script:restartMain = $true
+      $script:openNext = $true
+      $main.Close()
+      return
+    }
+    if ($script:openNext -and $main -and -not $dialog) {
+      $script:openNext = $false
+      $main.Controls.Find('UpdateIndicator', $true)[0].PerformClick()
       return
     }
     if ($dialog) {
       Assert-Gui (@($dialog.Controls | Where-Object { $_ -is [Windows.Forms.Button] }).Count -eq 1) 'Update dialog must contain only one action button.'
       Assert-Gui ($null -eq (Get-ChildControl $dialog '重新检查') -and $null -eq (Get-ChildControl $dialog '关闭')) 'Removed dialog actions remain.'
     }
-    if ($UpdatePreview) {
-      if ($script:phase -eq 0 -and $main -and $main.Controls.Find('UpdateIndicator', $true)[0].Visible) {
-        Assert-Gui (-not (Get-ChildControl $main '检查更新').Visible) 'Preview must hide check button when update is available.'
-        Assert-HomeLayout $main
-        $script:phase = 1
-        $main.Controls.Find('UpdateIndicator', $true)[0].PerformClick()
-      } elseif ($script:phase -eq 1 -and $dialog -and (Get-ChildControl $dialog '立即更新').Enabled) {
-        Assert-Gui ($null -ne (Get-ChildControl $dialog '发现新版本')) 'Preview must always offer an update.'
-        Assert-HomeLayout $dialog
-        $script:phase = 10
-        (Get-ChildControl $dialog '立即更新').PerformClick()
-        Assert-Gui ($null -ne (Get-ChildControl $dialog '更新完成（样式验证，可再次更新）')) 'Preview completion missing.'
-        (Get-ChildControl $dialog '立即更新').PerformClick()
-        Assert-Gui ((Get-ChildControl $dialog '立即更新').Enabled) 'Preview cannot be repeated.'
-        Assert-Gui ($script:downloadCount -eq 0 -and $script:handoffCount -eq 0) 'Preview invoked the real updater.'
-        Assert-Gui ($null -eq $script:uiError) 'Preview reported an error.'
-        $script:phase = 6
-        $dialog.Close()
-        $main.Close()
-        $timer.Stop()
-      }
-      return
-    }
     if ($script:phase -eq 0 -and $main -and $script:autoCheckCount -gt 0) {
       $entry = Get-ChildControl $main '检查更新'
-      Assert-Gui ($null -ne $entry) 'Update entry missing.'
+      Assert-Gui ($null -eq $entry) 'Manual update button remains.'
       Assert-Gui ($script:autoCheckCount -eq 1) 'Startup must check once.'
       $indicator = $main.Controls.Find('UpdateIndicator', $true)[0]
       Assert-Gui ($indicator.Visible -eq (-not $Windows10)) 'Startup indicator does not match the automatic check.'
-      Assert-Gui ($entry.Visible -eq $Windows10) 'Check button and update arrow must be mutually exclusive.'
-      Assert-Gui ($entry.Width -eq 84 -and $entry.Height -eq 28) 'Check button must remain compact.'
-      Assert-Gui ($indicator.Right -eq $entry.Right) 'Update arrow must occupy the same right-aligned action position.'
       Assert-Gui ($indicator.AccessibleName -eq '发现新版本，更新 FigBoost 与词库' -and $indicator.TabStop) 'Update indicator must have a keyboard-accessible name.'
-      Assert-Gui ($entry.Right -le $main.ClientSize.Width) 'Update entry extends outside main window.'
+      $github = $main.Controls.Find('ProjectGitHub', $true)[0]
+      Assert-Gui ($github.Visible -and $github.TabStop -and $github.AccessibleName -eq 'GitHub 项目地址') 'GitHub entry missing or inaccessible.'
+      Assert-Gui ($indicator.Width -eq 44 -and $indicator.Height -eq 44 -and $indicator.Right -lt $github.Left) 'Upgrade target is too small or overlaps GitHub.'
+      $github.PerformClick()
+      Assert-Gui ($script:openedUrl -eq 'https://github.com/Hoae2002/Figma-CN') 'GitHub link opens the wrong repository.'
       $script:phase = 10 # Prevent timer re-entry while actions process WinForms events.
       Assert-Gui (@($main.Controls | Where-Object { $_.Text -eq '选择目录' }).Count -eq 2) 'Directory buttons should not include an ellipsis.'
       Assert-HomeLayout $main
@@ -220,12 +204,17 @@ $timer.Add_Tick({
       Assert-Gui ($null -ne (Get-ChildControl $main ("已安装词库：v" + (Get-PayloadVersion)))) 'Installed dictionary version missing.'
       Assert-Gui ($null -eq $script:uiError) ("Home action failed: " + $script:uiError)
       Assert-HomeLayout $main
+      if ($Windows10) {
+        $script:phase = 6
+        $main.Close()
+        $timer.Stop()
+        return
+      }
       $script:phase = 1
-      if ($indicator.Visible) { $indicator.PerformClick() } else { $entry.PerformClick() }
+      $indicator.PerformClick()
     } elseif ($script:phase -eq 1 -and $dialog -and $script:requestCount -eq 1) {
       Assert-Gui (-not (Get-ChildControl $dialog '立即更新').Visible) 'Current version must hide the update action.'
       Assert-Gui (-not $main.Controls.Find('UpdateIndicator', $true)[0].Visible) 'Current version must hide the indicator.'
-      Assert-Gui (Get-ChildControl $main '检查更新').Visible 'Current version must restore the check button.'
       Assert-Gui ($null -eq (Get-ChildControl $dialog '更新软件') -and $null -eq (Get-ChildControl $dialog '更新词库')) 'Separate update actions remain.'
       Assert-Gui ($null -ne (Get-ChildControl $dialog '已是最新版本')) 'Current-version feedback missing.'
       Assert-Gui ($dialog.Controls.Find('ClientUpdateVersion', $true)[0].Text -eq "FigBoost：v$PatcherVersion") 'Current software version incorrect.'
@@ -244,7 +233,6 @@ $timer.Add_Tick({
     } elseif ($script:phase -eq 3 -and $dialog -and $script:requestCount -eq 3) {
       Assert-Gui ((Get-ChildControl $dialog '立即更新').Enabled) 'Unified update is unavailable.'
       Assert-Gui $main.Controls.Find('UpdateIndicator', $true)[0].Visible 'Available release must show green indicator.'
-      Assert-Gui (-not (Get-ChildControl $main '检查更新').Visible) 'Available release must hide check button.'
       Assert-Gui ($dialog.Controls.Find('ClientUpdateVersion', $true)[0].Text -eq "FigBoost：v$PatcherVersion → v999.0.0") 'Software upgrade path missing.'
       Assert-Gui ($dialog.Controls.Find('PayloadUpdateVersion', $true)[0].Text -eq ("内置词库：v" + (Get-PayloadVersion) + " → v999.0.0")) 'Dictionary upgrade path missing.'
       Assert-Gui ($null -ne (Get-ChildControl $dialog '软件与汉化词库一起更新')) 'Combined update explanation missing.'
@@ -262,7 +250,6 @@ $timer.Add_Tick({
     } elseif ($script:phase -eq 4 -and $dialog -and $script:requestCount -eq 4) {
       Assert-Gui (-not (Get-ChildControl $dialog '立即更新').Enabled) 'Inconsistent release was enabled.'
       Assert-Gui (-not $main.Controls.Find('UpdateIndicator', $true)[0].Visible) 'Invalid release left a stale indicator.'
-      Assert-Gui (Get-ChildControl $main '检查更新').Visible 'Failed check must restore manual checking.'
       Assert-HomeLayout $dialog
       $script:phase = 5
       Remove-Item -LiteralPath (Join-Path $RuntimeDir 'i.js') -Force
@@ -290,7 +277,7 @@ try {
     function Get-PreferredAppDir { return "" }
   }
   $timer.Start()
-  Show-Gui
+  do { $script:restartMain = $false; Show-Gui } while ($script:restartMain -and -not $script:failure)
   if ($script:failure) { throw $script:failure }
   Assert-Gui ($script:phase -eq 6) 'GUI checks did not complete.'
   Write-Host 'GUI tests passed: home layout, path/save/migration, local detection, install/uninstall, missing-client and update states.'

@@ -189,7 +189,7 @@ namespace FigBoost.UI
             e.Graphics.Clear(Parent == null ? SystemColors.Control : Parent.BackColor);
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
             float diameter = Math.Min(Width, Height);
-            float size = diameter * 0.56f * (float)(1 + HoverAmount * 0.08 - PressAmount * 0.12);
+            float size = diameter * 0.66f * (float)(1 + HoverAmount * 0.08 - PressAmount * 0.12);
             float x = (Width - size) / 2, y = (Height - size) / 2;
             Color green = SystemInformation.HighContrast ? SystemColors.Highlight : Color.FromArgb(35, 215, 53);
             if (!Enabled) green = SystemColors.GrayText;
@@ -208,6 +208,53 @@ namespace FigBoost.UI
                     new PointF(x + size / 2, y + size * 0.28f), new PointF(x + size * 0.69f, y + size * 0.47f) });
             }
             if (Focused && ShowFocusCues) ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(ClientRectangle, -2, -2), Color.White, BackColor);
+        }
+    }
+
+    public class GitHubButton : ActionButton
+    {
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Color background = Parent == null ? SystemColors.Control : Parent.BackColor;
+            e.Graphics.Clear(background);
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            float size = Math.Min(Width, Height) * 0.55f * (float)(1 + HoverAmount * 0.08 - PressAmount * 0.12);
+            var state = e.Graphics.Save();
+            e.Graphics.TranslateTransform((Width - size) / 2, (Height - size) / 2);
+            e.Graphics.ScaleTransform(size / 24f, size / 24f);
+            // GitHub's circular cat mark, drawn as vectors for crisp DPI scaling.
+            using (var path = new GraphicsPath())
+            using (var fill = new SolidBrush(!Enabled ? SystemColors.GrayText : SystemInformation.HighContrast ? SystemColors.WindowText : Color.White))
+            {
+                path.AddBezier(12, 0, 5.37f, 0, 0, 5.37f, 0, 12);
+                path.AddBezier(0, 12, 0, 17.3f, 3.44f, 21.8f, 8.2f, 23.39f);
+                path.AddBezier(8.2f, 23.39f, 8.8f, 23.5f, 9.02f, 23.13f, 9.02f, 22.81f);
+                path.AddLine(9.02f, 22.81f, 9.02f, 20.58f);
+                path.AddBezier(9.02f, 20.58f, 5.68f, 21.31f, 4.98f, 19.16f, 4.98f, 19.16f);
+                path.AddBezier(4.98f, 19.16f, 4.44f, 17.77f, 3.65f, 17.4f, 3.65f, 17.4f);
+                path.AddBezier(3.65f, 17.4f, 2.56f, 16.65f, 3.73f, 16.67f, 3.73f, 16.67f);
+                path.AddBezier(3.73f, 16.67f, 4.94f, 16.75f, 5.57f, 17.91f, 5.57f, 17.91f);
+                path.AddBezier(5.57f, 17.91f, 6.64f, 19.75f, 8.38f, 19.22f, 9.06f, 18.91f);
+                path.AddBezier(9.06f, 18.91f, 9.17f, 18.13f, 9.48f, 17.59f, 9.82f, 17.29f);
+                path.AddBezier(9.82f, 17.29f, 7.15f, 16.99f, 4.34f, 15.95f, 4.34f, 11.35f);
+                path.AddBezier(4.34f, 11.35f, 4.34f, 10.04f, 4.81f, 8.97f, 5.57f, 8.13f);
+                path.AddBezier(5.57f, 8.13f, 5.45f, 7.82f, 5.03f, 6.6f, 5.69f, 4.95f);
+                path.AddBezier(5.69f, 4.95f, 5.69f, 4.95f, 6.7f, 4.63f, 8.99f, 6.18f);
+                path.AddBezier(8.99f, 6.18f, 10.9f, 5.65f, 13.1f, 5.65f, 15.01f, 6.18f);
+                path.AddBezier(15.01f, 6.18f, 17.3f, 4.63f, 18.31f, 4.95f, 18.31f, 4.95f);
+                path.AddBezier(18.31f, 4.95f, 18.97f, 6.6f, 18.55f, 7.82f, 18.43f, 8.13f);
+                path.AddBezier(18.43f, 8.13f, 19.19f, 8.97f, 19.66f, 10.04f, 19.66f, 11.35f);
+                path.AddBezier(19.66f, 11.35f, 19.66f, 15.96f, 16.85f, 16.99f, 14.17f, 17.29f);
+                path.AddBezier(14.17f, 17.29f, 14.6f, 17.66f, 14.98f, 18.39f, 14.98f, 19.51f);
+                path.AddLine(14.98f, 19.51f, 14.98f, 22.81f);
+                path.AddBezier(14.98f, 22.81f, 14.98f, 23.13f, 15.2f, 23.5f, 15.8f, 23.39f);
+                path.AddBezier(15.8f, 23.39f, 20.56f, 21.8f, 24, 17.3f, 24, 12);
+                path.AddBezier(24, 12, 24, 5.37f, 18.63f, 0, 12, 0);
+                path.CloseFigure();
+                e.Graphics.FillPath(fill, path);
+            }
+            e.Graphics.Restore(state);
+            if (Focused && ShowFocusCues) ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(ClientRectangle, -2, -2), Color.White, background);
         }
     }
 

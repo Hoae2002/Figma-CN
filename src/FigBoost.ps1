@@ -27,8 +27,7 @@ if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClo
 
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V7"
 $UpdaterDisableMarker = "FIGMA_ZH_DISABLE_BUILTIN_UPDATER"
-$PatcherVersion = "0.5.45"
-$UpdatePreview = $false # Enabled only in the separate style-preview build.
+$PatcherVersion = "0.5.46"
 $PayloadFile = "i.js"
 $MainPayloadFile = "m.js"
 $FeatureConfigFile = "features.json"
@@ -49,12 +48,6 @@ function Assert-UpdateVersion {
 }
 
 function Get-LatestFigBoostUpdate {
-  if ($UpdatePreview) {
-    return [pscustomobject]@{
-      client = [pscustomobject]@{ version = '999.0.0' }
-      payload = [pscustomobject]@{ version = '999.0.0'; minPatcherVersion = $PatcherVersion }
-    }
-  }
   $headers = @{ "User-Agent" = "FigBoost/$PatcherVersion"; "Accept" = "application/vnd.github+json" }
   $commit = Invoke-RestMethod -Uri $UpdateCommitApi -Headers $headers -UseBasicParsing -TimeoutSec 20
   if ([string]$commit.sha -notmatch '^[a-f0-9]{40}$') { throw "无法读取更新发布版本。" }
@@ -190,7 +183,6 @@ function Invoke-UpdateWorker {
   $worker = [PowerShell]::Create()
   try {
     $setup = '$ErrorActionPreference = "Stop"; [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12;'
-    $setup += "`$UpdatePreview = `$$([bool]$UpdatePreview);`n"
     foreach ($name in @('Assert-UpdateVersion', 'Get-LatestFigBoostUpdate', 'Get-Sha256Hex', 'Save-VerifiedUpdateDownload')) { $setup += (Get-Command $name).Definition.Insert(0, "function $name {") + "}`n" }
     foreach ($name in @('PatcherVersion', 'UpdateRepository', 'UpdateCommitApi')) { $setup += "`$$name = '" + (Get-Variable $name -ValueOnly).Replace("'", "''") + "';`n" }
     [void]$worker.AddScript($setup + "function Invoke-Work {" + $Action.ToString() + "}`nInvoke-Work @args")
@@ -1706,7 +1698,6 @@ function Show-Gui {
   $isWindows11OrNewer = Test-IsWindows11OrNewer
   $form = New-Object System.Windows.Forms.Form
   $form.Text = "FigBoost v$PatcherVersion"
-  if ($UpdatePreview) { $form.Text += ' · 更新样式验证版' }
   $form.StartPosition = "CenterScreen"
   $form.ClientSize = New-Object System.Drawing.Size(856, 576)
   if ($isWindows11OrNewer) { $form.ClientSize = New-Object System.Drawing.Size(936, 576) }
@@ -1778,13 +1769,18 @@ function Show-Gui {
   $btnFigBoostUpdate.Name = 'UpdateIndicator'
   $btnFigBoostUpdate.AccessibleName = '发现新版本，更新 FigBoost 与词库'
   $btnFigBoostUpdate.Visible = $false
-  $btnFigBoostUpdate.SetBounds(($form.ClientSize.Width - 60), 26, 36, 36)
+  $btnFigBoostUpdate.SetBounds(($form.ClientSize.Width - 108), 22, 44, 44)
   $btnFigBoostUpdate.Anchor = "Top,Right"
-  $btnCheckUpdate = New-Object FigBoost.UI.ActionButton
-  $btnCheckUpdate.Text = '检查更新'
-  $btnCheckUpdate.SetBounds(($form.ClientSize.Width - 108), 30, 84, 28)
-  $btnCheckUpdate.Anchor = 'Top,Right'
-  $header.Controls.AddRange(@($title, $subtitle, $btnFigBoostUpdate, $btnCheckUpdate))
+  $btnGitHub = New-Object FigBoost.UI.GitHubButton
+  $btnGitHub.Name = 'ProjectGitHub'
+  $btnGitHub.AccessibleName = 'GitHub 项目地址'
+  $btnGitHub.SetBounds(($form.ClientSize.Width - 60), 22, 44, 44)
+  $btnGitHub.Anchor = 'Top,Right'
+  $btnGitHub.Add_Click({
+    try { Start-Process 'https://github.com/Hoae2002/Figma-CN' }
+    catch { Show-ErrorMessage '无法打开浏览器，请访问 https://github.com/Hoae2002/Figma-CN' }
+  })
+  $header.Controls.AddRange(@($title, $subtitle, $btnFigBoostUpdate, $btnGitHub))
 
   $currentGroup = New-Object System.Windows.Forms.Panel
   $currentGroup.Name = "FigmaSummary"
@@ -1852,7 +1848,7 @@ function Show-Gui {
   $btnFeatureManager.Anchor = "Top,Right"
   #>
 
-  foreach ($button in @($btnBrowse, $btnApplyAppPath, $btnBrowseRuntime, $btnStatus, $btnInstall, $btnUninstall, $btnCheckUpdate)) {
+  foreach ($button in @($btnBrowse, $btnApplyAppPath, $btnBrowseRuntime, $btnStatus, $btnInstall, $btnUninstall)) {
     if ($button -eq $btnInstall) {
       Set-ButtonStyle $button ([System.Drawing.Color]::FromArgb(37, 99, 235)) ([System.Drawing.Color]::White) ([System.Drawing.Color]::Transparent)
     } else {
@@ -1862,7 +1858,7 @@ function Show-Gui {
 
   $toolTip = New-Object System.Windows.Forms.ToolTip
   $toolTip.SetToolTip($btnInstall, "安装汉化补丁，或应用当前可用的词库。获取新版请使用右上角更新入口。")
-  $toolTip.SetToolTip($btnCheckUpdate, "检查 FigBoost 和内置汉化词库的统一更新。")
+  $toolTip.SetToolTip($btnGitHub, "GitHub 项目地址 · Hoae2002/Figma-CN")
   $toolTip.SetToolTip($btnStatus, "重新读取本机 Figma 版本和汉化状态，不检查在线更新。")
   $toolTip.SetToolTip($btnUninstall, "移除汉化补丁并恢复原始客户端，保留个人汉化设置。")
   $toolTip.SetToolTip($txtRuntime, $txtRuntime.Text)
@@ -1921,7 +1917,6 @@ function Show-Gui {
   function Set-UpdateIndicator {
     $available = Test-FigBoostUpdateAvailable $updateState.Info
     $btnFigBoostUpdate.Visible = $available
-    $btnCheckUpdate.Visible = -not $available
     if ($available) { $toolTip.SetToolTip($btnFigBoostUpdate, "发现 FigBoost v$($updateState.Info.client.version)，点击更新软件与词库") }
   }
 
@@ -1999,12 +1994,6 @@ function Show-Gui {
       try {
         $message.Text = '正在下载并校验更新包…'
         $dialog.Refresh()
-        if ($UpdatePreview) {
-          $previewClock = [Diagnostics.Stopwatch]::StartNew()
-          while ($previewClock.ElapsedMilliseconds -lt 900) { [Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 30 }
-          $message.Text = '更新完成（样式验证，可再次更新）'
-          return
-        }
         Invoke-UpdateWorker { param($release, $path) Save-VerifiedUpdateDownload $release $path } @($state.Info.client, $download)
         Invoke-PatcherSelfUpdate $state.Info.client $download $txtRuntime.Text $txtApp.Text $state.Info.payload.version
         $download = '' # The replacement helper now owns the verified package.
@@ -2341,7 +2330,6 @@ function Show-Gui {
   })
   # $btnFeatureManager.Add_Click({ Show-FeatureInstallDialog })
   $btnFigBoostUpdate.Add_Click({ Show-FigBoostUpdateDialog })
-  $btnCheckUpdate.Add_Click({ Show-FigBoostUpdateDialog })
   $btnInstall.Add_Click({
     & $runAction {
       Set-ProgressState 30 "正在安装汉化补丁..."
@@ -2385,8 +2373,6 @@ function Show-Gui {
 
   $form.Add_Shown({
     $updateState.Busy = $true
-    $btnCheckUpdate.Enabled = $false
-    $btnCheckUpdate.Text = '检查中…'
     try {
       $updateState.Info = @(Invoke-UpdateWorker { Get-LatestFigBoostUpdate })[-1]
       if (-not $form.IsDisposed) { Set-UpdateIndicator }
@@ -2395,7 +2381,6 @@ function Show-Gui {
       Write-Log "Automatic FigBoost update check failed: $($_.Exception.Message)"
     } finally {
       $updateState.Busy = $false
-      if (-not $form.IsDisposed) { $btnCheckUpdate.Text = '检查更新'; $btnCheckUpdate.Enabled = $true }
     }
   })
   [void]$form.ShowDialog()
