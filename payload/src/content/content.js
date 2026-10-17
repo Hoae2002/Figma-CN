@@ -398,6 +398,7 @@
     if (window.__figboostQuickExportHandler) {
       window.removeEventListener("keydown", window.__figboostQuickExportHandler, true);
     }
+    if (window.__FIGBOOST_NATIVE_QUICK_EXPORT__) return;
 
     function isEditingText(element) {
       if (!element || !element.closest) return false;

@@ -4,6 +4,6 @@ When opening a new Codex window, fixing a new issue, writing code, reviewing cod
 
 Unless the user asks for a broader history review, only inspect the latest three Git pushes/commits for recent project context.
 
-After completing any code or project-file modification, commit the changes and push them to GitHub.
+After completing any code or project-file modification, commit the changes locally. Push to GitHub only when the user explicitly asks.
 
 Do not start or control the real Figma Desktop client or capture manual regression screenshots unless the user explicitly requests it. The user handles real-client testing by default.

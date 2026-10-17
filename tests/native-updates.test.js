@@ -10,13 +10,19 @@ function boot({ enabled = true, response = 1, offline = false, missing = false, 
   const calls = { requests: [], spawns: [], dialogs: [], timers: [], settings: 0, windows: [], attached: [] };
   const handlers = new Map();
   const config = { enabledFeatures: ["auto-check-official-latest", "bulk-export-figma-files"], patcherPath: "E:/FigBoost/FigBoost.exe", runtimeDir: "C:/FZ" };
+  let applicationMenu = null;
   class Menu {
     popup(options) {}
     static buildFromTemplate(template) {
-      return Object.assign(new Menu(), { items: template.map(item => ({ ...item, submenu: Array.isArray(item.submenu) ? Menu.buildFromTemplate(item.submenu) : item.submenu })) });
+      return Object.assign(new Menu(), { items: template.map(item => {
+        const result = { ...item, submenu: Array.isArray(item.submenu) ? Menu.buildFromTemplate(item.submenu) : item.submenu };
+        // MenuItem.click has a different signature from template.click.
+        if (item.click) result.click = (event, window) => item.click(result, window, event);
+        return result;
+      }) });
     }
-    static getApplicationMenu() { return null; }
-    static setApplicationMenu() {}
+    static getApplicationMenu() { return applicationMenu; }
+    static setApplicationMenu(menu) { applicationMenu = menu; }
   }
   class BrowserWindow {
     constructor() { this.webContents = {}; calls.windows.push(this); }
@@ -44,7 +50,7 @@ function boot({ enabled = true, response = 1, offline = false, missing = false, 
     Menu, BrowserWindow, clipboard: {},
     dialog: { async showMessageBox(options) { calls.dialogs.push(options); return { response }; } },
     ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
-    webContents: { getAllWebContents: () => contents }
+    webContents: { getAllWebContents: () => contents, getFocusedWebContents: () => contents[0] || null }
   };
   const https = { get(url, options, callback) {
     calls.requests.push(url);
@@ -174,4 +180,75 @@ test("native titlebar gets no renderer payload and stale settings routes cannot 
   assert.equal(state.calls.settings, 0);
   assert.equal(state.calls.windows.length, 0);
   assert.equal(state.calls.requests.length, 0);
+});
+
+function quickExportFixture() {
+  const contents = new EventEmitter();
+  let url = "https://www.figma.com/design/test", allowed = true, exported = 0, prevented = 0;
+  contents.getURL = () => url;
+  contents.isDestroyed = () => false;
+  contents.executeJavaScriptInIsolatedWorld = () => Promise.resolve(allowed);
+  const state = boot({ contents: [contents] });
+  const owner = {};
+  state.electron.BrowserWindow.getFocusedWindow = () => owner;
+  const menu = state.electron.Menu.buildFromTemplate([{ label: "File", submenu: [{
+    label: "Export…", action: "export-selected-exportables", accelerator: "CmdOrCtrl+Shift+E",
+    click(item, window, event) {
+      assert.equal(item.action, "export-selected-exportables");
+      assert.equal(window, owner);
+      assert.equal(event.triggeredByAccelerator, true);
+      exported++;
+    }
+  }] }]);
+  state.electron.Menu.setApplicationMenu(menu);
+  return {
+    state, contents, item: menu.items[0].submenu.items[0],
+    navigate(value) { url = value; }, allow(value) { allowed = value; },
+    press(input = {}) {
+      contents.emit("before-input-event", { preventDefault() { prevented++; } }, {
+        type: "keyDown", control: true, shift: true, code: "KeyS", key: "S", ...input
+      });
+    },
+    exported: () => exported, prevented: () => prevented
+  };
+}
+
+test("desktop quick export calls the existing native command once and preserves its accelerator", async () => {
+  const f = quickExportFixture();
+  f.press(); f.press(); f.press({ isAutoRepeat: true });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.exported(), 1, "overlapping events must not double-export");
+  assert.equal(f.prevented(), 3);
+  assert.equal(f.item.accelerator, "CmdOrCtrl+Shift+E");
+  f.press({ code: "KeyE", key: "E" });
+  assert.equal(f.prevented(), 3, "the original native shortcut remains untouched");
+  f.navigate("https://www.figma.com/file/legacy"); f.press();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.exported(), 2);
+});
+
+test("desktop export ignores other routes, disabled commands, IME and other combinations", async () => {
+  const f = quickExportFixture();
+  for (const url of ["https://www.figma.com/files/test", "https://www.figma.com/proto/test", "https://figma.com.evil.test/design/test", "file:///Figma/titlebar.html"]) {
+    f.navigate(url); f.press();
+  }
+  f.navigate("https://www.figma.com/design/test");
+  for (const input of [{ type: "keyUp" }, { control: false }, { shift: false }, { alt: true }, { meta: true }, { isComposing: true }, { code: "KeyA", key: "S" }]) f.press(input);
+  f.item.enabled = false; f.press();
+  f.state.electron.Menu.setApplicationMenu(null); f.press();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.exported(), 0); assert.equal(f.prevented(), 0);
+});
+
+test("desktop export protects editing and cannot export a different tab after its async focus check", async () => {
+  const f = quickExportFixture();
+  f.allow(false); f.press();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.exported(), 0);
+  f.allow(true); f.press(); f.navigate("https://www.figma.com/design/other");
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.exported(), 0);
+  f.press(); f.state.electron.webContents.getFocusedWebContents = () => null;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.exported(), 0);
 });

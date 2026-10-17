@@ -210,13 +210,23 @@ app.whenReady().then(async () => {
   // updater guard hides this native entry, so restoring visibility is required.
   global.__FIGMA_ZH_RUNTIME_DIR__ = runtime;
   global.__FIGBOOST_TRANSLATION_HOST__ = host;
+  fs.writeFileSync(path.join(runtime, 'figma-zh-official-preload.js'), payload);
   require(path.join(root, 'main/menu-localizer.js'));
-  const { Menu } = require('electron');
+  const { Menu, webContents } = require('electron');
   let originalUpdates = 0;
+  let nativeExports = 0;
   const nativeMenu = Menu.buildFromTemplate([{ label: 'Help', submenu: [
     { id: 'checkForUpdates', label: 'Check for Updates…', visible: false, enabled: false, click() { originalUpdates++; } },
     { label: 'Save Local Copy…' }
-  ] }]);
+  ] }, { label: 'File', submenu: [{
+    label: 'Export…', action: 'export-selected-exportables', accelerator: 'CmdOrCtrl+Shift+E',
+    click(item, owner, event) {
+      assert.equal(item.action, 'export-selected-exportables');
+      assert.equal(owner, retryPage);
+      assert.equal(event.triggeredByAccelerator, true);
+      nativeExports++;
+    }
+  }] }]);
   const updateEntry = nativeMenu.items[0].submenu.items[0];
   assert.equal(updateEntry.visible, true);
   assert.equal(updateEntry.enabled, true);
@@ -224,6 +234,41 @@ app.whenReady().then(async () => {
   assert.equal(updateEntry.click, global.__FIGBOOST_CHECK_OFFICIAL_UPDATE__);
   assert.equal(originalUpdates, 0);
   assert.equal(global.__FIGBOOST_BULK_EXPORT_FILES__, undefined);
+  Menu.setApplicationMenu(nativeMenu);
+  const exportEntry = nativeMenu.items[1].submenu.items[0];
+  assert.equal(exportEntry.action, 'export-selected-exportables', 'real Electron MenuItem preserves the Figma action');
+  assert.equal(exportEntry.accelerator, 'CmdOrCtrl+Shift+E');
+  // Hidden standalone fixture: only emulate focus, never operate Figma Desktop.
+  // No web export panel or selection markers exist in this document.
+  const focusedContents = webContents.getFocusedWebContents;
+  const focusedWindow = BrowserWindow.getFocusedWindow;
+  webContents.getFocusedWebContents = () => retryPage.webContents;
+  BrowserWindow.getFocusedWindow = () => retryPage;
+  try {
+    await retryPage.loadURL('https://www.figma.com/design/native-export');
+    await until(() => editor('window.__FIGBOOST_NATIVE_QUICK_EXPORT__ === true'));
+    assert.equal(await editor('typeof window.__figboostQuickExportHandler'), 'undefined', 'desktop payload must not install the web shortcut');
+    await editor(`document.body.innerHTML = '<input id="canvas" readonly role="application" aria-hidden="true"><input id="name"><div contenteditable="true" id="text">Text</div>'; document.getElementById('canvas').focus()`);
+    exportKey();
+    await until(() => nativeExports === 1);
+    for (const id of ['name', 'text']) {
+      await editor(`document.getElementById('${id}').focus()`);
+      exportKey(); await wait(100);
+      assert.equal(nativeExports, 1, 'editable fields must not invoke native export');
+    }
+    await editor(`document.getElementById('canvas').focus(); document.body.insertAdjacentHTML('beforeend', '<div role="dialog" aria-modal="true"></div>')`);
+    exportKey(); await wait(100);
+    assert.equal(nativeExports, 1, 'modal dialog must block export even with the canvas input focused');
+    await editor(`document.querySelector('[role="dialog"]').remove()`);
+    exportKey();
+    await until(() => nativeExports === 2);
+    assert.equal(exportEntry.accelerator, 'CmdOrCtrl+Shift+E');
+  } finally {
+    webContents.getFocusedWebContents = focusedContents;
+    BrowserWindow.getFocusedWindow = focusedWindow;
+    Menu.setApplicationMenu(null);
+  }
+  console.log('Electron native export regression passed: real keyboard event invokes native action without web selectors; canvas, text editing and modal guards verified; Ctrl+Shift+E preserved.');
   console.log('Electron native update regression passed: original menu position restored, FigBoost callback installed, batch export IPC disabled; idle localization has zero scans.');
   console.log('Chromium file-browser regression passed: 12 grid/list redraws, zero English time samples and zero layout measurements; file names preserved.');
   console.log("Chromium localization regression passed: 12 nested property-panel redraws have zero untranslated samples before paint; 600 labels converge, page names remain original, attributes do not rescan text, reconnects make zero restore writes, recycled labels translate again.");

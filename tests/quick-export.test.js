@@ -40,6 +40,14 @@ test("quick export clicks the native action once and preserves export settings",
   assert.equal(f.clicks(), 2);
 });
 
+test("desktop native handling disables the renderer shortcut on reinjection", t => {
+  const f = fixture(t);
+  f.w.__FIGBOOST_NATIVE_QUICK_EXPORT__ = true;
+  f.w.eval(source);
+  assert.equal(f.press(), false);
+  assert.equal(f.clicks(), 0, "desktop must not also click a web export button");
+});
+
 test("single Chinese export label and legacy file route work from the canvas input", t => {
   const f = fixture(t, "https://www.figma.com/file/test");
   f.button.textContent = "导出 首页";

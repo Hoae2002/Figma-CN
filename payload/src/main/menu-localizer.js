@@ -3435,9 +3435,53 @@
     }
   }
 
+  function installNativeQuickExport(contents) {
+    // Use the same desktop command as Figma's native Export menu. DOM keydown
+    // handlers and web-panel selectors are not reliable inside desktop views.
+    if (contents.__figboostNativeQuickExportInstalled) return;
+    contents.__figboostNativeQuickExportInstalled = true;
+    let busy = false;
+    const findExport = (items) => {
+      for (const item of items || []) {
+        if (item.action === "export-selected-exportables" && item.enabled !== false && typeof item.click === "function") return item;
+        const nested = item.submenu && findExport(item.submenu.items);
+        if (nested) return nested;
+      }
+      return null;
+    };
+    contents.prependListener("before-input-event", (event, input) => {
+      if (input.type !== "keyDown" || !input.control || !input.shift || input.alt || input.meta || input.isComposing) return;
+      if (input.code ? input.code !== "KeyS" : String(input.key).toLowerCase() !== "s") return;
+      const url = contents.getURL();
+      try {
+        const parsed = new URL(url);
+        if (parsed.protocol !== "https:" || !/(^|\.)figma\.com$/.test(parsed.hostname) || !/^\/(design|file)\//.test(parsed.pathname)) return;
+      } catch (_) { return; }
+      const menu = Menu.getApplicationMenu();
+      const item = menu && findExport(menu.items);
+      if (!item) return;
+      event.preventDefault();
+      if (input.isAutoRepeat || busy) return;
+      busy = true;
+      const guard = `(() => {
+        if (document.querySelector('[role="dialog"][aria-modal="true"]')) return false;
+        const element = document.activeElement;
+        if (!element || element.matches('input[readonly][role="application"][aria-hidden="true"]')) return true;
+        return !element.closest('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"]');
+      })()`;
+      contents.executeJavaScriptInIsolatedWorld(1004, [{ code: guard }]).then((allowed) => {
+        if (!allowed || contents.isDestroyed() || contents.getURL() !== url || webContents.getFocusedWebContents() !== contents) return;
+        const owner = BrowserWindow.getFocusedWindow();
+        if (owner && item.enabled !== false) item.click({ triggeredByAccelerator: true }, owner, contents);
+      }).catch((error) => console.error("[FigBoost] native quick export failed", error))
+        .finally(() => { busy = false; });
+    });
+  }
+
   function injectRendererPayload(contents) {
     if (!contents || contents.__FIGBOOST_RENDERER_INJECTED__ || contents.__FIGBOOST_SKIP_RENDERER_INJECTION__) return;
     contents.__FIGBOOST_RENDERER_INJECTED__ = true;
+    installNativeQuickExport(contents);
     contents.on("will-navigate", (event, url) => handleFigBoostNavigation(contents, event, url));
     if (contents.setWindowOpenHandler) {
       contents.setWindowOpenHandler(({ url }) => (
@@ -3453,7 +3497,7 @@
         // Only content pages need localization; leave the native titlebar alone.
         if (!isFigmaPage) return;
         // const bridge = buildFigBoostRendererBridgeScript(!isFigmaPage);
-        const payload = getRendererPayload();
+        const payload = 'window.__FIGBOOST_NATIVE_QUICK_EXPORT__ = true;\n' + getRendererPayload();
         if (isFigmaPage && translationHost) {
           // The host retries initialization in the isolated world. A main-world
           // fallback cannot receive settings/results and only hides the failure.
