@@ -189,7 +189,7 @@ namespace FigBoost.UI
             e.Graphics.Clear(Parent == null ? SystemColors.Control : Parent.BackColor);
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
             float diameter = Math.Min(Width, Height);
-            float size = diameter * 0.66f * (float)(1 + HoverAmount * 0.08 - PressAmount * 0.12);
+            float size = diameter * 0.55f * (float)(1 + HoverAmount * 0.08 - PressAmount * 0.12);
             float x = (Width - size) / 2, y = (Height - size) / 2;
             Color green = SystemInformation.HighContrast ? SystemColors.Highlight : Color.FromArgb(35, 215, 53);
             if (!Enabled) green = SystemColors.GrayText;
