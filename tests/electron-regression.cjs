@@ -292,6 +292,7 @@ app.whenReady().then(async () => {
     retryPage.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S', modifiers: ['control', 'shift'] });
     await wait(100);
     assert.equal(await editor('window.__desktopExportClicks'), 2, 'the old Ctrl+Shift+S shortcut must not export');
+    await editor(`document.getElementById('canvas').setAttribute('aria-hidden', 'false')`);
     exportKey();
     await until(() => editor('window.__desktopExportClicks === 3'));
     assert.equal(exportEntry.accelerator, 'CmdOrCtrl+Shift+E');

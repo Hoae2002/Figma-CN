@@ -402,7 +402,8 @@
     function isEditingText(element) {
       if (!element || !element.closest) return false;
       // Figma's read-only canvas input receives shortcuts, even with a selection.
-      if (element.matches('input[readonly][role="application"][aria-hidden="true"]')) return false;
+      // aria-hidden switches to false while Figma's canvas actually has focus.
+      if (element.matches('input[readonly][role="application"]')) return false;
       return Boolean(element.closest('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"]'));
     }
 

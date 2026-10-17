@@ -62,6 +62,22 @@ test("single Chinese export label and legacy file route work from the canvas inp
   assert.equal(f.clicks(), 1);
 });
 
+test("focused canvas remains eligible when Figma exposes its application input", t => {
+  const f = fixture(t), input = f.w.document.querySelector("#canvas-input");
+  f.w.__FIGBOOST_NATIVE_QUICK_EXPORT__ = true;
+  f.w.eval(source);
+  input.setAttribute("aria-hidden", "false");
+  input.setAttribute("aria-label", "Figma Design, 5 items selected");
+  input.focus();
+  assert.equal(f.w.__figboostQuickExport(), true);
+  assert.equal(f.clicks(), 1);
+  const text = f.w.document.querySelector("#name");
+  text.readOnly = true;
+  text.focus();
+  assert.equal(f.w.__figboostQuickExport(), false, "ordinary read-only text fields remain protected");
+  assert.equal(f.clicks(), 1);
+});
+
 test("text editing, IME and other key combinations keep their normal behavior", t => {
   const f = fixture(t);
   for (const selector of ["#name", "textarea", "[contenteditable]"]) {
