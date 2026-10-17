@@ -53,6 +53,8 @@ if ($LASTEXITCODE -ne 0) { throw "FigBoost update behavior tests failed." }
 if ($LASTEXITCODE -ne 0) { throw "FigBoost compiled update worker tests failed." }
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root "tests\updater-bundle.test.ps1")
 if ($LASTEXITCODE -ne 0) { throw "FigBoost compiled bundled update tests failed." }
+& powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File (Join-Path $root "tests\official-update-gui.test.ps1")
+if ($LASTEXITCODE -ne 0) { throw "Official Figma update GUI tests failed." }
 & powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File (Join-Path $root "tests\button.test.ps1")
 if ($LASTEXITCODE -ne 0) { throw "FigBoost button interaction tests failed." }
 foreach ($mode in @(@(), @('-Windows10'), @('-MissingClient'))) {

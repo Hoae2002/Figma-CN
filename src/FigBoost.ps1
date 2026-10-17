@@ -27,7 +27,7 @@ if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClo
 
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V7"
 $UpdaterDisableMarker = "FIGMA_ZH_DISABLE_BUILTIN_UPDATER"
-$PatcherVersion = "0.5.53"
+$PatcherVersion = "0.5.54"
 $PayloadFile = "i.js"
 $MainPayloadFile = "m.js"
 $FeatureConfigFile = "features.json"
@@ -1191,6 +1191,7 @@ function Uninstall-Patch {
 
 function Update-FigmaOfficial {
   param([string]$SelectedRuntimeDir, [switch]$Force, [scriptblock]$Progress)
+  $ProgressPreference = "SilentlyContinue"
   if ($Progress) { & $Progress 5 "正在检测当前 Figma 版本..." }
   $currentTarget = Resolve-Target (Resolve-ManagedFigmaAppDir $SelectedRuntimeDir)
   if ($Progress) { & $Progress 15 "正在检查官方最新版..." }
@@ -1297,6 +1298,7 @@ function Invoke-UpdateFigmaOfficialWithProgress {
       $result = Update-FigmaOfficial $SelectedRuntimeDir -Force:$Force -Progress $progress
       $label.Text = "更新完成。Figma $($result.FigmaVersion)，补丁状态：$(if ($result.Patched) { "已安装" } else { "未安装" })。"
       $progressBar.Value = 100
+      $form.Close()
     } catch {
       $label.Text = "更新失败：$($_.Exception.Message)"
       $progressBar.Value = 0
