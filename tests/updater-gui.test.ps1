@@ -10,6 +10,13 @@ foreach ($statement in $ast.EndBlock.Statements) {
   if ($statement -is [Management.Automation.Language.AssignmentStatementAst] -and $statement.Left.Extent.Text -match '^\$(PatchMarker|UpdaterDisableMarker|PatcherVersion|PayloadFile|MainPayloadFile|FeatureConfigFile|BackupFile|LicenseCommentTarget|EmbeddedPayloadFiles|Utf8NoBom|UpdateRepository|UpdateCommitApi|script:UpdatedPayloadFiles)$') { Invoke-Expression $statement.Extent.Text }
 }
 Add-Type -AssemblyName System.Windows.Forms
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class PathInputProbe {
+  [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr window, int message, IntPtr keys, IntPtr point);
+}
+'@
 $temp = Join-Path ([IO.Path]::GetTempPath()) ('figboost-update-gui-' + [Guid]::NewGuid().ToString('N'))
 $originalLocalAppData = $env:LOCALAPPDATA
 $SelfTest = $true
@@ -57,7 +64,7 @@ function Assert-HomeLayout($Parent) {
     Assert-Gui ($control.Left -ge 0 -and $control.Top -ge 0 -and $control.Right -le $Parent.ClientSize.Width -and $control.Bottom -le $Parent.ClientSize.Height) ("Control outside parent: " + $control.Text)
     if ($control -is [Windows.Forms.Button] -or $control -is [Windows.Forms.Label]) {
       $textSize = [Windows.Forms.TextRenderer]::MeasureText($control.Text, $control.Font)
-      Assert-Gui ($control.Width -ge $textSize.Width -and $control.Height -ge $textSize.Height) ("Home text clipped: " + $control.Text)
+      Assert-Gui (($control.AutoEllipsis -or $control.Width -ge $textSize.Width) -and $control.Height -ge $textSize.Height) ("Home text clipped: " + $control.Text)
     }
     if ($control -is [Windows.Forms.Button] -and $control.Text -ne '安装或更新汉化') {
       Assert-Gui ([Math]::Abs($control.ForeColor.B - $control.ForeColor.R) -lt 50) ('Secondary action should use neutral text: ' + $control.Text)
@@ -110,10 +117,13 @@ $timer.Add_Tick({
       $pathBox = Get-AccessibleControl $main 'Figma 客户端位置'
       $runtimeBox = Get-AccessibleControl $main '汉化文件存放位置'
       foreach ($box in @($pathBox, $runtimeBox)) {
-        Assert-Gui ($box.ReadOnly -and $box.Enabled) 'Paths must be read-only while remaining selectable.'
+        Assert-Gui ($box -is [Windows.Forms.Label] -and -not $box.CanSelect -and -not $box.TabStop) 'Paths must be display-only without text selection or keyboard focus.'
         Assert-Gui ($box.BackColor.ToArgb() -ne [Drawing.Color]::White.ToArgb() -and $box.BackColor.ToArgb() -eq $box.Parent.BackColor.ToArgb()) 'Read-only paths must have a consistent muted background.'
-        $box.SelectAll()
-        Assert-Gui ($box.SelectedText -ceq $box.Text) 'Read-only path cannot be selected for copying.'
+        [void](Get-ChildControl $main '重新检测').Focus()
+        [void][PathInputProbe]::SendMessage($box.Handle, 0x0201, [IntPtr]1, [IntPtr]0x00080008)
+        [void][PathInputProbe]::SendMessage($box.Handle, 0x0202, [IntPtr]0, [IntPtr]0x00080008)
+        Assert-Gui (-not $box.Focused) 'Clicking a path must not move keyboard focus into its text.'
+        Assert-Gui ($box.AutoEllipsis -and -not $box.UseMnemonic -and $box.Cursor -eq [Windows.Forms.Cursors]::Default) 'Long paths must remain readable without an input cursor or mnemonic processing.'
       }
       $pathAction = $main.Controls.Find('ApplyAppPath', $true)[0]
       $pathBox.Text = ''

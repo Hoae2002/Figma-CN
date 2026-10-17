@@ -24,7 +24,7 @@ if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClo
 
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V7"
 $UpdaterDisableMarker = "FIGMA_ZH_DISABLE_BUILTIN_UPDATER"
-$PatcherVersion = "0.5.33"
+$PatcherVersion = "0.5.34"
 $PayloadFile = "i.js"
 $MainPayloadFile = "m.js"
 $FeatureConfigFile = "features.json"
@@ -1652,7 +1652,7 @@ function Show-Gui {
     $form.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon($exePath)
   } catch {}
 
-  function New-InputBox {
+  function New-PathDisplay {
     param([int]$Left, [int]$Top, [int]$Width)
     $panel = New-Object FigBoost.UI.PathPanel
     $panel.Left = $Left
@@ -1661,19 +1661,21 @@ function Show-Gui {
     $panel.Height = 34
     $panel.BackColor = [System.Drawing.Color]::FromArgb(237, 240, 244)
     $panel.Anchor = "Top,Left,Right"
+    $panel.TabStop = $false
 
-    $textBox = New-Object System.Windows.Forms.TextBox
-    $textBox.Left = 8
-    $textBox.Top = 7
-    $textBox.Width = $Width - 16
-    $textBox.BorderStyle = "None"
-    $textBox.ReadOnly = $true
-    $textBox.BackColor = $panel.BackColor
-    $textBox.ForeColor = [System.Drawing.Color]::FromArgb(100, 116, 139)
-    $textBox.Anchor = "Top,Left,Right"
-    $panel.Controls.Add($textBox)
+    $valueLabel = New-Object System.Windows.Forms.Label
+    $valueLabel.SetBounds(8, 7, ($Width - 16), 20)
+    $valueLabel.AutoEllipsis = $true
+    $valueLabel.UseMnemonic = $false
+    $valueLabel.TextAlign = "MiddleLeft"
+    $valueLabel.TabStop = $false
+    $valueLabel.Cursor = [System.Windows.Forms.Cursors]::Default
+    $valueLabel.BackColor = $panel.BackColor
+    $valueLabel.ForeColor = [System.Drawing.Color]::FromArgb(100, 116, 139)
+    $valueLabel.Anchor = "Top,Left,Right"
+    $panel.Controls.Add($valueLabel)
 
-    return [pscustomobject]@{ Panel = $panel; TextBox = $textBox }
+    return [pscustomobject]@{ Panel = $panel; ValueLabel = $valueLabel }
   }
 
   function Set-ButtonStyle {
@@ -1731,8 +1733,8 @@ function Show-Gui {
 
   $labelApp = New-HomeLabel "Figma 客户端位置" 24 232 $contentWidth
   $labelApp.ForeColor = [System.Drawing.Color]::FromArgb(28, 35, 45)
-  $appInput = New-InputBox 24 256 ($contentWidth - 272)
-  $txtApp = $appInput.TextBox
+  $appInput = New-PathDisplay 24 256 ($contentWidth - 272)
+  $txtApp = $appInput.ValueLabel
   $txtApp.AccessibleName = "Figma 客户端位置"
   $btnApplyAppPath = New-Object FigBoost.UI.ActionButton
   $btnApplyAppPath.Name = "ApplyAppPath"
@@ -1749,8 +1751,8 @@ function Show-Gui {
 
   $labelRuntime = New-HomeLabel "汉化文件存放位置" 24 332 $contentWidth
   $labelRuntime.ForeColor = [System.Drawing.Color]::FromArgb(28, 35, 45)
-  $runtimeInput = New-InputBox 24 356 ($contentWidth - 124)
-  $txtRuntime = $runtimeInput.TextBox
+  $runtimeInput = New-PathDisplay 24 356 ($contentWidth - 124)
+  $txtRuntime = $runtimeInput.ValueLabel
   $txtRuntime.Text = $RuntimeDir
   $txtRuntime.AccessibleName = "汉化文件存放位置"
   $btnBrowseRuntime = New-Object FigBoost.UI.ActionButton
@@ -1791,8 +1793,9 @@ function Show-Gui {
   $toolTip.SetToolTip($btnFigBoostUpdate, "检查并升级 FigBoost 补丁器，或下载最新汉化词库。")
   $toolTip.SetToolTip($btnStatus, "重新读取本机 Figma 版本和汉化状态，不检查在线更新。")
   $toolTip.SetToolTip($btnUninstall, "移除汉化补丁并恢复原始客户端，保留个人汉化设置。")
-  $toolTip.SetToolTip($txtApp, '路径仅供查看和复制。如需更换，请使用右侧“选择目录”。')
-  $toolTip.SetToolTip($txtRuntime, '路径仅供查看和复制。如需更换，请使用右侧“选择目录”。')
+  $toolTip.SetToolTip($txtRuntime, $txtRuntime.Text)
+  $txtApp.Add_TextChanged({ $toolTip.SetToolTip($txtApp, $txtApp.Text) })
+  $txtRuntime.Add_TextChanged({ $toolTip.SetToolTip($txtRuntime, $txtRuntime.Text) })
 
   $refreshPathAction = {
     $btnApplyAppPath.Enabled = -not [string]::IsNullOrWhiteSpace($txtApp.Text)
