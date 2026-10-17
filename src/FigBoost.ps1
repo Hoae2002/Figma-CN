@@ -27,7 +27,7 @@ if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClo
 
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V7"
 $UpdaterDisableMarker = "FIGMA_ZH_DISABLE_BUILTIN_UPDATER"
-$PatcherVersion = "0.5.52"
+$PatcherVersion = "0.5.53"
 $PayloadFile = "i.js"
 $MainPayloadFile = "m.js"
 $FeatureConfigFile = "features.json"

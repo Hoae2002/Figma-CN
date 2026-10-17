@@ -79,6 +79,17 @@ test("bundled dictionary covers current editor overlays", () => {
   assert.equal(translator.translate("Fonts"), "字体");
   assert.equal(translator.translate("Search"), "搜索");
   assert.equal(translator.translate("No colors available"), "没有可用颜色");
+  for (const [source, expected] of Object.entries({
+    "Exporting...": "正在导出…", "Exporting…": "正在导出…",
+    "30 of 30 selected": "已选择 30 项，共 30 项",
+    "1 of 30 selected": "已选择 1 项，共 30 项",
+    "0 of 30 selected": "已选择 0 项，共 30 项",
+    "1,000 of 2,000 selected": "已选择 1,000 项，共 2,000 项",
+    "New plugin...": "新建插件…", "New plugin…": "新建插件…",
+    "Import plugin from manifest...": "从清单导入插件…",
+    "Import plugin from manifest…": "从清单导入插件…",
+    "Show Agents on canvas": "在画布上显示 Agents"
+  })) assert.equal(translator.translate(source), expected, source);
 });
 
 test("bundled dictionary covers the current clipboard, navigation, variable, and category labels", () => {

@@ -2,6 +2,9 @@
   "use strict";
 
   const exact = {
+    "Exporting...": "正在导出…",
+    "Exporting…": "正在导出…",
+    "Show Agents on canvas": "在画布上显示 Agents",
     "(Auto layout)": "（自动布局）",
     "(best for 9+ seats)": "（建议 9 个人以上）",
     "(missing)": "(已丢失)",
@@ -1721,6 +1724,7 @@
     "Import files": "导入文件",
     "Import from computer": "从电脑导入",
     "Import plugin from manifest...": "从清单导入插件…",
+    "Import plugin from manifest…": "从清单导入插件…",
     "Import widget from manifest...": "从清单导入小部件…",
     "Import from Sketch": "从 Sketch 导入",
     "Import images, Sketch files, PowerPoints, and PDFs.": "导入图片、Sketch 文件、PowerPoint 和 PDF。",
@@ -2186,6 +2190,7 @@
     "New Page": "新建页面",
     "New password": "新密码",
     "New plugin...": "新建插件…",
+    "New plugin…": "新建插件…",
     "New Plugin...": "新建插件…",
     "New project": "新建项目",
     "New shape or sticky": "新建形状或便利贴",
@@ -5116,6 +5121,7 @@
   };
 
   const patterns = [
+    ["^([\\d,]+) of ([\\d,]+) selected$","已选择 $1 项，共 $2 项"],
     ["^seconds? ago$","秒前"],
     ["^minutes? ago$","分钟前"],
     ["^hours? ago$","小时前"],
