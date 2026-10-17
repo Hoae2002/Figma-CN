@@ -27,7 +27,7 @@ if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClo
 
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V7"
 $UpdaterDisableMarker = "FIGMA_ZH_DISABLE_BUILTIN_UPDATER"
-$PatcherVersion = "0.5.46"
+$PatcherVersion = "0.5.47"
 $PayloadFile = "i.js"
 $MainPayloadFile = "m.js"
 $FeatureConfigFile = "features.json"
@@ -1857,7 +1857,7 @@ function Show-Gui {
   }
 
   $toolTip = New-Object System.Windows.Forms.ToolTip
-  $toolTip.SetToolTip($btnInstall, "安装汉化补丁，或应用当前可用的词库。获取新版请使用右上角更新入口。")
+  $toolTip.SetToolTip($btnInstall, "安装汉化补丁，或应用当前 FigBoost 内置的词库。FigBoost 每次启动会自动检查更新，发现新版后显示绿色升级箭头。")
   $toolTip.SetToolTip($btnGitHub, "GitHub 项目地址 · Hoae2002/Figma-CN")
   $toolTip.SetToolTip($btnStatus, "重新读取本机 Figma 版本和汉化状态，不检查在线更新。")
   $toolTip.SetToolTip($btnUninstall, "移除汉化补丁并恢复原始客户端，保留个人汉化设置。")
@@ -2337,7 +2337,7 @@ function Show-Gui {
     } {
       param($result)
       if ($result.AlreadyPatched) {
-        Show-InfoMessage ("汉化已是当前可用版本。如需获取新词库，请使用右上角更新入口。`r`n`r`nFigma 版本：$($result.FigmaVersion)`r`n词库版本：v$($result.PayloadVersion)")
+        Show-InfoMessage ("汉化已安装，词库与当前 FigBoost 内置版本一致，无需重复安装。`r`n`r`nFigBoost 每次启动会自动检查更新，发现新版后会在右上角显示绿色升级箭头。`r`n`r`nFigma 版本：$($result.FigmaVersion)`r`n已安装词库：v$($result.PayloadVersion)")
       } else {
         Show-InfoMessage ("安装成功。`r`n`r`nFigma 版本：$($result.FigmaVersion)`r`n词库版本：v$($result.PayloadVersion)`r`n补丁状态：已安装")
       }
