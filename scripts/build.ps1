@@ -1,6 +1,6 @@
 ﻿param(
   [string]$OutputPath = "$PSScriptRoot\..\FigBoost.exe",
-  [string]$Version = "0.5.30"
+  [string]$Version = "0.5.31"
 )
 
 $ErrorActionPreference = "Stop"
@@ -39,6 +39,8 @@ $embeddedLines += '}'
 
 $sourceText = [System.IO.File]::ReadAllText($source, [System.Text.Encoding]::UTF8)
 $sourceText = $sourceText.Replace('$EmbeddedPayloadFiles = @{}', ($embeddedLines -join "`r`n"))
+$buttonSource = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $root 'src\ActionButton.cs')))
+$sourceText = $sourceText.Replace('$EmbeddedButtonSource = ""', ('$EmbeddedButtonSource = "' + $buttonSource + '"'))
 [System.IO.File]::WriteAllText($generatedSource, $sourceText, (New-Object System.Text.UTF8Encoding($true)))
 
 try {

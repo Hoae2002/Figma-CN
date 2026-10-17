@@ -24,7 +24,7 @@ if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClo
 
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V7"
 $UpdaterDisableMarker = "FIGMA_ZH_DISABLE_BUILTIN_UPDATER"
-$PatcherVersion = "0.5.30"
+$PatcherVersion = "0.5.31"
 $PayloadFile = "i.js"
 $MainPayloadFile = "m.js"
 $FeatureConfigFile = "features.json"
@@ -33,6 +33,7 @@ $LicenseCommentTarget = "/*! Bundled license information:"
 $OfficialReleasesXmlUrl = "https://desktop.figma.com/win/releases.xml"
 $OfficialInstallerUrl = "https://desktop.figma.com/win/FigmaSetup.exe"
 $EmbeddedPayloadFiles = @{}
+$EmbeddedButtonSource = ""
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $script:UpdatedPayloadFiles = @{}
 $UpdateRepository = "https://raw.githubusercontent.com/Hoae2002/Figma-CN"
@@ -1623,10 +1624,19 @@ function Test-IsWindows11OrNewer {
   }
 }
 
+function Initialize-ActionButton {
+  if ('FigBoost.UI.ActionButton' -as [type]) { return }
+  $source = if ($EmbeddedButtonSource) {
+    [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($EmbeddedButtonSource))
+  } else { [IO.File]::ReadAllText((Join-Path (Get-BaseDir) 'src\ActionButton.cs')) }
+  Add-Type -TypeDefinition $source -ReferencedAssemblies System.Windows.Forms, System.Drawing
+}
+
 function Show-Gui {
   Add-Type -AssemblyName System.Windows.Forms
   Add-Type -AssemblyName System.Drawing
   [System.Windows.Forms.Application]::EnableVisualStyles()
+  Initialize-ActionButton
 
   $isWindows11OrNewer = Test-IsWindows11OrNewer
   $form = New-Object System.Windows.Forms.Form
@@ -1665,62 +1675,14 @@ function Show-Gui {
     return [pscustomobject]@{ Panel = $panel; TextBox = $textBox }
   }
 
-  function New-RoundedButtonPath {
-    param([System.Drawing.Rectangle]$Bounds, [int]$Radius)
-    $path = New-Object System.Drawing.Drawing2D.GraphicsPath
-    $diameter = $Radius * 2
-    $path.AddArc($Bounds.Left, $Bounds.Top, $diameter, $diameter, 180, 90)
-    $path.AddArc($Bounds.Right - $diameter, $Bounds.Top, $diameter, $diameter, 270, 90)
-    $path.AddArc($Bounds.Right - $diameter, $Bounds.Bottom - $diameter, $diameter, $diameter, 0, 90)
-    $path.AddArc($Bounds.Left, $Bounds.Bottom - $diameter, $diameter, $diameter, 90, 90)
-    $path.CloseFigure()
-    return $path
-  }
-
-  function Set-RoundedButtonRegion {
-    param([System.Windows.Forms.Button]$Button)
-    $rect = $Button.ClientRectangle
-    if ($rect.Width -le 0 -or $rect.Height -le 0) { return }
-    $path = New-RoundedButtonPath $rect 4
-    $Button.Region = New-Object System.Drawing.Region($path)
-    $path.Dispose()
-  }
-
   function Set-ButtonStyle {
     param(
-      [System.Windows.Forms.Button]$Button,
+      [FigBoost.UI.ActionButton]$Button,
       [System.Drawing.Color]$BackColor,
       [System.Drawing.Color]$ForeColor,
       [System.Drawing.Color]$BorderColor
     )
-    $Button.FlatStyle = "Flat"
-    $Button.FlatAppearance.BorderSize = 0
-    $Button.FlatAppearance.MouseOverBackColor = [System.Windows.Forms.ControlPaint]::Light($BackColor)
-    $Button.FlatAppearance.MouseDownBackColor = [System.Windows.Forms.ControlPaint]::Dark($BackColor)
-    $Button.BackColor = $BackColor
-    $Button.ForeColor = $ForeColor
-    $Button.TextAlign = "MiddleCenter"
-    $Button.Padding = New-Object System.Windows.Forms.Padding(0, 2, 0, 0)
-    $Button.Margin = New-Object System.Windows.Forms.Padding(0)
-    $Button.UseVisualStyleBackColor = $false
-    $Button.Tag = [pscustomobject]@{ BorderColor = $BorderColor }
-    Set-RoundedButtonRegion $Button
-    $Button.Add_Resize({ param($sender, $eventArgs) Set-RoundedButtonRegion $sender })
-    $Button.Add_Paint({
-      param($sender, $eventArgs)
-      $rect = $sender.ClientRectangle
-      if ($rect.Width -le 3 -or $rect.Height -le 3) { return }
-      $rect.X += 1
-      $rect.Y += 1
-      $rect.Width -= 3
-      $rect.Height -= 3
-      $eventArgs.Graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::None
-      $path = New-RoundedButtonPath $rect 4
-      $pen = New-Object System.Drawing.Pen($sender.Tag.BorderColor, 1)
-      $eventArgs.Graphics.DrawPath($pen, $path)
-      $pen.Dispose()
-      $path.Dispose()
-    })
+    $Button.Configure($BackColor, $ForeColor, $BorderColor)
   }
 
   function New-HomeLabel {
@@ -1743,7 +1705,7 @@ function Show-Gui {
   $subtitle = New-HomeLabel "为 Figma Desktop 安装中文界面" 24 50 430
   $subtitle.ForeColor = [System.Drawing.Color]::FromArgb(196, 207, 222)
 
-  $btnFigBoostUpdate = New-Object System.Windows.Forms.Button
+  $btnFigBoostUpdate = New-Object FigBoost.UI.ActionButton
   $btnFigBoostUpdate.Text = "更新 FigBoost 与词库"
   $btnFigBoostUpdate.SetBounds(($form.ClientSize.Width - 224), 26, 200, 36)
   $btnFigBoostUpdate.Anchor = "Top,Right"
@@ -1760,7 +1722,7 @@ function Show-Gui {
   $script:ValueCurrentPatch = New-HomeLabel "汉化：未检测" 20 58 190
   $script:ValueCurrentPayload = New-HomeLabel "可用词库：v$(Get-PayloadVersion)" 230 58 350
   $script:ValueCurrentPayload.Anchor = "Top,Left,Right"
-  $btnStatus = New-Object System.Windows.Forms.Button
+  $btnStatus = New-Object FigBoost.UI.ActionButton
   $btnStatus.Text = "重新检测"
   $btnStatus.SetBounds(($contentWidth - 140), 32, 120, 36)
   $btnStatus.Anchor = "Top,Right"
@@ -1771,12 +1733,12 @@ function Show-Gui {
   $appInput = New-InputBox 24 256 ($contentWidth - 272)
   $txtApp = $appInput.TextBox
   $txtApp.AccessibleName = "Figma 客户端位置"
-  $btnApplyAppPath = New-Object System.Windows.Forms.Button
+  $btnApplyAppPath = New-Object FigBoost.UI.ActionButton
   $btnApplyAppPath.Name = "ApplyAppPath"
   $btnApplyAppPath.Text = "保存路径"
   $btnApplyAppPath.SetBounds(($form.ClientSize.Width - 284), 256, 136, 34)
   $btnApplyAppPath.Anchor = "Top,Right"
-  $btnBrowse = New-Object System.Windows.Forms.Button
+  $btnBrowse = New-Object FigBoost.UI.ActionButton
   $btnBrowse.Text = "选择目录…"
   $btnBrowse.AccessibleName = "选择 Figma 客户端目录"
   $btnBrowse.SetBounds(($form.ClientSize.Width - 136), 256, 112, 34)
@@ -1790,7 +1752,7 @@ function Show-Gui {
   $txtRuntime = $runtimeInput.TextBox
   $txtRuntime.Text = $RuntimeDir
   $txtRuntime.AccessibleName = "汉化文件存放位置"
-  $btnBrowseRuntime = New-Object System.Windows.Forms.Button
+  $btnBrowseRuntime = New-Object FigBoost.UI.ActionButton
   $btnBrowseRuntime.Text = "选择目录…"
   $btnBrowseRuntime.AccessibleName = "选择汉化文件存放目录"
   $btnBrowseRuntime.SetBounds(($form.ClientSize.Width - 136), 356, 112, 34)
@@ -1802,10 +1764,10 @@ function Show-Gui {
   $labelNotice.Anchor = "Top,Left,Right"
   $labelNotice.ForeColor = [System.Drawing.Color]::FromArgb(150, 70, 0)
 
-  $btnInstall = New-Object System.Windows.Forms.Button
+  $btnInstall = New-Object FigBoost.UI.ActionButton
   $btnInstall.Text = "安装或更新汉化"
   $btnInstall.SetBounds(24, 468, 156, 40)
-  $btnUninstall = New-Object System.Windows.Forms.Button
+  $btnUninstall = New-Object FigBoost.UI.ActionButton
   $btnUninstall.Text = "卸载汉化"
   $btnUninstall.SetBounds(192, 468, 120, 40)
   <# Suspended: optional feature manager (board discovery and batch export).
@@ -1895,7 +1857,7 @@ function Show-Gui {
     $clientLabel = New-Object System.Windows.Forms.Label
     $clientLabel.SetBounds(16, 28, 370, 44)
     $clientLabel.Text = "当前版本：v$PatcherVersion`r`n最新版本：未检查"
-    $clientButton = New-Object System.Windows.Forms.Button
+    $clientButton = New-Object FigBoost.UI.ActionButton
     $clientButton.Text = '升级 FigBoost'
     $clientButton.SetBounds(414, 32, 148, 34)
     $clientGroup.Controls.AddRange(@($clientLabel, $clientButton))
@@ -1905,7 +1867,7 @@ function Show-Gui {
     $payloadGroup.SetBounds(20, 124, 580, 94)
     $payloadLabel = New-Object System.Windows.Forms.Label
     $payloadLabel.SetBounds(16, 28, 390, 44)
-    $payloadButton = New-Object System.Windows.Forms.Button
+    $payloadButton = New-Object FigBoost.UI.ActionButton
     $payloadButton.Text = '更新词库'
     $payloadButton.SetBounds(414, 32, 148, 34)
     $payloadGroup.Controls.AddRange(@($payloadLabel, $payloadButton))
@@ -1916,10 +1878,10 @@ function Show-Gui {
     $message = New-Object System.Windows.Forms.Label
     $message.SetBounds(22, 278, 576, 24)
     $message.AutoEllipsis = $true
-    $retry = New-Object System.Windows.Forms.Button
+    $retry = New-Object FigBoost.UI.ActionButton
     $retry.Text = '重新检查'
     $retry.SetBounds(328, 312, 130, 32)
-    $close = New-Object System.Windows.Forms.Button
+    $close = New-Object FigBoost.UI.ActionButton
     $close.Text = '关闭'
     $close.SetBounds(470, 312, 130, 32)
     foreach ($button in @($clientButton, $payloadButton, $retry, $close)) {
