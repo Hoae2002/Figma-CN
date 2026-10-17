@@ -27,7 +27,7 @@ if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClo
 
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V7"
 $UpdaterDisableMarker = "FIGMA_ZH_DISABLE_BUILTIN_UPDATER"
-$PatcherVersion = "0.5.48"
+$PatcherVersion = "0.5.49"
 $PayloadFile = "i.js"
 $MainPayloadFile = "m.js"
 $FeatureConfigFile = "features.json"
@@ -2325,7 +2325,7 @@ function Show-Gui {
       Get-CompleteStatus $current $txtRuntime.Text
     } {
       param($result)
-      Show-InfoMessage ("检测完成。`r`n`r`nFigma 路径：$($result.AppDir)`r`nFigma 版本：$($result.FigmaVersion)`r`n词库版本：v$($result.PayloadVersion)`r`n补丁状态：$(if ($result.Patched) { "已安装" } else { "未安装" })")
+      Show-InfoMessage ("检测完成。`r`n`r`nFigma 版本：$($result.FigmaVersion)`r`n汉化状态：$(if ($result.Patched) { "已安装" } else { "未安装" })`r`n词库版本：v$($result.PayloadVersion)")
     } "检测失败" "正在检测当前版本..."
   })
   # $btnFeatureManager.Add_Click({ Show-FeatureInstallDialog })
