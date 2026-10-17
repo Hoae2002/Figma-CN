@@ -127,7 +127,7 @@ namespace FigBoost.UI
             return Color.FromArgb((int)(a.R + (b.R - a.R) * amount),
                 (int)(a.G + (b.G - a.G) * amount), (int)(a.B + (b.B - a.B) * amount));
         }
-        private static GraphicsPath Rounded(RectangleF rect, float radius)
+        internal static GraphicsPath Rounded(RectangleF rect, float radius)
         {
             var path = new GraphicsPath();
             float diameter = radius * 2;
@@ -176,6 +176,40 @@ namespace FigBoost.UI
         {
             if (disposing) { disposed = true; animation.Dispose(); }
             base.Dispose(disposing);
+        }
+    }
+
+    // Paint the read-only path surface without a native square window border.
+    public class PathPanel : Panel
+    {
+        public PathPanel()
+        {
+            BorderStyle = BorderStyle.None;
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint |
+                ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+        }
+
+        protected override void OnPaintBackground(PaintEventArgs e)
+        {
+            e.Graphics.Clear(Parent == null ? SystemColors.Control : Parent.BackColor);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            if (Width < 16 || Height < 16) return;
+            OnPaintBackground(e);
+            float scale = e.Graphics.DpiX / 96f;
+            var rect = new RectangleF(scale / 2, scale / 2, Width - scale, Height - scale);
+            Color outline = SystemInformation.HighContrast ? SystemColors.WindowText : Color.FromArgb(209, 217, 227);
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            using (var path = ActionButton.Rounded(rect, 6 * scale))
+            using (var brush = new SolidBrush(BackColor))
+            using (var pen = new Pen(outline, scale))
+            {
+                e.Graphics.FillPath(brush, path);
+                e.Graphics.DrawPath(pen, path);
+            }
+            base.OnPaint(e);
         }
     }
 }

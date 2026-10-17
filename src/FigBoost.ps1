@@ -24,7 +24,7 @@ if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClo
 
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V7"
 $UpdaterDisableMarker = "FIGMA_ZH_DISABLE_BUILTIN_UPDATER"
-$PatcherVersion = "0.5.32"
+$PatcherVersion = "0.5.33"
 $PayloadFile = "i.js"
 $MainPayloadFile = "m.js"
 $FeatureConfigFile = "features.json"
@@ -1654,12 +1654,11 @@ function Show-Gui {
 
   function New-InputBox {
     param([int]$Left, [int]$Top, [int]$Width)
-    $panel = New-Object System.Windows.Forms.Panel
+    $panel = New-Object FigBoost.UI.PathPanel
     $panel.Left = $Left
     $panel.Top = $Top
     $panel.Width = $Width
     $panel.Height = 34
-    $panel.BorderStyle = "FixedSingle"
     $panel.BackColor = [System.Drawing.Color]::FromArgb(237, 240, 244)
     $panel.Anchor = "Top,Left,Right"
 
