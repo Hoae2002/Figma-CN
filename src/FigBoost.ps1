@@ -27,7 +27,7 @@ if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClo
 
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V7"
 $UpdaterDisableMarker = "FIGMA_ZH_DISABLE_BUILTIN_UPDATER"
-$PatcherVersion = "0.5.47"
+$PatcherVersion = "0.5.48"
 $PayloadFile = "i.js"
 $MainPayloadFile = "m.js"
 $FeatureConfigFile = "features.json"
@@ -2337,7 +2337,7 @@ function Show-Gui {
     } {
       param($result)
       if ($result.AlreadyPatched) {
-        Show-InfoMessage ("汉化已安装，词库与当前 FigBoost 内置版本一致，无需重复安装。`r`n`r`nFigBoost 每次启动会自动检查更新，发现新版后会在右上角显示绿色升级箭头。`r`n`r`nFigma 版本：$($result.FigmaVersion)`r`n已安装词库：v$($result.PayloadVersion)")
+        Show-InfoMessage ("当前内置词库已安装，无需重复安装。`r`n`r`nFigma 版本：$($result.FigmaVersion)`r`n已安装词库：v$($result.PayloadVersion)")
       } else {
         Show-InfoMessage ("安装成功。`r`n`r`nFigma 版本：$($result.FigmaVersion)`r`n词库版本：v$($result.PayloadVersion)`r`n补丁状态：已安装")
       }
