@@ -45,10 +45,21 @@
   function isProtectedSystemLabel(element, source) {
     if (isFileBrowserMetadata(element, source)) return true;
     const text = P.normalize(source);
-    if (/^\/files\/team\/[^/]+\/team-admin-console\/members\/?$/.test(window.location.pathname)
-      && !P.closestInBatch(element, P.protectedSelector)) {
-      if (text === "People" && P.closestInBatch(element, "[data-testid='admin-settings-header'] h1")) return true;
-      if (text === "Filter" && P.closestInBatch(element, "[data-testid='table-filter-popover'] h2")) return true;
+    const adminRoute = window.location.pathname.match(/^\/files\/team\/[^/]+\/team-admin-console\/(members|drafts|settings)\/?$/);
+    if (adminRoute && !P.closestInBatch(element, P.protectedSelector)) {
+      const pageTitle = { members: "People", drafts: "Unassigned drafts", settings: "Settings" }[adminRoute[1]];
+      if (text === pageTitle && P.closestInBatch(element, "[data-testid='admin-settings-header'] h1")) return true;
+      if (adminRoute[1] === "members" && text === "Filter" && P.closestInBatch(element, "[data-testid='table-filter-popover'] h2")) return true;
+      if (adminRoute[1] === "settings") {
+        if ((text === "Plan" || text === "Resources")
+          && P.closestInBatch(element, `section[data-testid='settings-section-${text}'] > h2`)) return true;
+        const dialog = text === "Connected accounts" && P.closestInBatch(element, "[role='dialog']");
+        if (dialog && P.closestInBatch(element, "h2")
+          && (dialog.getAttribute("aria-labelledby") || "").split(/\s+/).some(id => {
+            const title = document.getElementById(id);
+            return title && dialog.contains(title) && P.normalize(title.textContent) === "GitHub";
+          })) return true;
+      }
     }
     if (/^(?:Settings|Edit description|Upload Font|Change view history preference)$/.test(text)) {
       const heading = P.closestInBatch(element, "h1,h2,[role='heading']");

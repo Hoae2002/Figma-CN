@@ -24,6 +24,45 @@ function fixture(t, html, custom = {}, exact = {}, pageUrl = "https://www.figma.
 }
 const tick = () => new Promise(r => setTimeout(r, 50));
 
+test("admin drafts and settings translate system headings and split upgrade prose without changing names", async t => {
+  const dictionary = require("../payload/src/dictionary/zh-CN.js");
+  const upgrade = "Upgrade to the Professional plan or to an Organization and get access to shared team libraries, advanced security features and";
+  const description = "Connect GitHub to link your repositories to your design components, improve MCP results, and clone repositories for editing.";
+  for (const [route, title] of [["drafts", "Unassigned drafts"], ["settings", "Settings"]]) {
+    const { document, snapshot, runtime } = fixture(t, `<main>
+      <div data-testid="admin-settings-header"><h1><i18n-text>${title}</i18n-text></h1></div>
+      <section data-testid="settings-section-Plan"><h2><div>Plan</div></h2><i18n-text>${upgrade} <a href="/pricing"><i18n-text>more…</i18n-text></a></i18n-text></section>
+      <section data-testid="settings-section-Resources"><h2><div>Resources</div></h2></section>
+      <h1>${title}</h1><h2>Plan</h2><h2>Resources</h2><h2 data-testid="folder-name">${title}</h2>
+      <span>MCP connectors in Figma</span><span>Let users connect third-party MCP servers to bring tools and context into Figma</span>
+      </main><div role="dialog" aria-labelledby="github-title"><h2 id="github-title">GitHub</h2><h2>Connected accounts</h2>
+      <p>${description}</p><p>Upgrade plan to add more GitHub accounts</p><p>Your current plan supports one account only.</p>
+      <h2>Hoae2002</h2><span>Connected since Jun 4, 2026</span><button>Manage in GitHub</button><button>Remove from Figma</button></div>`,
+      {}, dictionary.exact, `https://www.figma.com/files/team/test/team-admin-console/${route}`, dictionary);
+    assert.equal(document.querySelector('[data-testid="admin-settings-header"] h1').textContent, dictionary.exact[title]);
+    assert.equal(document.querySelector('main > h1').textContent, title);
+    assert.equal(document.querySelector('[data-testid="folder-name"]').textContent, title);
+    assert.equal(document.querySelector('main > h2').textContent, "Plan");
+    assert.equal(document.querySelector('[role="dialog"] h2:last-of-type').textContent, "Hoae2002");
+    if (route === "settings") {
+      assert.equal(document.querySelector('[data-testid="settings-section-Plan"] h2').textContent, "套餐");
+      assert.equal(document.querySelector('[data-testid="settings-section-Resources"] h2').textContent, "资源");
+      assert.equal(document.querySelector('[data-testid="settings-section-Plan"] > i18n-text').textContent, "升级到专业版或组织版套餐，以使用共享团队库、高级安全功能以及 更多…");
+      assert.equal(document.querySelector('[role="dialog"] h2:nth-of-type(2)').textContent, "已连接账户");
+    } else {
+      assert.equal(document.querySelector('[data-testid="settings-section-Plan"] h2').textContent, "Plan");
+      assert.equal(document.querySelector('[role="dialog"] h2:nth-of-type(2)').textContent, "Connected accounts");
+    }
+    for (const element of document.querySelectorAll('main > span,[role="dialog"] p')) {
+      assert.ok(Object.values(dictionary.exact).includes(element.textContent));
+    }
+    assert.equal(document.querySelector('[role="dialog"] > span').textContent, "连接于 2026 年 6 月 4 日");
+    assert.deepEqual([...document.querySelectorAll('[role="dialog"] button')].map(e => e.textContent), ["在 GitHub 中管理", "从 Figma 移除"]);
+    runtime.apply({ ...snapshot, revision: 2, settings: { ...snapshot.settings, enabled: false } });
+    assert.equal(document.querySelector('[data-testid="admin-settings-header"] h1').textContent, title);
+  }
+});
+
 test("admin member labels translate while names and unrelated headings stay original", async t => {
   const dictionary = require("../payload/src/dictionary/zh-CN.js");
   const labels = ["Education status", "Verified", "Unverified", "Unverified users", "Limited access", "Joined", "Joined prior to tracking"];
