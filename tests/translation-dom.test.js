@@ -23,6 +23,28 @@ function fixture(t, html, custom = {}, exact = {}, pageUrl = "https://www.figma.
   return { w, runtime, localizer, snapshot, document: w.document };
 }
 const tick = () => new Promise(r => setTimeout(r, 50));
+test("file browser system dialog titles translate without exposing same-named user headings", async t => {
+  const dictionary = require("../payload/src/dictionary/zh-CN.js");
+  const titles = ["Settings", "Edit description", "Upload Font", "Change view history preference"];
+  const html = titles.map((title, index) => `<div role="dialog" aria-labelledby="dialog-title-${index}">
+    <h2 id="dialog-title-${index}"><i18n-text>${title}</i18n-text></h2>
+    <h2 data-testid="folder-name">${title}</h2><h2>${title}</h2>
+    <input value="${title}"><textarea>${title}</textarea>
+  </div><main><h2>${title}</h2></main>`).join("");
+  const { document, runtime, localizer, snapshot } = fixture(t, html, {}, dictionary.exact,
+    "https://www.figma.com/files/team/test/all-folders", dictionary);
+  titles.forEach((title, index) => assert.equal(document.getElementById(`dialog-title-${index}`).textContent, dictionary.exact[title]));
+  for (const element of document.querySelectorAll('h2:not([id]),textarea')) assert.ok(titles.includes(element.textContent));
+  for (const element of document.querySelectorAll('input')) assert.ok(titles.includes(element.value));
+  document.getElementById('dialog-title-0').innerHTML = '<i18n-text>Settings</i18n-text>';
+  localizer.enqueue(document.getElementById('dialog-title-0'));
+  await tick();
+  assert.equal(document.getElementById('dialog-title-0').textContent, "设置");
+  assert.equal(runtime.drain().requests.length, 0);
+  runtime.apply({ ...snapshot, revision: 2, settings: { ...snapshot.settings, enabled: false } });
+  titles.forEach((title, index) => assert.equal(document.getElementById(`dialog-title-${index}`).textContent, title));
+});
+
 test("reconnecting the same settings revision requeues requests and rejects old replies", async t => {
   const { document, runtime, snapshot } = fixture(t, '<div role="toolbar"><button>Save</button></div>', {}, {}, "https://www.figma.com/community");
   const first = runtime.drain().requests[0];

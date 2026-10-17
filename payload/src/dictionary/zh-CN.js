@@ -4220,7 +4220,17 @@
     "Copy link to chat": "复制聊天链接",
     "Add variations": "添加设计变体",
     "Adapt for mobile or desktop": "适配移动端或桌面端",
-    "Improve roughest screen": "完善最粗糙的页面"
+    "Improve roughest screen": "完善最粗糙的页面",
+    "Enable closed captioning when using audio inside your files.": "在文件中使用音频时启用隐藏式字幕。",
+    "Your uploaded fonts": "你上传的字体",
+    "Upload fonts for your personal use. These fonts will be available across the files you view or edit.": "上传供你个人使用的字体。这些字体可用于你查看或编辑的所有文件。",
+    "Upload font": "上传字体",
+    "Upload Font": "上传字体",
+    "By checking this box and uploading the font(s), I represent that I have all necessary rights to upload and authorize storage and use of the uploaded font(s) on the Figma platform.": "勾选此框并上传字体，即表示我声明拥有上传这些字体所需的全部权利，并授权 Figma 平台存储和使用所上传的字体。",
+    "On": "开启",
+    "You can see teammates’ history in your files, and they can see yours. (Recommended for collaboration and transparency.)": "你可以查看队友在你文件中的历史记录，他们也可以查看你的历史记录。（推荐开启，以便协作和保持信息透明。）",
+    "Your file history will no longer be recorded or visible to others. You also won’t be able to see your teammates’ file history.": "你的文件历史记录将不再被记录，也不会对他人显示。你也将无法查看队友的文件历史记录。",
+    "Add a description for this folder": "为此文件夹添加描述"
   };
 
   const phrases = [

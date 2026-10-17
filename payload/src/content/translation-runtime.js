@@ -45,6 +45,12 @@
   function isProtectedSystemLabel(element, source) {
     if (isFileBrowserMetadata(element, source)) return true;
     const text = P.normalize(source);
+    if (/^(?:Settings|Edit description|Upload Font|Change view history preference)$/.test(text)) {
+      const heading = P.closestInBatch(element, "h1,h2,[role='heading']");
+      const dialog = heading && P.closestInBatch(heading, "[role='dialog'],[role='alertdialog']");
+      if (dialog && heading.id && (dialog.getAttribute("aria-labelledby") || "").split(/\s+/).includes(heading.id)
+        && !P.closestInBatch(element, P.protectedSelector)) return true;
+    }
     if (!text || !protectedSystemLabels.some(pattern => pattern.test(text))) return false;
     return Boolean(P.closestInBatch(element,
       "[role='menu'],[role='menuitem'],[role='dialog'],[role='alertdialog']," +
