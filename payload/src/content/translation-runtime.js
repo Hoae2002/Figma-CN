@@ -45,6 +45,11 @@
   function isProtectedSystemLabel(element, source) {
     if (isFileBrowserMetadata(element, source)) return true;
     const text = P.normalize(source);
+    if (/^\/files\/team\/[^/]+\/team-admin-console\/members\/?$/.test(window.location.pathname)
+      && !P.closestInBatch(element, P.protectedSelector)) {
+      if (text === "People" && P.closestInBatch(element, "[data-testid='admin-settings-header'] h1")) return true;
+      if (text === "Filter" && P.closestInBatch(element, "[data-testid='table-filter-popover'] h2")) return true;
+    }
     if (/^(?:Settings|Edit description|Upload Font|Change view history preference)$/.test(text)) {
       const heading = P.closestInBatch(element, "h1,h2,[role='heading']");
       const dialog = heading && P.closestInBatch(heading, "[role='dialog'],[role='alertdialog']");

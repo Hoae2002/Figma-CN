@@ -46,6 +46,8 @@ const helpers = loadMenuHelpers();
 
 test("stable native menu dictionary remains available without the translation host", () => {
   assert.equal(helpers.localizeText("New Window"), "新建窗口");
+  assert.equal(helpers.localizeText("Reopen Closed Tab or Window"), "重新打开关闭的标签页或窗口");
+  assert.equal(helpers.localizeText("Recently Closed"), "最近关闭");
   const items = [{ label: "Help", submenu: { items: [{ label: "Reload" }] } }];
   assert.equal(helpers.localizeItems(items), true);
   assert.equal(items[0].label, "帮助");

@@ -23,6 +23,32 @@ function fixture(t, html, custom = {}, exact = {}, pageUrl = "https://www.figma.
   return { w, runtime, localizer, snapshot, document: w.document };
 }
 const tick = () => new Promise(r => setTimeout(r, 50));
+
+test("admin member labels translate while names and unrelated headings stay original", async t => {
+  const dictionary = require("../payload/src/dictionary/zh-CN.js");
+  const labels = ["Education status", "Verified", "Unverified", "Unverified users", "Limited access", "Joined", "Joined prior to tracking"];
+  const { document, localizer } = fixture(t, `<main><div data-testid="admin-settings-header"><h1><i18n-text>People</i18n-text></h1></div>
+    <h1>People</h1><h2>Filter</h2><h2 data-testid="folder-name">People</h2>
+    ${labels.map(s => `<span>${s}</span>`).join("")}
+    <span data-testid="team-name">Design Team</span><span data-testid="file-name">Verified</span>
+    <input value="People"><button>Remove from Design Team</button><button>Remove from 振易科技</button></main>
+    <div data-testid="table-filter-popover"><h2>Filter</h2><span>Unverified users</span></div>`, {}, dictionary.exact,
+    "https://www.figma.com/files/team/test/team-admin-console/members", dictionary);
+  assert.equal(document.querySelector('[data-testid="admin-settings-header"] h1').textContent, "成员");
+  assert.equal(document.querySelector('[data-testid="table-filter-popover"] h2').textContent, "筛选");
+  labels.forEach((s, i) => assert.equal(document.querySelectorAll('main > span')[i].textContent, dictionary.exact[s]));
+  assert.equal(document.querySelector('main > h1').textContent, "People");
+  assert.equal(document.querySelector('main > h2').textContent, "Filter");
+  assert.equal(document.querySelector('[data-testid="folder-name"]').textContent, "People");
+  assert.equal(document.querySelector('[data-testid="team-name"]').textContent, "Design Team");
+  assert.equal(document.querySelector('[data-testid="file-name"]').textContent, "Verified");
+  assert.equal(document.querySelector('input').value, "People");
+  assert.deepEqual([...document.querySelectorAll('button')].map(e => e.textContent), ["从 Design Team 移除", "从 振易科技 移除"]);
+  document.querySelector('[data-testid="admin-settings-header"] h1').innerHTML = '<i18n-text>People</i18n-text>';
+  await tick();
+  assert.equal(document.querySelector('[data-testid="admin-settings-header"] h1').textContent, "成员");
+  localizer.stop();
+});
 test("file browser system dialog titles translate without exposing same-named user headings", async t => {
   const dictionary = require("../payload/src/dictionary/zh-CN.js");
   const titles = ["Settings", "Edit description", "Upload Font", "Change view history preference"];
