@@ -140,6 +140,8 @@ $timer.Add_Tick({
       $client = Get-ChildControl $dialog '升级 FigBoost'
       $payload = Get-ChildControl $dialog '更新词库'
       Assert-Gui (-not $client.Enabled -and -not $payload.Enabled) 'Current versions must not enable update actions.'
+      Assert-Gui (-not $client.Visible -and -not $payload.Visible) 'Current versions must hide update actions.'
+      Assert-Gui ($null -ne (Get-ChildControl $dialog '检查完成。暂无可用更新。')) 'No-update result must match the hidden actions.'
       foreach ($group in @($client.Parent, $payload.Parent)) {
         foreach ($child in $group.Controls) {
           Assert-Gui ($child.Right -le $group.ClientSize.Width -and $child.Bottom -le $group.ClientSize.Height) 'Update content is clipped.'
@@ -151,11 +153,13 @@ $timer.Add_Tick({
     } elseif ($script:phase -eq 2 -and $dialog -and $script:requestCount -eq 2) {
       Assert-Gui ($null -ne (Get-ChildControl $dialog '检查失败，请确认网络后重新检查。')) 'Offline failure not shown.'
       Assert-Gui (-not (Get-ChildControl $dialog '升级 FigBoost').Enabled) 'Failed check left stale upgrade enabled.'
+      Assert-Gui (-not (Get-ChildControl $dialog '升级 FigBoost').Visible -and -not (Get-ChildControl $dialog '更新词库').Visible) 'Failed check must hide update actions.'
       $script:phase = 3
       (Get-ChildControl $dialog '重新检查').PerformClick()
     } elseif ($script:phase -eq 3 -and $dialog -and $script:requestCount -eq 3) {
       Assert-Gui ((Get-ChildControl $dialog '升级 FigBoost').Enabled) 'Retry did not enable available client upgrade.'
       Assert-Gui ((Get-ChildControl $dialog '更新词库').Enabled) 'Available compatible dictionary update disabled.'
+      Assert-Gui ((Get-ChildControl $dialog '升级 FigBoost').Visible -and (Get-ChildControl $dialog '更新词库').Visible) 'Available updates must show their actions.'
       $script:phase = 4
       (Get-ChildControl $dialog '重新检查').PerformClick()
     } elseif ($script:phase -eq 4 -and $dialog -and $script:requestCount -eq 4) {

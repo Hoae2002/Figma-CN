@@ -24,7 +24,7 @@ if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClo
 
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V7"
 $UpdaterDisableMarker = "FIGMA_ZH_DISABLE_BUILTIN_UPDATER"
-$PatcherVersion = "0.5.29"
+$PatcherVersion = "0.5.30"
 $PayloadFile = "i.js"
 $MainPayloadFile = "m.js"
 $FeatureConfigFile = "features.json"
@@ -1934,6 +1934,8 @@ function Show-Gui {
       $payloadLabel.Text = "当前已安装：$(if ($installed) { "v$installed" } else { '未安装' })`r`n最新版本：未检查"
       $clientButton.Enabled = $false
       $payloadButton.Enabled = $false
+      $clientButton.Visible = $false
+      $payloadButton.Visible = $false
       $retry.Enabled = -not $state.Busy
       $close.Enabled = -not $state.Busy
       if ($state.Info) {
@@ -1943,6 +1945,8 @@ function Show-Gui {
         $payloadNew = $installed -and (Compare-VersionString $state.Info.payload.version $installed) -gt 0
         $hint = if (-not $installed) { '（请先安装汉化补丁）' } elseif (-not $compatible) { '（请先升级 FigBoost）' } elseif (-not $payloadNew) { '（无需更新）' } else { '' }
         $payloadLabel.Text = "当前已安装：$(if ($installed) { "v$installed" } else { '未安装' })`r`n最新版本：v$($state.Info.payload.version)$hint"
+        $clientButton.Visible = $clientNew
+        $payloadButton.Visible = [bool]$payloadNew
         $clientButton.Enabled = -not $state.Busy -and $clientNew
         $payloadButton.Enabled = -not $state.Busy -and $compatible -and $payloadNew -and (Compare-VersionString $state.Info.payload.version (Get-PayloadVersion)) -ge 0
       }
@@ -1955,7 +1959,8 @@ function Show-Gui {
       Refresh-UpdateActions
       try {
         $state.Info = @(Invoke-UpdateWorker { Get-LatestFigBoostUpdate })[-1]
-        $message.Text = '检查完成。可分别升级客户端或更新词库。'
+        Refresh-UpdateActions
+        $message.Text = if ($clientButton.Visible -or $payloadButton.Visible) { '检查完成。发现新版本。' } else { '检查完成。暂无可用更新。' }
       } catch {
         $state.Info = $null
         $message.Text = '检查失败，请确认网络后重新检查。'
