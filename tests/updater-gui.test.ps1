@@ -127,6 +127,7 @@ $timer.Add_Tick({
     $dialog = $windows | Where-Object { $_.Text -eq 'FigBoost 更新' } | Select-Object -First 1
     if ($UpdatePreview) {
       if ($script:phase -eq 0 -and $main -and $main.Controls.Find('UpdateIndicator', $true)[0].Visible) {
+        Assert-Gui (-not (Get-ChildControl $main '检查更新').Visible) 'Preview must hide check button when update is available.'
         Assert-HomeLayout $main
         $script:phase = 1
         $main.Controls.Find('UpdateIndicator', $true)[0].PerformClick()
@@ -155,6 +156,9 @@ $timer.Add_Tick({
       Assert-Gui ($script:autoCheckCount -eq 1) 'Startup must check once.'
       $indicator = $main.Controls.Find('UpdateIndicator', $true)[0]
       Assert-Gui ($indicator.Visible -eq (-not $Windows10)) 'Startup indicator does not match the automatic check.'
+      Assert-Gui ($entry.Visible -eq $Windows10) 'Check button and update arrow must be mutually exclusive.'
+      Assert-Gui ($entry.Width -eq 84 -and $entry.Height -eq 28) 'Check button must remain compact.'
+      Assert-Gui ($indicator.Right -eq $entry.Right) 'Update arrow must occupy the same right-aligned action position.'
       Assert-Gui ($indicator.AccessibleName -eq '发现新版本，更新 FigBoost 与词库' -and $indicator.TabStop) 'Update indicator must have a keyboard-accessible name.'
       Assert-Gui ($entry.Right -le $main.ClientSize.Width) 'Update entry extends outside main window.'
       $script:phase = 10 # Prevent timer re-entry while actions process WinForms events.
@@ -214,6 +218,7 @@ $timer.Add_Tick({
     } elseif ($script:phase -eq 1 -and $dialog -and $script:requestCount -eq 1) {
       Assert-Gui (-not (Get-ChildControl $dialog '立即更新').Visible) 'Current version must hide the update action.'
       Assert-Gui (-not $main.Controls.Find('UpdateIndicator', $true)[0].Visible) 'Current version must hide the indicator.'
+      Assert-Gui (Get-ChildControl $main '检查更新').Visible 'Current version must restore the check button.'
       Assert-Gui ($null -eq (Get-ChildControl $dialog '更新软件') -and $null -eq (Get-ChildControl $dialog '更新词库')) 'Separate update actions remain.'
       Assert-Gui ($null -ne (Get-ChildControl $dialog '已是最新版本')) 'Current-version feedback missing.'
       Assert-Gui ($dialog.Controls.Find('ClientUpdateVersion', $true)[0].Text -eq "FigBoost：v$PatcherVersion") 'Current software version incorrect.'
@@ -230,6 +235,7 @@ $timer.Add_Tick({
     } elseif ($script:phase -eq 3 -and $dialog -and $script:requestCount -eq 3) {
       Assert-Gui ((Get-ChildControl $dialog '立即更新').Enabled) 'Unified update is unavailable.'
       Assert-Gui $main.Controls.Find('UpdateIndicator', $true)[0].Visible 'Available release must show green indicator.'
+      Assert-Gui (-not (Get-ChildControl $main '检查更新').Visible) 'Available release must hide check button.'
       Assert-Gui ($dialog.Controls.Find('ClientUpdateVersion', $true)[0].Text -eq "FigBoost：v$PatcherVersion → v999.0.0") 'Software upgrade path missing.'
       Assert-Gui ($dialog.Controls.Find('PayloadUpdateVersion', $true)[0].Text -eq ("内置词库：v" + (Get-PayloadVersion) + " → v999.0.0")) 'Dictionary upgrade path missing.'
       Assert-Gui ($null -ne (Get-ChildControl $dialog '软件与汉化词库一起更新')) 'Combined update explanation missing.'
@@ -246,6 +252,7 @@ $timer.Add_Tick({
     } elseif ($script:phase -eq 4 -and $dialog -and $script:requestCount -eq 4) {
       Assert-Gui (-not (Get-ChildControl $dialog '立即更新').Enabled) 'Inconsistent release was enabled.'
       Assert-Gui (-not $main.Controls.Find('UpdateIndicator', $true)[0].Visible) 'Invalid release left a stale indicator.'
+      Assert-Gui (Get-ChildControl $main '检查更新').Visible 'Failed check must restore manual checking.'
       Assert-HomeLayout $dialog
       $script:phase = 5
       Remove-Item -LiteralPath (Join-Path $RuntimeDir 'i.js') -Force

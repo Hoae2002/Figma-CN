@@ -11,7 +11,21 @@ function Send-ControlEvent($Button, [string]$Name, $EventArgs) {
   $method = $Button.GetType().GetMethod($Name, [Reflection.BindingFlags]'Instance,NonPublic')
   [void]$method.Invoke($Button, @($EventArgs.PSObject.BaseObject))
 }
-function Read-State($Button, [string]$Name) { return $Button.GetType().GetField($Name, [Reflection.BindingFlags]'Instance,NonPublic').GetValue($Button) }
+function Read-State($Button, [string]$Name) { return [FigBoost.UI.ActionButton].GetField($Name, [Reflection.BindingFlags]'Instance,NonPublic').GetValue($Button) }
+function Count-GreenPixels($Button) {
+  $bitmap = New-Object Drawing.Bitmap($Button.Width, $Button.Height)
+  try {
+    $Button.DrawToBitmap($bitmap, $Button.ClientRectangle)
+    $count = 0
+    for ($x = 0; $x -lt $bitmap.Width; $x++) {
+      for ($y = 0; $y -lt $bitmap.Height; $y++) {
+        $pixel = $bitmap.GetPixel($x, $y)
+        if ($pixel.G -gt 150 -and $pixel.R -lt 80 -and $pixel.B -lt 100) { $count++ }
+      }
+    }
+    return $count
+  } finally { $bitmap.Dispose() }
+}
 function Assert-CleanCorners($Button) {
   $bitmap = New-Object Drawing.Bitmap($Button.Width, $Button.Height)
   try {
@@ -89,5 +103,35 @@ try {
   Assert-Button ((Read-State $button 'pressAmount') -eq 0) 'Reopened button retained a pressed appearance.'
   $button.Configure([Drawing.Color]::FromArgb(37, 99, 235), [Drawing.Color]::White, [Drawing.Color]::Transparent)
   Assert-CleanCorners $button
+  $indicator = New-Object FigBoost.UI.UpdateIndicatorButton
+  $indicator.SetBounds(180, 10, 36, 36)
+  $form.Controls.Add($indicator)
+  $normalPixels = Count-GreenPixels $indicator
+  Send-ControlEvent $indicator 'OnMouseEnter' ([EventArgs]::Empty)
+  Pump-Frames
+  $hoverPixels = Count-GreenPixels $indicator
+  Send-ControlEvent $indicator 'OnMouseDown' $down
+  Pump-Frames
+  $pressedPixels = Count-GreenPixels $indicator
+  if (-not [Windows.Forms.SystemInformation]::HighContrast) {
+    Assert-Button ($hoverPixels -gt $normalPixels) 'Update arrow does not grow on hover.'
+    Assert-Button ($pressedPixels -lt $hoverPixels) 'Update arrow does not shrink on press.'
+  }
+  Send-ControlEvent $indicator 'OnMouseLeave' ([EventArgs]::Empty)
+  Pump-Frames
+  Assert-Button ((Read-State $indicator 'pressAmount') -eq 0) 'Dragging out leaves update arrow pressed.'
+  Send-ControlEvent $indicator 'OnMouseUp' $down
+  Send-ControlEvent $indicator 'OnKeyDown' $key
+  Pump-Frames
+  Assert-Button ((Read-State $indicator 'pressAmount') -eq 1) 'Update arrow lacks keyboard press feedback.'
+  Send-ControlEvent $indicator 'OnLostFocus' ([EventArgs]::Empty)
+  Pump-Frames
+  $script:indicatorClicks = 0
+  $indicator.Add_Click({ $script:indicatorClicks++ })
+  $indicator.PerformClick()
+  $indicator.Enabled = $false
+  $indicator.PerformClick()
+  Assert-Button ($script:indicatorClicks -eq 1) 'Update arrow click is duplicated or ignores disabled state.'
+  Assert-Button (-not (Read-State $indicator 'animation').Enabled) 'Disabled update arrow retains animation timer.'
   Write-Host 'Button tests passed: hover, press, drag cancellation, native clicks, keyboard focus, disabled/hidden state, idle timers and clean rounded corners.'
 } finally { $form.Dispose() }

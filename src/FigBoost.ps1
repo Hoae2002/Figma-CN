@@ -1778,11 +1778,11 @@ function Show-Gui {
   $btnFigBoostUpdate.Name = 'UpdateIndicator'
   $btnFigBoostUpdate.AccessibleName = '发现新版本，更新 FigBoost 与词库'
   $btnFigBoostUpdate.Visible = $false
-  $btnFigBoostUpdate.SetBounds(($form.ClientSize.Width - 202), 26, 36, 36)
+  $btnFigBoostUpdate.SetBounds(($form.ClientSize.Width - 60), 26, 36, 36)
   $btnFigBoostUpdate.Anchor = "Top,Right"
   $btnCheckUpdate = New-Object FigBoost.UI.ActionButton
   $btnCheckUpdate.Text = '检查更新'
-  $btnCheckUpdate.SetBounds(($form.ClientSize.Width - 154), 26, 130, 36)
+  $btnCheckUpdate.SetBounds(($form.ClientSize.Width - 108), 30, 84, 28)
   $btnCheckUpdate.Anchor = 'Top,Right'
   $header.Controls.AddRange(@($title, $subtitle, $btnFigBoostUpdate, $btnCheckUpdate))
 
@@ -1921,6 +1921,7 @@ function Show-Gui {
   function Set-UpdateIndicator {
     $available = Test-FigBoostUpdateAvailable $updateState.Info
     $btnFigBoostUpdate.Visible = $available
+    $btnCheckUpdate.Visible = -not $available
     if ($available) { $toolTip.SetToolTip($btnFigBoostUpdate, "发现 FigBoost v$($updateState.Info.client.version)，点击更新软件与词库") }
   }
 

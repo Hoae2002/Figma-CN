@@ -16,6 +16,8 @@ namespace FigBoost.UI
         private Color border;
         private bool hover, mouseDown, keyDown, primary, disposed;
         private double hoverAmount, pressAmount, fromHover, fromPress, toHover, toPress;
+        protected double HoverAmount { get { return hoverAmount; } }
+        protected double PressAmount { get { return pressAmount; } }
         private int duration;
         [DllImport("user32.dll")]
         private static extern bool SystemParametersInfo(uint action, uint parameter, out bool value, uint flags);
@@ -180,24 +182,23 @@ namespace FigBoost.UI
     }
 
     // Small status glyph with a full button hit area and native keyboard access.
-    public class UpdateIndicatorButton : Button
+    public class UpdateIndicatorButton : ActionButton
     {
-        public UpdateIndicatorButton()
-        {
-            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint |
-                ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
-            FlatStyle = FlatStyle.Flat;
-            FlatAppearance.BorderSize = 0;
-            Cursor = Cursors.Hand;
-        }
-
         protected override void OnPaint(PaintEventArgs e)
         {
             e.Graphics.Clear(Parent == null ? SystemColors.Control : Parent.BackColor);
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-            float size = Math.Min(Width, Height) * 0.56f;
+            float diameter = Math.Min(Width, Height);
+            float size = diameter * 0.56f * (float)(1 + HoverAmount * 0.08 - PressAmount * 0.12);
             float x = (Width - size) / 2, y = (Height - size) / 2;
             Color green = SystemInformation.HighContrast ? SystemColors.Highlight : Color.FromArgb(35, 215, 53);
+            if (!Enabled) green = SystemColors.GrayText;
+            if (Enabled && HoverAmount > 0 && !SystemInformation.HighContrast)
+            {
+                float halo = diameter * 0.88f;
+                using (var glow = new SolidBrush(Color.FromArgb((int)(38 * HoverAmount), green)))
+                    e.Graphics.FillEllipse(glow, (Width - halo) / 2, (Height - halo) / 2, halo, halo);
+            }
             using (var fill = new SolidBrush(green)) e.Graphics.FillEllipse(fill, x, y, size, size);
             using (var pen = new Pen(SystemInformation.HighContrast ? SystemColors.HighlightText : Color.White, size * 0.09f))
             {
