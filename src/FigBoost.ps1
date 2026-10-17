@@ -24,7 +24,7 @@ if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClo
 
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V7"
 $UpdaterDisableMarker = "FIGMA_ZH_DISABLE_BUILTIN_UPDATER"
-$PatcherVersion = "0.5.26"
+$PatcherVersion = "0.5.27"
 $PayloadFile = "i.js"
 $MainPayloadFile = "m.js"
 $FeatureConfigFile = "features.json"
@@ -82,7 +82,7 @@ function ConvertFrom-PayloadUpdate {
   if ($Package.schema -ne 1) { throw "词库更新格式不受支持。" }
   Assert-UpdateVersion ([string]$Package.version)
   Assert-UpdateVersion ([string]$Package.minPatcherVersion)
-  if ((Compare-VersionString $PatcherVersion $Package.minPatcherVersion) -lt 0) { throw "此词库需要 FigBoost v$($Package.minPatcherVersion) 或更高版本，请先升级客户端。" }
+  if ((Compare-VersionString $PatcherVersion $Package.minPatcherVersion) -lt 0) { throw "此词库需要 FigBoost v$($Package.minPatcherVersion) 或更高版本，请先升级 FigBoost。" }
   $paths = @(
     "payload\manifest.json", "payload\src\dictionary\zh-CN.js", "payload\src\content\localizer-core.js",
     "payload\src\content\content.js", "payload\src\main\menu-localizer.js", "payload\src\shared\translation-policy.js",
@@ -1587,27 +1587,10 @@ function Format-StatusText {
 function Set-StatusLabels {
   param($Status)
   $Status = @($Status)[-1]
-  $script:ValuePatcher.Text = "v$($Status.PatcherVersion)"
-  $script:ValuePayload.Text = "v$($Status.PayloadVersion)"
-  $script:ValueFigmaVersion.Text = $Status.FigmaVersion
-  $script:ValuePatchState.Text = if ($Status.Patched) { "已安装" } else { "未安装" }
-  if ($script:ValueUpdaterGuardState) { $script:ValueUpdaterGuardState.Text = if ($Status.HasBuiltInUpdaterDisabled) { "已启用" } else { "未启用" } }
-  $script:ValueBackupState.Text = if ($Status.HasBackup) { "已存在" } else { "未找到" }
-  $script:ValueRuntimeState.Text = if ($Status.HasRuntimePayload) { "已生成" } else { "未生成" }
-  if ($script:ValueCurrentFigma) { $script:ValueCurrentFigma.Text = "当前版本：$($Status.FigmaVersion)" }
-  if ($script:ValueCurrentPath) { $script:ValueCurrentPath.Text = "客户端目录：$($Status.AppDir)" }
-  if ($script:ValueCurrentPatch) { $script:ValueCurrentPatch.Text = "补丁状态：$(if ($Status.Patched) { "已安装" } else { "未安装" })" }
-  if ($script:ValueOfficialLatest -and ($Status.PSObject.Properties.Name -contains "OfficialLatestVersion")) {
-    $compare = Compare-VersionString $Status.FigmaVersion $Status.OfficialLatestVersion
-    $latestState = if ($compare -lt 0) {
-      "可更新"
-    } elseif ($compare -eq 0) {
-      "已是最新"
-    } else {
-      "当前版本较新"
-    }
-    $script:ValueOfficialLatest.Text = "官方最新版：$($Status.OfficialLatestVersion)（$latestState）"
-  }
+  $script:ValueCurrentFigma.Text = "Figma $($Status.FigmaVersion)"
+  $script:ValueCurrentPatch.Text = if ($Status.Patched) { "汉化：已安装" } else { "汉化：未安装" }
+  $script:ValueCurrentPatch.ForeColor = if ($Status.Patched) { [System.Drawing.Color]::FromArgb(28, 113, 78) } else { [System.Drawing.Color]::FromArgb(100, 110, 125) }
+  $script:ValueCurrentPayload.Text = if ($Status.Patched -and $Status.HasRuntimePayload) { "已安装词库：v$($Status.PayloadVersion)" } else { "可用词库：v$(Get-PayloadVersion)" }
 }
 
 function Show-InfoMessage {
@@ -1640,9 +1623,9 @@ function Show-Gui {
   $form = New-Object System.Windows.Forms.Form
   $form.Text = "FigBoost v$PatcherVersion"
   $form.StartPosition = "CenterScreen"
-  $form.Width = 900
-  $form.Height = 650
-  $form.MinimumSize = New-Object System.Drawing.Size(860, 630)
+  $form.ClientSize = New-Object System.Drawing.Size(856, 576)
+  if ($isWindows11OrNewer) { $form.ClientSize = New-Object System.Drawing.Size(936, 576) }
+  $form.MinimumSize = $form.Size
   $form.BackColor = [System.Drawing.Color]::FromArgb(246, 248, 251)
   $form.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 9)
   try {
@@ -1731,337 +1714,137 @@ function Show-Gui {
     })
   }
 
+  function New-HomeLabel {
+    param([string]$Text, [int]$Left, [int]$Top, [int]$Width, [int]$Height = 22)
+    $label = New-Object System.Windows.Forms.Label
+    $label.Text = $Text
+    $label.SetBounds($Left, $Top, $Width, $Height)
+    $label.ForeColor = [System.Drawing.Color]::FromArgb(74, 85, 104)
+    return $label
+  }
+
+  $contentWidth = $form.ClientSize.Width - 48
   $header = New-Object System.Windows.Forms.Panel
-  $header.Left = 0
-  $header.Top = 0
-  $header.Width = 900
-  $header.Height = 72
+  $header.SetBounds(0, 0, $form.ClientSize.Width, 88)
   $header.Anchor = "Top,Left,Right"
   $header.BackColor = [System.Drawing.Color]::FromArgb(29, 36, 48)
-
-  $title = New-Object System.Windows.Forms.Label
-  $title.Text = "FigBoost"
-  $title.Left = 22
-  $title.Top = 14
-  $title.Width = 300
-  $title.Height = 26
+  $title = New-HomeLabel "FigBoost" 24 14 300 30
   $title.ForeColor = [System.Drawing.Color]::White
-  $title.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 13, [System.Drawing.FontStyle]::Bold)
-
-  $subtitle = New-Object System.Windows.Forms.Label
-  $subtitle.Text = "给官方 Figma Desktop 安装中文界面补丁"
-  $subtitle.Left = 22
-  $subtitle.Top = 42
-  $subtitle.Width = 620
-  $subtitle.Height = 20
+  $title.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 16, [System.Drawing.FontStyle]::Bold)
+  $subtitle = New-HomeLabel "为 Figma Desktop 安装中文界面" 24 50 430
   $subtitle.ForeColor = [System.Drawing.Color]::FromArgb(196, 207, 222)
-  $header.Controls.AddRange(@($title, $subtitle))
 
-  $currentGroup = New-Object System.Windows.Forms.GroupBox
-  $currentGroup.Text = "当前电脑 Figma 客户端信息"
-  $currentGroup.Left = 18
-  $currentGroup.Top = 88
-  $currentGroup.Width = 846
-  $currentGroup.Height = 86
+  $btnFigBoostUpdate = New-Object System.Windows.Forms.Button
+  $btnFigBoostUpdate.Text = "更新 FigBoost 与词库"
+  $btnFigBoostUpdate.SetBounds(($form.ClientSize.Width - 224), 26, 200, 36)
+  $btnFigBoostUpdate.Anchor = "Top,Right"
+  $header.Controls.AddRange(@($title, $subtitle, $btnFigBoostUpdate))
+
+  $currentGroup = New-Object System.Windows.Forms.Panel
+  $currentGroup.Name = "FigmaSummary"
+  $currentGroup.SetBounds(24, 112, $contentWidth, 100)
   $currentGroup.Anchor = "Top,Left,Right"
   $currentGroup.BackColor = [System.Drawing.Color]::White
-
-  $script:ValueCurrentFigma = New-Object System.Windows.Forms.Label
-  $script:ValueCurrentFigma.Text = "未检测"
-  $script:ValueCurrentFigma.Left = 18
-  $script:ValueCurrentFigma.Top = 28
-  $script:ValueCurrentFigma.Width = 200
-  $script:ValueCurrentFigma.Height = 28
+  $script:ValueCurrentFigma = New-HomeLabel "未检测到 Figma" 20 16 400 30
+  $script:ValueCurrentFigma.ForeColor = [System.Drawing.Color]::FromArgb(28, 35, 45)
   $script:ValueCurrentFigma.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 13, [System.Drawing.FontStyle]::Bold)
+  $script:ValueCurrentPatch = New-HomeLabel "汉化：未检测" 20 58 190
+  $script:ValueCurrentPayload = New-HomeLabel "可用词库：v$(Get-PayloadVersion)" 230 58 350
+  $script:ValueCurrentPayload.Anchor = "Top,Left,Right"
+  $btnStatus = New-Object System.Windows.Forms.Button
+  $btnStatus.Text = "重新检测"
+  $btnStatus.SetBounds(($contentWidth - 140), 32, 120, 36)
+  $btnStatus.Anchor = "Top,Right"
+  $currentGroup.Controls.AddRange(@($script:ValueCurrentFigma, $script:ValueCurrentPatch, $script:ValueCurrentPayload, $btnStatus))
 
-  $script:ValueOfficialLatest = New-Object System.Windows.Forms.Label
-  $script:ValueOfficialLatest.Text = "官方最新版：未检查"
-  $script:ValueOfficialLatest.Left = 220
-  $script:ValueOfficialLatest.Top = 32
-  $script:ValueOfficialLatest.Width = 270
-  $script:ValueOfficialLatest.Height = 22
-
-  $script:ValueCurrentPatch = New-Object System.Windows.Forms.Label
-  $script:ValueCurrentPatch.Text = "补丁状态：未检测"
-  $script:ValueCurrentPatch.Left = 510
-  $script:ValueCurrentPatch.Top = 32
-  $script:ValueCurrentPatch.Width = 150
-  $script:ValueCurrentPatch.Height = 22
-
-  $script:ValueCurrentPath = New-Object System.Windows.Forms.Label
-  $script:ValueCurrentPath.Text = "客户端目录：未检测"
-  $script:ValueCurrentPath.Left = 18
-  $script:ValueCurrentPath.Top = 58
-  $script:ValueCurrentPath.Width = 790
-  $script:ValueCurrentPath.Height = 22
-  $script:ValueCurrentPath.AutoEllipsis = $true
-
-  $currentGroup.Controls.AddRange(@($script:ValueCurrentFigma, $script:ValueOfficialLatest, $script:ValueCurrentPatch, $script:ValueCurrentPath))
-
-  $labelApp = New-Object System.Windows.Forms.Label
-  $labelApp.Text = "Figma 客户端 app-* 目录"
-  $labelApp.Left = 18
-  $labelApp.Top = 190
-  $labelApp.Width = 160
-  $labelApp.Height = 18
-
-  $appInput = New-InputBox 18 212 730
+  $labelApp = New-HomeLabel "Figma 客户端位置" 24 232 $contentWidth
+  $labelApp.ForeColor = [System.Drawing.Color]::FromArgb(28, 35, 45)
+  $appInput = New-InputBox 24 256 ($contentWidth - 272)
   $txtApp = $appInput.TextBox
-  $txtApp.Text = ""
-
-  $btnBrowse = New-Object System.Windows.Forms.Button
-  $btnBrowse.Text = "浏览"
-  $btnBrowse.Left = 764
-  $btnBrowse.Top = 212
-  $btnBrowse.Width = 100
-  $btnBrowse.Height = 34
-  $btnBrowse.Anchor = "Top,Right"
-
+  $txtApp.AccessibleName = "Figma 客户端位置"
   $btnApplyAppPath = New-Object System.Windows.Forms.Button
-  $btnApplyAppPath.Text = "保存客户端路径"
-  $btnApplyAppPath.Left = 630
-  $btnApplyAppPath.Top = 212
-  $btnApplyAppPath.Width = 118
-  $btnApplyAppPath.Height = 34
+  $btnApplyAppPath.Name = "ApplyAppPath"
+  $btnApplyAppPath.Text = "保存路径"
+  $btnApplyAppPath.SetBounds(($form.ClientSize.Width - 284), 256, 136, 34)
   $btnApplyAppPath.Anchor = "Top,Right"
-  $appInput.Panel.Width = 596
-  $txtApp.Width = 564
+  $btnBrowse = New-Object System.Windows.Forms.Button
+  $btnBrowse.Text = "选择目录…"
+  $btnBrowse.AccessibleName = "选择 Figma 客户端目录"
+  $btnBrowse.SetBounds(($form.ClientSize.Width - 136), 256, 112, 34)
+  $btnBrowse.Anchor = "Top,Right"
+  $labelAppHint = New-HomeLabel "选择包含 Figma.exe 的 app-* 文件夹，或填写空目录迁移客户端。" 24 298 $contentWidth
+  $labelAppHint.Anchor = "Top,Left,Right"
 
-  $labelRuntime = New-Object System.Windows.Forms.Label
-  $labelRuntime.Text = "补丁文件保存目录"
-  $labelRuntime.Left = 18
-  $labelRuntime.Top = 252
-  $labelRuntime.Width = 160
-  $labelRuntime.Height = 18
-
-  $runtimeInput = New-InputBox 18 274 730
+  $labelRuntime = New-HomeLabel "汉化文件存放位置" 24 332 $contentWidth
+  $labelRuntime.ForeColor = [System.Drawing.Color]::FromArgb(28, 35, 45)
+  $runtimeInput = New-InputBox 24 356 ($contentWidth - 124)
   $txtRuntime = $runtimeInput.TextBox
   $txtRuntime.Text = $RuntimeDir
-
+  $txtRuntime.AccessibleName = "汉化文件存放位置"
   $btnBrowseRuntime = New-Object System.Windows.Forms.Button
-  $btnBrowseRuntime.Text = "浏览"
-  $btnBrowseRuntime.Left = 764
-  $btnBrowseRuntime.Top = 274
-  $btnBrowseRuntime.Width = 100
-  $btnBrowseRuntime.Height = 34
+  $btnBrowseRuntime.Text = "选择目录…"
+  $btnBrowseRuntime.AccessibleName = "选择汉化文件存放目录"
+  $btnBrowseRuntime.SetBounds(($form.ClientSize.Width - 136), 356, 112, 34)
   $btnBrowseRuntime.Anchor = "Top,Right"
+  $labelRuntimeHint = New-HomeLabel "Figma 运行时需要读取这些文件，请保留此目录。" 24 398 $contentWidth
+  $labelRuntimeHint.Anchor = "Top,Left,Right"
 
-  $labelNotice = New-Object System.Windows.Forms.Label
-  $labelNotice.Text = "安装或卸载汉化补丁会先关闭 Figma。请先保存未同步的工作。"
-  $labelNotice.Left = 18
-  $labelNotice.Top = 316
-  $labelNotice.Width = 700
+  $labelNotice = New-HomeLabel "安装、更新或卸载汉化可能关闭 Figma，请先保存工作。" 24 436 $contentWidth
   $labelNotice.Anchor = "Top,Left,Right"
   $labelNotice.ForeColor = [System.Drawing.Color]::FromArgb(150, 70, 0)
 
-  $btnStatus = New-Object System.Windows.Forms.Button
-  $btnStatus.Text = "检测当前 Figma"
-  $btnStatus.Left = 18
-  $btnStatus.Top = 350
-  $btnStatus.Width = 170
-  $btnStatus.Height = 34
-
   $btnInstall = New-Object System.Windows.Forms.Button
-  $btnInstall.Text = "安装汉化补丁"
-  $btnInstall.Left = 202
-  $btnInstall.Top = 350
-  $btnInstall.Width = 130
-  $btnInstall.Height = 34
-
+  $btnInstall.Text = "安装或更新汉化"
+  $btnInstall.SetBounds(24, 468, 156, 40)
   $btnUninstall = New-Object System.Windows.Forms.Button
-  $btnUninstall.Text = "卸载汉化补丁"
-  $btnUninstall.Left = 344
-  $btnUninstall.Top = 350
-  $btnUninstall.Width = 130
-  $btnUninstall.Height = 34
-
+  $btnUninstall.Text = "卸载汉化"
+  $btnUninstall.SetBounds(192, 468, 120, 40)
   $btnFeatureManager = New-Object System.Windows.Forms.Button
   $btnFeatureManager.Text = "管理附加功能"
-  $btnFeatureManager.Left = 486
-  $btnFeatureManager.Top = 350
-  $btnFeatureManager.Width = 180
-  $btnFeatureManager.Height = 34
-
-  $btnFigBoostUpdate = New-Object System.Windows.Forms.Button
-  $btnFigBoostUpdate.Text = "检查 FigBoost 更新"
-  $btnFigBoostUpdate.Left = 680
-  $btnFigBoostUpdate.Top = 350
-  $btnFigBoostUpdate.Width = 184
-  $btnFigBoostUpdate.Height = 34
-  $btnFigBoostUpdate.Anchor = "Top,Left,Right"
+  $btnFeatureManager.SetBounds(($form.ClientSize.Width - 184), 468, 160, 40)
+  $btnFeatureManager.Anchor = "Top,Right"
 
   foreach ($button in @($btnBrowse, $btnApplyAppPath, $btnBrowseRuntime, $btnStatus, $btnInstall, $btnUninstall, $btnFeatureManager, $btnFigBoostUpdate)) {
-    if ($button -ne $btnFeatureManager) {
-      Set-ButtonStyle $button `
-        ([System.Drawing.Color]::FromArgb(244, 247, 251)) `
-        ([System.Drawing.Color]::FromArgb(28, 35, 45)) `
-        ([System.Drawing.Color]::FromArgb(140, 154, 174))
+    if ($button -eq $btnInstall) {
+      Set-ButtonStyle $button ([System.Drawing.Color]::FromArgb(37, 99, 235)) ([System.Drawing.Color]::White) ([System.Drawing.Color]::Transparent)
     } else {
-      Set-ButtonStyle $button `
-        ([System.Drawing.Color]::FromArgb(18, 119, 242)) `
-        ([System.Drawing.Color]::White) `
-        ([System.Drawing.Color]::Transparent)
+      Set-ButtonStyle $button ([System.Drawing.Color]::White) ([System.Drawing.Color]::FromArgb(28, 35, 45)) ([System.Drawing.Color]::FromArgb(209, 217, 227))
     }
   }
 
-  $progressLabel = New-Object System.Windows.Forms.Label
-  $progressLabel.Text = "准备就绪"
-  $progressLabel.Left = 18
-  $progressLabel.Top = 394
-  $progressLabel.Width = 846
-  $progressLabel.Height = 18
-  $progressLabel.Anchor = "Top,Left,Right"
-  $progressLabel.ForeColor = [System.Drawing.Color]::FromArgb(74, 85, 104)
-  $progressLabel.Visible = $false
+  $toolTip = New-Object System.Windows.Forms.ToolTip
+  $toolTip.SetToolTip($btnInstall, "安装汉化补丁，或应用当前可用的词库。获取新版请使用右上角更新入口。")
+  $toolTip.SetToolTip($btnFigBoostUpdate, "检查并升级 FigBoost 补丁器，或下载最新汉化词库。")
+  $toolTip.SetToolTip($btnStatus, "重新读取本机 Figma 版本和汉化状态，不检查在线更新。")
+  $toolTip.SetToolTip($btnUninstall, "移除汉化补丁并恢复原始客户端，保留个人汉化设置。")
 
+  $refreshPathAction = {
+    $btnApplyAppPath.Enabled = -not [string]::IsNullOrWhiteSpace($txtApp.Text)
+    $existingClient = $false
+    try { $existingClient = Test-FigmaAppDir $txtApp.Text } catch {}
+    if ($existingClient) {
+      $btnApplyAppPath.Text = "保存路径"
+      $labelAppHint.Text = "已找到 Figma 客户端。保存后将优先使用此路径。"
+    } elseif ($btnApplyAppPath.Enabled) {
+      $btnApplyAppPath.Text = "迁移到此目录"
+      $labelAppHint.Text = "迁移需要空目录：会关闭 Figma，将客户端复制到此处，并更新快捷方式。"
+    } else {
+      $btnApplyAppPath.Text = "保存路径"
+      $labelAppHint.Text = "选择包含 Figma.exe 的 app-* 文件夹，或填写空目录迁移客户端。"
+    }
+  }
+  $txtApp.Add_TextChanged($refreshPathAction)
+  & $refreshPathAction
+
+  $progressLabel = New-HomeLabel "" 24 528 $contentWidth
+  $progressLabel.Anchor = "Top,Left,Right"
+  $progressLabel.Visible = $false
   $progressBar = New-Object System.Windows.Forms.ProgressBar
-  $progressBar.Left = 18
-  $progressBar.Top = 414
-  $progressBar.Width = 846
-  $progressBar.Height = 12
+  $progressBar.SetBounds(24, 554, $contentWidth, 6)
   $progressBar.Anchor = "Top,Left,Right"
   $progressBar.Minimum = 0
   $progressBar.Maximum = 100
-  $progressBar.Value = 0
   $progressBar.Visible = $false
-
-  $statusGroup = New-Object System.Windows.Forms.GroupBox
-  $statusGroup.Text = "当前检测结果"
-  $statusGroup.Left = 18
-  $statusGroup.Top = 438
-  $statusGroup.Width = 846
-  $statusGroup.Height = 118
-  $statusGroup.Anchor = "Top,Left,Right"
-
-  function New-StatusLabel {
-    param([string]$Text, [int]$Top, [int]$Left = 18)
-    $label = New-Object System.Windows.Forms.Label
-    $label.Text = $Text
-    $label.Left = $Left
-    $label.Top = $Top
-    $label.Width = 120
-    return $label
-  }
-
-  function New-StatusValue {
-    param([int]$Top)
-    $label = New-Object System.Windows.Forms.Label
-    $label.Text = "未检测"
-    $label.Left = 145
-    $label.Top = $Top
-    $label.Width = 590
-    $label.AutoEllipsis = $true
-    return $label
-  }
-
-  $script:ValuePatcher = New-StatusValue 22
-  $script:ValuePatcher.Text = "v$PatcherVersion"
-  $script:ValuePayload = New-StatusValue 44
-  $script:ValuePayload.Text = "v$(Get-PayloadVersion)"
-  $script:ValueFigmaVersion = New-StatusValue 66
-  $script:ValuePatchState = New-StatusValue 22
-  $script:ValuePatchState.Left = 510
-  $script:ValueBackupState = New-StatusValue 44
-  $script:ValueBackupState.Left = 510
-  $script:ValueRuntimeState = New-StatusValue 66
-  $script:ValueRuntimeState.Left = 510
-  $script:ValueUpdaterGuardState = New-StatusValue 88
-  $script:ValueUpdaterGuardState.Left = 510
-
-  $statusGroup.Controls.AddRange(@(
-    (New-StatusLabel "补丁程序版本：" 22),
-    $script:ValuePatcher,
-    (New-StatusLabel "词库版本：" 44),
-    $script:ValuePayload,
-    (New-StatusLabel "Figma 版本：" 66),
-    $script:ValueFigmaVersion,
-    (New-StatusLabel "补丁状态：" 22 390),
-    $script:ValuePatchState,
-    (New-StatusLabel "备份状态：" 44 390),
-    $script:ValueBackupState,
-    (New-StatusLabel "运行时文件：" 66 390),
-    $script:ValueRuntimeState,
-    (New-StatusLabel "内置更新拦截：" 88 390),
-    $script:ValueUpdaterGuardState
-  ))
-
-  if ($isWindows11OrNewer) {
-    $form.Width = 1000
-    $form.Height = 700
-    $form.MinimumSize = New-Object System.Drawing.Size(960, 680)
-    $header.Width = 1000
-
-    $currentGroup.Width = 946
-    $currentGroup.Height = 104
-    $script:ValueCurrentFigma.Width = 320
-    $script:ValueOfficialLatest.Left = 350
-    $script:ValueOfficialLatest.Width = 360
-    $script:ValueCurrentPatch.Left = 740
-    $script:ValueCurrentPatch.Width = 180
-    $script:ValueCurrentPath.Top = 66
-    $script:ValueCurrentPath.Width = 900
-
-    $labelApp.Top = 210
-    $labelApp.Width = 240
-    $labelApp.AutoSize = $true
-    $appInput.Panel.Top = 232
-    $appInput.Panel.Width = 690
-    $txtApp.Width = 658
-    $btnApplyAppPath.Left = 726
-    $btnApplyAppPath.Top = 232
-    $btnApplyAppPath.Width = 128
-    $btnBrowse.Left = 864
-    $btnBrowse.Top = 232
-
-    $labelRuntime.Top = 278
-    $labelRuntime.Width = 220
-    $labelRuntime.AutoSize = $true
-    $runtimeInput.Panel.Top = 300
-    $runtimeInput.Panel.Width = 836
-    $txtRuntime.Width = 804
-    $btnBrowseRuntime.Left = 864
-    $btnBrowseRuntime.Top = 300
-
-    $labelNotice.Top = 348
-    $labelNotice.Width = 900
-
-    $btnStatus.Left = 18
-    $btnStatus.Top = 384
-    $btnStatus.Width = 178
-    $btnInstall.Left = 210
-    $btnInstall.Top = 384
-    $btnInstall.Width = 150
-    $btnUninstall.Left = 374
-    $btnUninstall.Top = 384
-    $btnUninstall.Width = 150
-    $btnFeatureManager.Left = 538
-    $btnFeatureManager.Top = 384
-    $btnFeatureManager.Width = 190
-    $btnFigBoostUpdate.Left = 742
-    $btnFigBoostUpdate.Top = 384
-    $btnFigBoostUpdate.Width = 222
-
-    $progressLabel.Top = 436
-    $progressLabel.Width = 946
-    $progressBar.Top = 456
-    $progressBar.Width = 946
-
-    $statusGroup.Top = 488
-    $statusGroup.Width = 946
-    $statusGroup.Height = 128
-    foreach ($control in $statusGroup.Controls) {
-      if ($control.Left -eq 145) { $control.Width = 650 }
-      if ($control.Left -eq 510) { $control.Left = 600; $control.Width = 300 }
-      if ($control.Left -eq 390) { $control.Left = 480 }
-    }
-
-    $workingArea = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
-    $form.StartPosition = "Manual"
-    $form.Location = New-Object System.Drawing.Point(
-      ([Math]::Max($workingArea.Left, $workingArea.Left + [int](($workingArea.Width - $form.Width) / 2))),
-      ([Math]::Max($workingArea.Top, $workingArea.Top + [int](($workingArea.Height - $form.Height) / 2)))
-    )
-  }
 
   function Set-ProgressState {
     param([int]$Percent, [string]$Message)
@@ -2102,7 +1885,7 @@ function Show-Gui {
     $clientLabel.SetBounds(16, 28, 370, 44)
     $clientLabel.Text = "当前版本：v$PatcherVersion`r`n最新版本：未检查"
     $clientButton = New-Object System.Windows.Forms.Button
-    $clientButton.Text = '升级客户端'
+    $clientButton.Text = '升级 FigBoost'
     $clientButton.SetBounds(414, 32, 148, 34)
     $clientGroup.Controls.AddRange(@($clientLabel, $clientButton))
 
@@ -2117,7 +1900,7 @@ function Show-Gui {
     $payloadGroup.Controls.AddRange(@($payloadLabel, $payloadButton))
 
     $notice = New-Object System.Windows.Forms.Label
-    $notice.Text = "升级客户端会重新打开 FigBoost。更新词库前请保存 Figma 工作；`r`n应用词库时会关闭并重新打开正在运行的 Figma，保留汉化设置和个人缓存。"
+    $notice.Text = "升级 FigBoost 会重新打开补丁器。更新词库前请保存 Figma 工作；`r`n应用词库时会关闭并重新打开正在运行的 Figma，保留汉化设置和个人缓存。"
     $notice.SetBounds(22, 230, 578, 40)
     $message = New-Object System.Windows.Forms.Label
     $message.SetBounds(22, 278, 576, 24)
@@ -2147,7 +1930,7 @@ function Show-Gui {
         $clientLabel.Text = "当前版本：v$PatcherVersion`r`n最新版本：v$($state.Info.client.version)$(if (-not $clientNew) { '（无需更新）' })"
         $compatible = (Compare-VersionString $PatcherVersion $state.Info.payload.minPatcherVersion) -ge 0
         $payloadNew = $installed -and (Compare-VersionString $state.Info.payload.version $installed) -gt 0
-        $hint = if (-not $installed) { '（请先安装汉化补丁）' } elseif (-not $compatible) { '（请先升级客户端）' } elseif (-not $payloadNew) { '（无需更新）' } else { '' }
+        $hint = if (-not $installed) { '（请先安装汉化补丁）' } elseif (-not $compatible) { '（请先升级 FigBoost）' } elseif (-not $payloadNew) { '（无需更新）' } else { '' }
         $payloadLabel.Text = "当前已安装：$(if ($installed) { "v$installed" } else { '未安装' })`r`n最新版本：v$($state.Info.payload.version)$hint"
         $clientButton.Enabled = -not $state.Busy -and $clientNew
         $payloadButton.Enabled = -not $state.Busy -and $compatible -and $payloadNew -and (Compare-VersionString $state.Info.payload.version (Get-PayloadVersion)) -ge 0
@@ -2237,6 +2020,7 @@ function Show-Gui {
       Set-ProgressState 100 "操作完成"
       if ($result) {
         Set-StatusLabels $result
+        & $refreshPathAction
       }
       if ($OnSuccess) { & $OnSuccess $result }
     } catch {
@@ -2483,7 +2267,7 @@ function Show-Gui {
 
   $btnBrowse.Add_Click({
     $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
-    $dialog.Description = "选择 Figma app-* 目录"
+    $dialog.Description = "选择包含 Figma.exe 的 app-* 文件夹"
     if ($txtApp.Text) { $dialog.SelectedPath = $txtApp.Text }
     if ($dialog.ShowDialog($form) -eq "OK") {
       $txtApp.Text = $dialog.SelectedPath
@@ -2492,7 +2276,7 @@ function Show-Gui {
 
   $btnBrowseRuntime.Add_Click({
     $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
-    $dialog.Description = "选择补丁文件保存目录"
+    $dialog.Description = "选择汉化文件存放目录"
     $dialog.ShowNewFolderButton = $true
     if ($txtRuntime.Text -and (Test-Path -LiteralPath $txtRuntime.Text)) { $dialog.SelectedPath = $txtRuntime.Text }
     if ($dialog.ShowDialog($form) -eq "OK") {
@@ -2523,7 +2307,7 @@ function Show-Gui {
       param($result)
       $title = if ($result.Migrated) { "客户端已迁移" } else { "客户端路径已应用" }
       Show-InfoMessage ("$title。`r`n`r`nFigma 路径：$($result.AppDir)`r`nFigma 版本：$($result.FigmaVersion)")
-    } "保存客户端路径失败" "正在保存客户端路径..."
+    } "应用客户端路径失败" "正在应用客户端路径..."
   })
 
   $btnStatus.Add_Click({
@@ -2545,7 +2329,7 @@ function Show-Gui {
     } {
       param($result)
       if ($result.AlreadyPatched) {
-        Show-InfoMessage ("该补丁已安装，不需要重复安装。`r`n`r`nFigma 版本：$($result.FigmaVersion)`r`n词库版本：v$($result.PayloadVersion)")
+        Show-InfoMessage ("汉化已是当前可用版本。如需获取新词库，请使用右上角更新入口。`r`n`r`nFigma 版本：$($result.FigmaVersion)`r`n词库版本：v$($result.PayloadVersion)")
       } else {
         Show-InfoMessage ("安装成功。`r`n`r`nFigma 版本：$($result.FigmaVersion)`r`n词库版本：v$($result.PayloadVersion)`r`n补丁状态：已安装")
       }
@@ -2565,7 +2349,7 @@ function Show-Gui {
   $form.Controls.AddRange(@(
     $header, $currentGroup,
     $labelApp, $appInput.Panel, $btnApplyAppPath, $btnBrowse, $labelRuntime, $runtimeInput.Panel, $btnBrowseRuntime, $labelNotice,
-    $btnStatus, $btnInstall, $btnUninstall, $btnFeatureManager, $btnFigBoostUpdate, $progressLabel, $progressBar, $statusGroup
+    $btnInstall, $btnUninstall, $btnFeatureManager, $progressLabel, $progressBar, $labelAppHint, $labelRuntimeHint
   ))
 
   try {
@@ -2575,11 +2359,13 @@ function Show-Gui {
     Set-StatusLabels (Get-CompleteStatus $initialAppDir $txtRuntime.Text)
   } catch {
     $script:ValueCurrentFigma.Text = "未检测到 Figma"
-    $script:ValueCurrentPatch.Text = "补丁状态：未检测"
-    $script:ValueCurrentPath.Text = "客户端目录：未找到完整的 Figma 客户端"
+    $script:ValueCurrentPatch.Text = "汉化：未检测"
+    $labelAppHint.Text = "未找到完整客户端，请选择包含 Figma.exe 的 app-* 文件夹。"
   }
 
   [void]$form.ShowDialog()
+  $toolTip.Dispose()
+  $form.Dispose()
 }
 
 Initialize-PayloadUpdate

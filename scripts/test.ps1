@@ -47,18 +47,9 @@ if (-not $figBoost.Contains('Join-Path $env:LOCALAPPDATA "FigBoost"') -or -not $
 if (-not $figBoost.Contains('$Host.Name -eq "ConsoleHost"') -or -not $figBoost.Contains('Write-Log "Self-test passed."')) {
   throw "Compiled command-mode logs must not be shown as no-console message boxes."
 }
-if (-not $figBoost.Contains("function Test-IsWindows11OrNewer") -or -not $figBoost.Contains("HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion") -or -not $figBoost.Contains("CurrentBuildNumber") -or -not $figBoost.Contains("[Environment]::OSVersion.Version.Build -ge 22000") -or -not $figBoost.Contains('$isWindows11OrNewer') -or -not $figBoost.Contains('if ($isWindows11OrNewer)')) {
-  throw "Main GUI must keep Windows 11 layout changes behind a Windows 11 build check."
-}
-if (-not $figBoost.Contains('$form.Width = 900') -or -not $figBoost.Contains('$form.Height = 650') -or -not $figBoost.Contains('$form.MinimumSize = New-Object System.Drawing.Size(860, 630)') -or -not $figBoost.Contains('$btnStatus.Top = 350')) {
-  throw "Windows 10 default layout dimensions must remain unchanged."
-}
-if (-not $figBoost.Contains('$form.Width = 1000') -or -not $figBoost.Contains('$form.Height = 700') -or -not $figBoost.Contains('$currentGroup.Height = 104') -or -not $figBoost.Contains('$btnInstall.Width = 150') -or -not $figBoost.Contains('$btnFeatureManager.Width = 190') -or -not $figBoost.Contains('$form.StartPosition = "Manual"') -or -not $figBoost.Contains('[System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea')) {
-  throw "Windows 11 layout must use roomier dimensions and button widths."
-}
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root "tests\updater.test.ps1")
 if ($LASTEXITCODE -ne 0) { throw "FigBoost update behavior tests failed." }
-foreach ($mode in @(@(), @('-Windows10'))) {
+foreach ($mode in @(@(), @('-Windows10'), @('-MissingClient'))) {
   & powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File (Join-Path $root "tests\updater-gui.test.ps1") @mode
   if ($LASTEXITCODE -ne 0) { throw "FigBoost update GUI tests failed." }
 }

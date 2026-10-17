@@ -1,5 +1,5 @@
 ﻿# Exercise the real WinForms entry and states using a fake Figma installation and update service.
-param([switch]$Windows10)
+param([switch]$Windows10, [switch]$MissingClient)
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 $tokens = $null; $errors = $null
@@ -18,7 +18,7 @@ $AppDir = Join-Path $temp 'app-1.2.3'
 New-Item -ItemType Directory -Force -Path (Join-Path $AppDir 'resources') | Out-Null
 New-Item -ItemType File -Path (Join-Path $AppDir 'Figma.exe') | Out-Null
 function Get-BaseDir { return $repo }
-function Find-CurrentFigmaAppDir { return $AppDir }
+function Find-CurrentFigmaAppDir { if ($MissingClient) { throw 'Simulated missing Figma.' }; return $AppDir }
 function Test-IsWindows11OrNewer { return (-not $Windows10) }
 $script:requestCount = 0
 function Invoke-UpdateWorker {
@@ -44,6 +44,40 @@ function Get-ChildControl($Parent, [string]$Text) {
   return $null
 }
 function Assert-Gui([bool]$Condition, [string]$Reason) { if (-not $Condition) { throw $Reason } }
+function Get-AccessibleControl($Parent, [string]$Name) {
+  foreach ($control in $Parent.Controls) {
+    if ($control.AccessibleName -eq $Name) { return $control }
+    $found = Get-AccessibleControl $control $Name
+    if ($found) { return $found }
+  }
+}
+function Assert-HomeLayout($Parent) {
+  $visible = @($Parent.Controls | Where-Object { $_.Visible })
+  foreach ($control in $visible) {
+    Assert-Gui ($control.Left -ge 0 -and $control.Top -ge 0 -and $control.Right -le $Parent.ClientSize.Width -and $control.Bottom -le $Parent.ClientSize.Height) ("Control outside parent: " + $control.Text)
+    if ($control -is [Windows.Forms.Button] -or $control -is [Windows.Forms.Label]) {
+      $textSize = [Windows.Forms.TextRenderer]::MeasureText($control.Text, $control.Font)
+      Assert-Gui ($control.Width -ge $textSize.Width -and $control.Height -ge $textSize.Height) ("Home text clipped: " + $control.Text)
+    }
+    Assert-HomeLayout $control
+  }
+  for ($i = 0; $i -lt $visible.Count; $i++) {
+    for ($j = $i + 1; $j -lt $visible.Count; $j++) {
+      Assert-Gui (-not $visible[$i].Bounds.IntersectsWith($visible[$j].Bounds)) ("Home controls overlap: " + $visible[$i].Text + ' / ' + $visible[$j].Text)
+    }
+  }
+  $install = Get-ChildControl $Parent '安装或更新汉化'
+  if ($install) {
+    Assert-Gui ($install.BackColor.ToArgb() -ne [Drawing.Color]::White.ToArgb() -and $install.ForeColor.ToArgb() -eq [Drawing.Color]::White.ToArgb()) 'Installation is not the primary action.'
+    $features = Get-ChildControl $Parent '管理附加功能'
+    Assert-Gui ($features.BackColor.ToArgb() -ne $install.BackColor.ToArgb()) 'Secondary action competes with installation.'
+  }
+}
+$script:uiError = $null
+function Show-InfoMessage { param([string]$Text, [string]$Title) }
+function Show-ErrorMessage { param([string]$Text) $script:uiError = $Text }
+# Never write real shortcuts when exercising the main-window install/migration actions.
+function Repair-FigmaShortcuts { param([string]$AppDir, [string[]]$ShortcutRoots) }
 $timer = New-Object Windows.Forms.Timer
 $timer.Interval = 100
 $script:phase = 0
@@ -56,19 +90,54 @@ $timer.Add_Tick({
     $main = $windows | Where-Object { $_.Text -eq "FigBoost v$PatcherVersion" } | Select-Object -First 1
     $dialog = $windows | Where-Object { $_.Text -eq 'FigBoost 更新' } | Select-Object -First 1
     if ($script:phase -eq 0 -and $main) {
-      $entry = Get-ChildControl $main '检查 FigBoost 更新'
+      $entry = Get-ChildControl $main '更新 FigBoost 与词库'
       Assert-Gui ($null -ne $entry) 'Update entry missing.'
       Assert-Gui ($entry.Right -le $main.ClientSize.Width) 'Update entry extends outside main window.'
+      $script:phase = 10 # Prevent timer re-entry while actions process WinForms events.
+      Assert-HomeLayout $main
+      $main.Size = New-Object Drawing.Size(($main.Width + 160), ($main.Height + 100))
+      $main.PerformLayout()
+      Assert-HomeLayout $main
       $main.Size = $main.MinimumSize
       $main.PerformLayout()
-      $features = Get-ChildControl $main '管理附加功能'
-      Assert-Gui ($entry.Left -ge $features.Right -and $entry.Right -le $main.ClientSize.Width) 'Minimum-size window overlaps or clips the update entry.'
-      $textSize = [Windows.Forms.TextRenderer]::MeasureText($entry.Text, $entry.Font)
-      Assert-Gui ($entry.Width -ge $textSize.Width) 'Minimum-size update label is clipped.'
+      Assert-HomeLayout $main
+      Assert-Gui ($null -eq (Get-ChildControl $main '当前检测结果')) 'Redundant result group remains.'
+      Assert-Gui ($null -eq (Get-ChildControl $main '官方最新版：未检查')) 'Unchecked official-version field remains.'
+      $pathBox = Get-AccessibleControl $main 'Figma 客户端位置'
+      $pathAction = $main.Controls.Find('ApplyAppPath', $true)[0]
+      $pathBox.Text = ''
+      Assert-Gui (-not $pathAction.Enabled) 'Empty path allowed a save or migration action.'
+      if ($MissingClient) {
+        Assert-Gui ($null -ne (Get-ChildControl $main '未检测到 Figma')) ("Missing-client state is unclear: " + $script:ValueCurrentFigma.Text)
+        Assert-Gui ($null -ne (Get-ChildControl $main '汉化：未检测')) 'Missing-client state reports an installed patch.'
+        $script:phase = 6
+        $main.Close()
+        $timer.Stop()
+        return
+      }
+      $pathBox.Text = Join-Path $temp 'migrated-client'
+      Assert-Gui ($pathAction.Text -eq '迁移到此目录') 'New path hides migration behind a save label.'
+      Assert-Gui ($null -ne (Get-ChildControl $main '迁移需要空目录：会关闭 Figma，将客户端复制到此处，并更新快捷方式。')) 'Migration consequence missing.'
+      $pathAction.PerformClick()
+      Assert-Gui (Test-FigmaAppDir $pathBox.Text) 'Migration action failed to copy the fake client.'
+      Assert-Gui ($pathAction.Text -eq '保存路径') 'Migrated client still shows migration action.'
+      $pathBox.Text = $AppDir
+      Assert-Gui ($pathAction.Text -eq '保存路径') 'Existing client not identified as a save action.'
+      $pathAction.PerformClick()
+      Assert-Gui ((Get-PreferredAppDir $RuntimeDir) -eq $AppDir) 'Save path did not persist the chosen client.'
+      (Get-ChildControl $main '重新检测').PerformClick()
+      Assert-Gui ($script:requestCount -eq 0) 'Local detection unexpectedly checks online updates.'
+      (Get-ChildControl $main '卸载汉化').PerformClick()
+      Assert-Gui ($null -ne (Get-ChildControl $main '汉化：未安装')) 'Uninstall does not refresh the summary.'
+      (Get-ChildControl $main '安装或更新汉化').PerformClick()
+      Assert-Gui ($null -ne (Get-ChildControl $main '汉化：已安装')) 'Install does not refresh the summary.'
+      Assert-Gui ($null -ne (Get-ChildControl $main ("已安装词库：v" + (Get-PayloadVersion)))) 'Installed dictionary version missing.'
+      Assert-Gui ($null -eq $script:uiError) ("Home action failed: " + $script:uiError)
+      Assert-HomeLayout $main
       $script:phase = 1
       $entry.PerformClick()
     } elseif ($script:phase -eq 1 -and $dialog -and $script:requestCount -eq 1) {
-      $client = Get-ChildControl $dialog '升级客户端'
+      $client = Get-ChildControl $dialog '升级 FigBoost'
       $payload = Get-ChildControl $dialog '更新词库'
       Assert-Gui (-not $client.Enabled -and -not $payload.Enabled) 'Current versions must not enable update actions.'
       foreach ($group in @($client.Parent, $payload.Parent)) {
@@ -81,11 +150,11 @@ $timer.Add_Tick({
       (Get-ChildControl $dialog '重新检查').PerformClick()
     } elseif ($script:phase -eq 2 -and $dialog -and $script:requestCount -eq 2) {
       Assert-Gui ($null -ne (Get-ChildControl $dialog '检查失败，请确认网络后重新检查。')) 'Offline failure not shown.'
-      Assert-Gui (-not (Get-ChildControl $dialog '升级客户端').Enabled) 'Failed check left stale upgrade enabled.'
+      Assert-Gui (-not (Get-ChildControl $dialog '升级 FigBoost').Enabled) 'Failed check left stale upgrade enabled.'
       $script:phase = 3
       (Get-ChildControl $dialog '重新检查').PerformClick()
     } elseif ($script:phase -eq 3 -and $dialog -and $script:requestCount -eq 3) {
-      Assert-Gui ((Get-ChildControl $dialog '升级客户端').Enabled) 'Retry did not enable available client upgrade.'
+      Assert-Gui ((Get-ChildControl $dialog '升级 FigBoost').Enabled) 'Retry did not enable available client upgrade.'
       Assert-Gui ((Get-ChildControl $dialog '更新词库').Enabled) 'Available compatible dictionary update disabled.'
       $script:phase = 4
       (Get-ChildControl $dialog '重新检查').PerformClick()
@@ -111,11 +180,15 @@ try {
   $env:LOCALAPPDATA = Join-Path $temp 'user'
   New-FakeAsar (Join-Path $AppDir 'resources\app.asar')
   Install-Patch $AppDir $RuntimeDir -SkipProcessCheck -ShortcutRoots @($temp) | Out-Null
+  if ($MissingClient) {
+    $AppDir = ""
+    function Get-PreferredAppDir { return "" }
+  }
   $timer.Start()
   Show-Gui
   if ($script:failure) { throw $script:failure }
   Assert-Gui ($script:phase -eq 6) 'GUI checks did not complete.'
-  Write-Host 'Updater GUI tests passed: entry, bounds, current version, offline error, retry, client update and payload update states.'
+  Write-Host 'GUI tests passed: home layout, path/save/migration, local detection, install/uninstall, missing-client and update states.'
 } finally {
   $timer.Dispose()
   $env:LOCALAPPDATA = $originalLocalAppData
