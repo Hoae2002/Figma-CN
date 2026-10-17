@@ -1953,25 +1953,16 @@ function Show-Gui {
     $notice = New-HomeLabel '更新后会重新打开 FigBoost；已安装汉化时会同步词库并重启正在运行的 Figma，请先保存工作。' 20 178 580 38
     $update = New-Object FigBoost.UI.ActionButton
     $update.Text = '立即更新'
-    $update.SetBounds(186, 232, 130, 32)
-    $retry = New-Object FigBoost.UI.ActionButton
-    $retry.Text = '重新检查'
-    $retry.SetBounds(328, 232, 130, 32)
-    $close = New-Object FigBoost.UI.ActionButton
-    $close.Text = '关闭'
-    $close.SetBounds(470, 232, 130, 32)
-    foreach ($button in @($update, $retry, $close)) {
-      Set-ButtonStyle $button ([Drawing.Color]::White) ([Drawing.Color]::FromArgb(28, 35, 45)) ([Drawing.Color]::FromArgb(205, 214, 226))
-    }
-    $dialog.Controls.AddRange(@($message, $group, $notice, $update, $retry, $close))
-    $dialog.CancelButton = $close
+    $update.SetBounds(470, 232, 130, 32)
+    Set-ButtonStyle $update ([Drawing.Color]::White) ([Drawing.Color]::FromArgb(28, 35, 45)) ([Drawing.Color]::FromArgb(205, 214, 226))
+    $dialog.Controls.AddRange(@($message, $group, $notice, $update))
+    $dialog.KeyPreview = $true
+    $dialog.Add_KeyDown({ param($sender, $eventArgs) if ($eventArgs.KeyCode -eq 'Escape' -and -not $state.Busy) { $dialog.Close() } })
 
     function Refresh-UpdateActions {
       $available = Test-FigBoostUpdateAvailable $state.Info
       $update.Visible = $available
       $update.Enabled = $available -and -not $state.Busy
-      $retry.Enabled = -not $state.Busy
-      $close.Enabled = -not $state.Busy
       $clientLabel.Text = "FigBoost：v$PatcherVersion"
       $payloadLabel.Text = "内置词库：v$(Get-PayloadVersion)"
       if ($available) {
@@ -2029,8 +2020,6 @@ function Show-Gui {
         if (-not $dialog.IsDisposed) { Refresh-UpdateActions }
       }
     })
-    $retry.Add_Click($check)
-    $close.Add_Click({ $dialog.Close() })
     $dialog.Add_FormClosing({ param($sender, $eventArgs) if ($state.Busy) { $eventArgs.Cancel = $true } })
     $dialog.Add_Shown($check)
     Refresh-UpdateActions

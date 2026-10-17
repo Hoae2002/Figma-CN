@@ -48,8 +48,7 @@ function Invoke-UpdateWorker {
     if ($Windows10) { throw 'Simulated automatic check offline.' }
     return [pscustomobject]@{ client = [pscustomobject]@{ version = '999.0.0' }; payload = [pscustomobject]@{ version = '999.0.0'; minPatcherVersion = $PatcherVersion } }
   }
-  Assert-Gui (-not (Get-ChildControl $activeDialog '重新检查').Enabled) 'Repeated check not blocked during a request.'
-  Assert-Gui (-not (Get-ChildControl $activeDialog '关闭').Enabled) 'Busy close action must be disabled.'
+  Assert-Gui (-not (Get-ChildControl $activeDialog '立即更新').Enabled) 'Repeated update not blocked during a request.'
   $activeDialog.Close()
   Assert-Gui $activeDialog.Visible 'Closing while updating should be prevented.'
   if ($Action.ToString().Contains('Save-VerifiedUpdateDownload')) {
@@ -125,6 +124,16 @@ $timer.Add_Tick({
     $mainTitle = "FigBoost v$PatcherVersion" + $(if ($UpdatePreview) { ' · 更新样式验证版' } else { '' })
     $main = $windows | Where-Object { $_.Text -eq $mainTitle } | Select-Object -First 1
     $dialog = $windows | Where-Object { $_.Text -eq 'FigBoost 更新' } | Select-Object -First 1
+    if ($script:reopenUpdate -and $main -and -not $dialog) {
+      $script:reopenUpdate = $false
+      $arrow = $main.Controls.Find('UpdateIndicator', $true)[0]
+      if ($arrow.Visible) { $arrow.PerformClick() } else { (Get-ChildControl $main '检查更新').PerformClick() }
+      return
+    }
+    if ($dialog) {
+      Assert-Gui (@($dialog.Controls | Where-Object { $_ -is [Windows.Forms.Button] }).Count -eq 1) 'Update dialog must contain only one action button.'
+      Assert-Gui ($null -eq (Get-ChildControl $dialog '重新检查') -and $null -eq (Get-ChildControl $dialog '关闭')) 'Removed dialog actions remain.'
+    }
     if ($UpdatePreview) {
       if ($script:phase -eq 0 -and $main -and $main.Controls.Find('UpdateIndicator', $true)[0].Visible) {
         Assert-Gui (-not (Get-ChildControl $main '检查更新').Visible) 'Preview must hide check button when update is available.'
@@ -139,12 +148,10 @@ $timer.Add_Tick({
         Assert-Gui ($null -ne (Get-ChildControl $dialog '更新完成（样式验证，可再次更新）')) 'Preview completion missing.'
         (Get-ChildControl $dialog '立即更新').PerformClick()
         Assert-Gui ((Get-ChildControl $dialog '立即更新').Enabled) 'Preview cannot be repeated.'
-        (Get-ChildControl $dialog '重新检查').PerformClick()
-        Assert-Gui ($null -ne (Get-ChildControl $dialog '发现新版本')) 'Preview update was consumed.'
         Assert-Gui ($script:downloadCount -eq 0 -and $script:handoffCount -eq 0) 'Preview invoked the real updater.'
         Assert-Gui ($null -eq $script:uiError) 'Preview reported an error.'
         $script:phase = 6
-        (Get-ChildControl $dialog '关闭').PerformClick()
+        $dialog.Close()
         $main.Close()
         $timer.Stop()
       }
@@ -225,13 +232,15 @@ $timer.Add_Tick({
       Assert-Gui ($dialog.Controls.Find('PayloadUpdateVersion', $true)[0].Text -eq ("内置词库：v" + (Get-PayloadVersion))) 'Bundled dictionary version incorrect.'
       Assert-HomeLayout $dialog
       $script:phase = 2
-      (Get-ChildControl $dialog '重新检查').PerformClick()
+      $script:reopenUpdate = $true
+      $dialog.Close()
     } elseif ($script:phase -eq 2 -and $dialog -and $script:requestCount -eq 2) {
       Assert-Gui ($null -ne (Get-ChildControl $dialog '检查失败，请确认网络后重新检查。')) 'Offline failure not shown.'
       Assert-Gui (-not (Get-ChildControl $dialog '立即更新').Enabled) 'Failed check left stale update enabled.'
       Assert-HomeLayout $dialog
       $script:phase = 3
-      (Get-ChildControl $dialog '重新检查').PerformClick()
+      $script:reopenUpdate = $true
+      $dialog.Close()
     } elseif ($script:phase -eq 3 -and $dialog -and $script:requestCount -eq 3) {
       Assert-Gui ((Get-ChildControl $dialog '立即更新').Enabled) 'Unified update is unavailable.'
       Assert-Gui $main.Controls.Find('UpdateIndicator', $true)[0].Visible 'Available release must show green indicator.'
@@ -248,7 +257,8 @@ $timer.Add_Tick({
       Assert-Gui ((Get-ChildControl $dialog '立即更新').Enabled) 'Download failure cannot be retried.'
       $script:uiError = $null
       $script:phase = 4
-      (Get-ChildControl $dialog '重新检查').PerformClick()
+      $script:reopenUpdate = $true
+      $dialog.Close()
     } elseif ($script:phase -eq 4 -and $dialog -and $script:requestCount -eq 4) {
       Assert-Gui (-not (Get-ChildControl $dialog '立即更新').Enabled) 'Inconsistent release was enabled.'
       Assert-Gui (-not $main.Controls.Find('UpdateIndicator', $true)[0].Visible) 'Invalid release left a stale indicator.'
@@ -256,7 +266,8 @@ $timer.Add_Tick({
       Assert-HomeLayout $dialog
       $script:phase = 5
       Remove-Item -LiteralPath (Join-Path $RuntimeDir 'i.js') -Force
-      (Get-ChildControl $dialog '重新检查').PerformClick()
+      $script:reopenUpdate = $true
+      $dialog.Close()
     } elseif ($script:phase -eq 5 -and $dialog -and $script:requestCount -eq 5) {
       Assert-Gui ((Get-ChildControl $dialog '立即更新').Enabled) 'FigBoost update must work without installed localization.'
       $script:phase = 6
