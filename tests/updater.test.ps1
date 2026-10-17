@@ -142,6 +142,18 @@ try {
   Assert-Equal ([IO.File]::ReadAllText($dictionaryPath)) $oldDictionary 'Partial runtime write did not restore the original dictionary.'
   Assert-Equal ([IO.File]::ReadAllText($cache)) $cachedText 'Partial runtime write changed the cache.'
 
+  # Dictionary-only upgrades of older installs also initialize manual update paths.
+  Remove-Item -LiteralPath $featurePath -Force
+  Install-PayloadUpdate $package $app $runtime | Out-Null
+  $manualConfig = Read-FeatureConfig $runtime
+  Assert-Equal ([string]$manualConfig.patcherPath) (ConvertTo-JsonSafePath (Get-PatcherExecutablePath)) 'Dictionary update did not configure the native updater.'
+  Assert-Equal @($manualConfig.enabledFeatures).Count 0 'Dictionary update enabled suspended features.'
+  Remove-Item -LiteralPath $featurePath -Force
+  $lock = [IO.File]::Open($cache, 'Open', 'Read', 'Read')
+  try { Assert-Throws { Install-PayloadUpdate $package $app $runtime } 'Locked cache update did not fail without feature config.' }
+  finally { $lock.Dispose() }
+  Assert-Equal (Test-Path -LiteralPath $featurePath) $false 'Failed update did not roll back newly created feature config.'
+
   # Execute the real post-exit replacement helper against a tiny fake executable.
   $helperDir = Join-Path $temp "client with space's"
   New-Item -ItemType Directory -Path $helperDir | Out-Null

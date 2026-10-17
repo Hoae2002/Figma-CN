@@ -53,6 +53,11 @@ foreach ($mode in @(@(), @('-Windows10'), @('-MissingClient'))) {
   & powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File (Join-Path $root "tests\updater-gui.test.ps1") @mode
   if ($LASTEXITCODE -ne 0) { throw "FigBoost update GUI tests failed." }
 }
+# The optional manager must be commented out, not just hidden behind a button.
+$sourceAst = [Management.Automation.Language.Parser]::ParseInput($figBoost, [ref]$null, [ref]$null)
+$activeManager = $sourceAst.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Show-FeatureInstallDialog' }, $true)
+if (@($activeManager).Count -ne 0) { throw 'Optional feature manager implementation must stay commented out.' }
+
 $expectedUpdateFeatureTitle = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("VGl0bGUgPSAi6Ieq5Yqo5pu05pawIEZpZ21hIOWuouaIt+erryI="))
 $oldMenuFeatureTitle = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("VGl0bGUgPSAi5ZyoIEZpZ21hIOmhtumDqOaYvuekuiBGaWdCb29zdCDoj5zljZUi"))
 if (-not $figBoost.Contains($expectedUpdateFeatureTitle) -or $figBoost.Contains($oldMenuFeatureTitle)) {
@@ -164,14 +169,14 @@ if ($content -notmatch "svg\{width:14px;height:14px" -or $content -notmatch 'str
 }
 
 $main = Get-Content -LiteralPath (Join-Path $root "payload\src\main\menu-localizer.js") -Raw
-if ($main -notmatch 'ipcMain\.handle\("figboost:open-feature-menu"' -or $main -notmatch "Menu\.buildFromTemplate\(buildFigBoostFeatureMenuTemplate\(\)\)" -or $main -notmatch 'label: "检查更新"') {
-  throw "Main process must expose a native FigBoost feature menu."
+if ($main -notmatch 'ipcMain\.handle\("figboost:open-feature-menu"' -or $main -notmatch "Menu\.buildFromTemplate\(buildFigBoostFeatureMenuTemplate\(\)\)" -or $main -notmatch 'item.id !== "checkForUpdates"' -or $main -notmatch 'item.click = checkOfficialUpdateManually') {
+  throw "Main process must preserve translation settings and route the native update command through FigBoost."
 }
 if ($figBoost -notmatch 'Id = "bulk-export-figma-files"' -or $figBoost -notmatch 'Install-Feature "bulk-export-figma-files"' -or $figBoost -notmatch 'Uninstall-Feature "bulk-export-figma-files"') {
-  throw "Feature manager must expose install/uninstall for board scan and batch export."
+  throw "Suspended feature manager code must remain available for future restoration."
 }
 if ($main -notmatch 'figboost:bulk-export-files' -or $main -notmatch '\\u6279\\u91cf\\u5bfc\\u51fa\\u753b\\u677f\\u6587\\u4ef6\.\.\.' -or $main -notmatch "function bulkExportFigmaFiles" -or $main -notmatch "createTimestampExportDir" -or $main -notmatch "showOpenDialog" -or $main -notmatch "failed\.push" -or $main -notmatch 'isFigBoostFeatureEnabled\("bulk-export-figma-files"\)') {
-  throw "Native FigBoost feature menu must include batch .fig export with timestamp folder, path selection, and failure summary."
+  throw "Suspended batch export implementation must remain intact for future restoration."
 }
 if ($main -notmatch "FIGBOOST_DISCOVERY_TIMEOUT_MS = 30000" -or $main -notmatch "FIGBOOST_EXPORT_TIMEOUT_MS = 60000" -or $main -notmatch "throwIfFigBoostDeadlineExceeded" -or $main -notmatch "getFigBoostRemainingTimeout") {
   throw "Batch .fig export must enforce 30s discovery and 60s export deadlines."

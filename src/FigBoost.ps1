@@ -24,7 +24,7 @@ if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClo
 
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V7"
 $UpdaterDisableMarker = "FIGMA_ZH_DISABLE_BUILTIN_UPDATER"
-$PatcherVersion = "0.5.27"
+$PatcherVersion = "0.5.28"
 $PayloadFile = "i.js"
 $MainPayloadFile = "m.js"
 $FeatureConfigFile = "features.json"
@@ -143,7 +143,7 @@ function Install-PayloadUpdate {
   New-Item -ItemType Directory -Force -Path (Split-Path -Parent $cache) | Out-Null
   $staged = "$cache.$([Guid]::NewGuid().ToString('N')).tmp"
   $originalFiles = @{}
-  foreach ($name in @('zh-CN.js', 'translation-policy.js', 'translation-service.js', 'translation-host.js', 'translation-settings-preload.js', 'translation-settings.html', 'translation-settings.css', 'translation-settings.js', $PayloadFile, $MainPayloadFile)) {
+  foreach ($name in @('zh-CN.js', 'translation-policy.js', 'translation-service.js', 'translation-host.js', 'translation-settings-preload.js', 'translation-settings.html', 'translation-settings.css', 'translation-settings.js', $PayloadFile, $MainPayloadFile, $FeatureConfigFile)) {
     $path = Join-Path $SelectedRuntimeDir $name
     $originalFiles[$path] = if (Test-Path -LiteralPath $path) { [IO.File]::ReadAllBytes($path) } else { $null }
   }
@@ -154,7 +154,9 @@ function Install-PayloadUpdate {
     $restart = Stop-FigmaForPatch $target.AppDir -Force
     $script:UpdatedPayloadFiles = $files
     Write-RuntimeFiles $SelectedRuntimeDir
-    if (Test-Path -LiteralPath $cache) { [IO.File]::Replace($staged, $cache, $null) } else { [IO.File]::Move($staged, $cache) }
+    # Older installs may have no optional-feature file. Manual native updates need only updater paths.
+    if (-not (Test-Path -LiteralPath (Get-FeatureConfigPath $SelectedRuntimeDir))) { [void](Write-FeatureConfig $SelectedRuntimeDir @()) }
+    if (Test-Path -LiteralPath $cache) { [IO.File]::Replace($staged, $cache, [System.Management.Automation.Language.NullString]::Value) } else { [IO.File]::Move($staged, $cache) }
   } catch {
     $script:UpdatedPayloadFiles = $previous
     foreach ($path in $originalFiles.Keys) {
@@ -1110,6 +1112,7 @@ function Install-Patch {
     }
   }
   if ($runtimeCurrent -and $existingStatus.Patched -and $existingStatus.HasRuntimePayload -and $existingStatus.HasRuntimeMainPayload -and $existingStatus.HasBuiltInUpdaterDisabled) {
+    [void](Write-FeatureConfig $SelectedRuntimeDir @((Read-FeatureConfig $SelectedRuntimeDir).enabledFeatures))
     $existingStatus | Add-Member -NotePropertyName AlreadyPatched -NotePropertyValue $true -Force
     $existingStatus | Add-Member -NotePropertyName RestartedFigma -NotePropertyValue $false -Force
     return $existingStatus
@@ -1130,7 +1133,7 @@ function Install-Patch {
     }
   }
   Write-RuntimeFiles $SelectedRuntimeDir
-  Repair-FeatureConfigEncoding $SelectedRuntimeDir
+  [void](Write-FeatureConfig $SelectedRuntimeDir @((Read-FeatureConfig $SelectedRuntimeDir).enabledFeatures))
   $result = Patch-Asar $target $SelectedRuntimeDir
   Write-Log "Install result: $($result | ConvertTo-Json -Compress)"
   $status = Get-PatchStatus $target $SelectedRuntimeDir
@@ -1384,8 +1387,14 @@ function Invoke-SelfTest {
     if (-not $installStatus.HasRuntimeMainPayload) { throw "Self-test did not write the main runtime payload." }
     if (-not $installStatus.HasBuiltInUpdaterDisabled) { throw "Self-test did not disable the built-in updater." }
     if ($installStatus.PayloadVersion -ne (Get-PayloadVersion)) { throw "Self-test payload version mismatch." }
+    $manualUpdateConfig = Read-FeatureConfig $fakeRuntime
+    if (-not $manualUpdateConfig.patcherPath -or $manualUpdateConfig.runtimeDir -ne (ConvertTo-JsonSafePath $fakeRuntime)) { throw "Self-test normal install did not configure manual updates." }
+    if (@($manualUpdateConfig.enabledFeatures).Count -ne 0) { throw "Self-test normal install enabled an optional feature." }
+    $manualUpdateConfig.patcherPath = "missing-old-patcher.exe"
+    [System.IO.File]::WriteAllText((Get-FeatureConfigPath $fakeRuntime), ($manualUpdateConfig | ConvertTo-Json -Depth 6), $Utf8NoBom)
     $repeatInstallStatus = Install-Patch $fakeAppDir $fakeRuntime -SkipProcessCheck -ShortcutRoots @($shortcutRoot)
     if (-not $repeatInstallStatus.AlreadyPatched) { throw "Self-test repeat install did not report already patched." }
+    if ((Read-FeatureConfig $fakeRuntime).patcherPath -ne (ConvertTo-JsonSafePath (Get-PatcherExecutablePath))) { throw "Self-test repeat install did not refresh the manual updater path." }
     $personalData = Join-Path $temp "personal-data.json"
     [System.IO.File]::WriteAllText($personalData, '{"preserve":true}')
     [System.IO.File]::WriteAllText((Join-Path $fakeRuntime "translation-service.js"), "old-version")
@@ -1799,12 +1808,14 @@ function Show-Gui {
   $btnUninstall = New-Object System.Windows.Forms.Button
   $btnUninstall.Text = "卸载汉化"
   $btnUninstall.SetBounds(192, 468, 120, 40)
+  <# Suspended: optional feature manager (board discovery and batch export).
   $btnFeatureManager = New-Object System.Windows.Forms.Button
   $btnFeatureManager.Text = "管理附加功能"
   $btnFeatureManager.SetBounds(($form.ClientSize.Width - 184), 468, 160, 40)
   $btnFeatureManager.Anchor = "Top,Right"
+  #>
 
-  foreach ($button in @($btnBrowse, $btnApplyAppPath, $btnBrowseRuntime, $btnStatus, $btnInstall, $btnUninstall, $btnFeatureManager, $btnFigBoostUpdate)) {
+  foreach ($button in @($btnBrowse, $btnApplyAppPath, $btnBrowseRuntime, $btnStatus, $btnInstall, $btnUninstall, $btnFigBoostUpdate)) {
     if ($button -eq $btnInstall) {
       Set-ButtonStyle $button ([System.Drawing.Color]::FromArgb(37, 99, 235)) ([System.Drawing.Color]::White) ([System.Drawing.Color]::Transparent)
     } else {
@@ -2032,6 +2043,7 @@ function Show-Gui {
     }
   }
 
+  <# Suspended: retain the feature manager implementation for future use.
   $featureDefinitions = @(
     [pscustomobject]@{
       Id = "auto-check-official-latest"
@@ -2265,6 +2277,8 @@ function Show-Gui {
     [void]$dialog.ShowDialog($form)
   }
 
+  #>
+
   $btnBrowse.Add_Click({
     $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
     $dialog.Description = "选择包含 Figma.exe 的 app-* 文件夹"
@@ -2320,7 +2334,7 @@ function Show-Gui {
       Show-InfoMessage ("检测完成。`r`n`r`nFigma 路径：$($result.AppDir)`r`nFigma 版本：$($result.FigmaVersion)`r`n词库版本：v$($result.PayloadVersion)`r`n补丁状态：$(if ($result.Patched) { "已安装" } else { "未安装" })")
     } "检测失败" "正在检测当前版本..."
   })
-  $btnFeatureManager.Add_Click({ Show-FeatureInstallDialog })
+  # $btnFeatureManager.Add_Click({ Show-FeatureInstallDialog })
   $btnFigBoostUpdate.Add_Click({ Show-FigBoostUpdateDialog })
   $btnInstall.Add_Click({
     & $runAction {
@@ -2349,7 +2363,7 @@ function Show-Gui {
   $form.Controls.AddRange(@(
     $header, $currentGroup,
     $labelApp, $appInput.Panel, $btnApplyAppPath, $btnBrowse, $labelRuntime, $runtimeInput.Panel, $btnBrowseRuntime, $labelNotice,
-    $btnInstall, $btnUninstall, $btnFeatureManager, $progressLabel, $progressBar, $labelAppHint, $labelRuntimeHint
+    $btnInstall, $btnUninstall, $progressLabel, $progressBar, $labelAppHint, $labelRuntimeHint
   ))
 
   try {

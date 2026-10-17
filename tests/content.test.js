@@ -14,6 +14,7 @@ function loadContent(overrides = {}) {
     getFigBoostUpdateBridge,
     getFigBoostFeatureMenuBridge,
     getFigBoostBulkExportBridge,
+    FIGBOOST_MENU_ITEMS,
     isFigBoostUpdateButtonEnabled,
     openFigBoostFeatureMenuFromTitlebar,
     toggleFigBoostMenu,
@@ -54,8 +55,9 @@ test("bridge discovery only returns callable renderer bridges", () => {
 
   assert.equal(hooks.getFigBoostUpdateBridge(), update);
   assert.equal(hooks.getFigBoostFeatureMenuBridge(), null);
-  assert.equal(hooks.getFigBoostBulkExportBridge(), bulk);
+  assert.equal(hooks.getFigBoostBulkExportBridge(), null);
   assert.equal(hooks.isFigBoostUpdateButtonEnabled(), true);
+  assert.deepEqual(Array.from(hooks.FIGBOOST_MENU_ITEMS, item => item.id), ["translation-settings"]);
 });
 
 test("tab host selection rejects undersized candidates", () => {

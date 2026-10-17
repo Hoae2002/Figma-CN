@@ -56,9 +56,13 @@
   }
 
   function getFigBoostBulkExportBridge() {
+    // Suspended, including bridges left by an older preload.
+    return null;
+    /*
     return typeof window.__FIGBOOST_BULK_EXPORT_FILES__ === "function"
       ? window.__FIGBOOST_BULK_EXPORT_FILES__
       : null;
+    */
   }
 
   function isFigBoostUpdateButtonEnabled() {
@@ -67,6 +71,7 @@
 
   const FIGBOOST_MENU_ITEMS = [
     { id: "translation-settings", label: "汉化设置…", title: "管理词库汉化与社区补译", run: () => { window.location.href = "figboost://translation-settings"; } },
+    /* Suspended: updates use the native menu; board discovery/export is disabled.
     {
       id: "check-official-update",
       label: "检查更新",
@@ -81,7 +86,7 @@
       title: "检索并批量导出当前账号可见的 Figma 文件",
       visible: () => Boolean(getFigBoostBulkExportBridge() || window.__FIGMA_ZH_TEST__),
       run: runBulkExportFiles
-    }
+    } */
   ];
 
   function findTopBarHost() {

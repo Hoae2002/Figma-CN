@@ -70,7 +70,7 @@ function Assert-HomeLayout($Parent) {
   if ($install) {
     Assert-Gui ($install.BackColor.ToArgb() -ne [Drawing.Color]::White.ToArgb() -and $install.ForeColor.ToArgb() -eq [Drawing.Color]::White.ToArgb()) 'Installation is not the primary action.'
     $features = Get-ChildControl $Parent '管理附加功能'
-    Assert-Gui ($features.BackColor.ToArgb() -ne $install.BackColor.ToArgb()) 'Secondary action competes with installation.'
+    Assert-Gui ($null -eq $features) 'Suspended feature manager remains visible.'
   }
 }
 $script:uiError = $null

@@ -187,6 +187,7 @@
   function localizeItems(items) {
     let changed = false;
     for (const item of items || []) {
+      changed = bindNativeUpdateEntry(item) || changed;
       const label = translationHost
         ? translationHost.nativeLabel(item, localizeText, true)
         : localizeText(item.label);
@@ -203,6 +204,7 @@
 
   function localizeTemplate(items) {
     for (const item of items || []) {
+      bindNativeUpdateEntry(item);
       if (item.label) {
         item.label = translationHost
           ? translationHost.nativeLabel(item, localizeText, true)
@@ -211,6 +213,18 @@
       if (Array.isArray(item.submenu)) localizeTemplate(item.submenu);
       if (item.submenu && item.submenu.items) localizeItems(item.submenu.items);
     }
+  }
+
+  function bindNativeUpdateEntry(item) {
+    // Match the native command ID, never a user's file/tab name.
+    if (!item || item.id !== "checkForUpdates") return false;
+    // Keep Figma's own menu position, including when its built-in updater guard
+    // hides the entry. Only an explicit click starts the FigBoost update flow.
+    if (item.click === checkOfficialUpdateManually && item.visible === true && item.enabled === true) return false;
+    item.click = checkOfficialUpdateManually;
+    item.visible = true;
+    item.enabled = true;
+    return true;
   }
 
   function localizeMenu() {
@@ -292,6 +306,9 @@
   }
 
   function isFeatureEnabled(config, featureId) {
+    // Board discovery/export and automatic checks are suspended. Ignore legacy
+    // enabledFeatures too, so an older installation cannot reactivate them.
+    if (featureId === "bulk-export-figma-files" || featureId === "auto-check-official-latest") return false;
     return !!(config && Array.isArray(config.enabledFeatures) && config.enabledFeatures.includes(featureId));
   }
 
@@ -505,10 +522,6 @@
     const config = readFeatureConfig();
     const checkingWindow = showOfficialUpdateCheckingWindow();
     try {
-      if (!isFeatureEnabled(config, "auto-check-official-latest")) {
-        checkingWindow.close();
-        return { disabled: true };
-      }
       const patcherPath = config && config.patcherPath;
       const runtimeDir = config && config.runtimeDir;
       if (!patcherPath || !runtimeDir || !fs.existsSync(patcherPath)) {
@@ -517,7 +530,7 @@
           type: "error",
           title: "检查更新失败",
           message: "找不到 FigBoost 更新程序",
-          detail: "请重新打开 FigBoost，确认补丁文件保存目录后再安装附加功能。"
+          detail: "请打开最新版 FigBoost，点击“安装或更新汉化”后重试。"
         });
         return { ok: false };
       }
@@ -3162,13 +3175,15 @@
   function buildFigBoostFeatureMenuTemplate() {
     const template = [
       { label: "汉化设置…", click: () => translationHost && translationHost.openSettings() },
+      /* Suspended: update checks now use Figma's native checkForUpdates entry.
       {
         label: "检查更新",
         click: () => {
           checkOfficialUpdateManually();
         }
-      }
+      } */
     ];
+    /* Suspended: retain board discovery/export code for a future release.
     if (isFigBoostFeatureEnabled("bulk-export-figma-files")) {
       template.push(
         { type: "separator" },
@@ -3180,6 +3195,7 @@
         }
       );
     }
+    */
     return template;
   }
 
@@ -3349,11 +3365,12 @@
               value: (bounds) => ipcRenderer.invoke("figboost:open-feature-menu", bounds)
             });
           }
-          if (${isFigBoostFeatureEnabled("bulk-export-figma-files") ? "true" : "false"} && ipcRenderer && !window.__FIGBOOST_BULK_EXPORT_FILES__) {
+          /* Suspended: no renderer bridge for board discovery/batch export.
+          if (false && ipcRenderer && !window.__FIGBOOST_BULK_EXPORT_FILES__) {
             Object.defineProperty(window, "__FIGBOOST_BULK_EXPORT_FILES__", {
               value: () => ipcRenderer.invoke("figboost:bulk-export-files")
             });
-          }
+          } */
         } catch (_) {
           window.__FIGBOOST_UPDATE_BUTTON_ENABLED__ = true;
           ${showTitlebarButton ? "window.__FIGBOOST_TITLEBAR_BUTTON_ENABLED__ = true;" : ""}
@@ -3470,9 +3487,11 @@
     hookDialogMethod("showMessageBox");
     hookDialogMethod("showMessageBoxSync");
     hookAboutPanelOptions();
-    hookBuiltInUpdateChecks();
+    // Suspended: the installer already disables Figma's background updater.
+    // hookBuiltInUpdateChecks();
     registerManualOfficialUpdateCheck();
-    registerBulkFigmaFileExport();
+    // Suspended: no IPC/global export entry, discovery or export jobs.
+    // registerBulkFigmaFileExport();
     registerFigBoostFeatureMenu();
     registerRendererInjection();
     app.whenReady().then(scheduleLocalize).catch(() => {});

@@ -175,6 +175,29 @@ app.whenReady().then(async () => {
   })()`);
   assert.deepEqual(fileRedraw.failures, [], 'visible grid/list times must be localized before paint');
   assert.equal(fileRedraw.measurements, 0, 'file metadata must not trigger tooltip layout measurements');
+  await until(() => editor(`window.__figmaZhLocalizer.getStats().queueSize === 0`));
+  const idleProcessed = await editor(`window.__figmaZhLocalizer.getStats().processedNodes`);
+  await wait(350);
+  assert.equal(await editor(`window.__figmaZhLocalizer.getStats().processedNodes`), idleProcessed, 'idle localization must not keep scanning');
+  // Exercise the actual Electron MenuItem implementation: the installed Figma
+  // updater guard hides this native entry, so restoring visibility is required.
+  global.__FIGMA_ZH_RUNTIME_DIR__ = runtime;
+  global.__FIGBOOST_TRANSLATION_HOST__ = host;
+  require(path.join(root, 'main/menu-localizer.js'));
+  const { Menu } = require('electron');
+  let originalUpdates = 0;
+  const nativeMenu = Menu.buildFromTemplate([{ label: 'Help', submenu: [
+    { id: 'checkForUpdates', label: 'Check for Updates…', visible: false, enabled: false, click() { originalUpdates++; } },
+    { label: 'Save Local Copy…' }
+  ] }]);
+  const updateEntry = nativeMenu.items[0].submenu.items[0];
+  assert.equal(updateEntry.visible, true);
+  assert.equal(updateEntry.enabled, true);
+  assert.equal(updateEntry.label, '检查更新…');
+  assert.equal(updateEntry.click, global.__FIGBOOST_CHECK_OFFICIAL_UPDATE__);
+  assert.equal(originalUpdates, 0);
+  assert.equal(global.__FIGBOOST_BULK_EXPORT_FILES__, undefined);
+  console.log('Electron native update regression passed: original menu position restored, FigBoost callback installed, batch export IPC disabled; idle localization has zero scans.');
   console.log('Chromium file-browser regression passed: 12 grid/list redraws, zero English time samples and zero layout measurements; file names preserved.');
   console.log("Chromium localization regression passed: 12 nested property-panel redraws have zero untranslated samples before paint; 600 labels converge, page names remain original, attributes do not rescan text, reconnects make zero restore writes, recycled labels translate again.");
   console.log("Electron regression passed: dictionary-only regular pages and native menus, Community-only Google fallback, UI switch and cache reuse, isolated settings with default-session 404, removed exclusion capability, protected inputs, untrusted IPC rejection and responsive layout.");
