@@ -80,29 +80,31 @@ function boot({ enabled = true, response = 1, offline = false, missing = false, 
 
 test("native update entry is visible and routed through FigBoost in both language modes", async () => {
   for (const enabled of [true, false]) {
-    const state = boot({ enabled });
-    let originalCalls = 0;
-    const menu = state.electron.Menu.buildFromTemplate([{ label: "Help", submenu: [
-      { id: "checkForUpdates", label: "Check for Updates…", visible: false, enabled: false, click() { originalCalls++; } },
-      { label: "Save Local Copy…", click() { originalCalls++; } },
-      { id: "recent-file", label: "Check for Updates…", click() { originalCalls++; } }
-    ] }]);
-    const entry = menu.items[0].submenu.items[0];
-    assert.equal(entry.label, enabled ? "检查更新…" : "Check for Updates…");
-    assert.equal(entry.visible, true); assert.equal(entry.enabled, true);
-    // Reopening a menu must neither check online nor replace unrelated actions.
-    menu.popup({}); menu.popup({});
-    assert.equal(state.calls.requests.length, 0);
-    const result = await entry.click();
-    assert.equal(result.declined, true);
-    assert.equal(originalCalls, 0);
-    assert.equal(state.calls.requests.length, 2);
-    assert.equal(state.calls.spawns.length, 0);
-    assert.ok(state.calls.windows.every(window => window.closed));
-    menu.items[0].submenu.items[1].click();
-    assert.equal(originalCalls, 1);
-    menu.items[0].submenu.items[2].click();
-    assert.equal(originalCalls, 2, "a same-named file must keep its original click handler");
+    for (const originalLabel of ["Check for Updates...", "Check for Updates…"]) {
+      const state = boot({ enabled });
+      let originalCalls = 0;
+      const menu = state.electron.Menu.buildFromTemplate([{ label: "Help", submenu: [
+        { id: "checkForUpdates", label: originalLabel, visible: false, enabled: false, click() { originalCalls++; } },
+        { label: "Save Local Copy…", click() { originalCalls++; } },
+        { id: "recent-file", label: "Check for Updates…", click() { originalCalls++; } }
+      ] }]);
+      const entry = menu.items[0].submenu.items[0];
+      assert.equal(entry.label, enabled ? "检查更新" : originalLabel);
+      assert.equal(entry.visible, true); assert.equal(entry.enabled, true);
+      // Reopening a menu must neither check online nor replace unrelated actions.
+      menu.popup({}); menu.popup({});
+      assert.equal(state.calls.requests.length, 0);
+      const result = await entry.click();
+      assert.equal(result.declined, true);
+      assert.equal(originalCalls, 0);
+      assert.equal(state.calls.requests.length, 2);
+      assert.equal(state.calls.spawns.length, 0);
+      assert.ok(state.calls.windows.every(window => window.closed));
+      menu.items[0].submenu.items[1].click();
+      assert.equal(originalCalls, 1);
+      menu.items[0].submenu.items[2].click();
+      assert.equal(originalCalls, 2, "a same-named file must keep its original click handler");
+    }
   }
 });
 

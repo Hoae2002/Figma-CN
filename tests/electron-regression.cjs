@@ -193,7 +193,7 @@ app.whenReady().then(async () => {
   const updateEntry = nativeMenu.items[0].submenu.items[0];
   assert.equal(updateEntry.visible, true);
   assert.equal(updateEntry.enabled, true);
-  assert.equal(updateEntry.label, '检查更新…');
+  assert.equal(updateEntry.label, '检查更新');
   assert.equal(updateEntry.click, global.__FIGBOOST_CHECK_OFFICIAL_UPDATE__);
   assert.equal(originalUpdates, 0);
   assert.equal(global.__FIGBOOST_BULK_EXPORT_FILES__, undefined);
