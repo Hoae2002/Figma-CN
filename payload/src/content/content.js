@@ -412,11 +412,14 @@
     let cancelPending = () => {};
     window.__figboostCancelQuickExport = () => cancelPending();
 
-    function isAvailable(button) {
-      if (button.disabled || button.getAttribute("aria-disabled") === "true") return false;
+    function isRendered(element) {
       // Figma retains hidden panels for previous selections in cached subtrees.
-      if (button.closest('[hidden],[inert],[aria-hidden="true"]')) return false;
-      return button.getClientRects().length > 0 && window.getComputedStyle(button).visibility === "visible";
+      if (element.closest('[hidden],[inert],[aria-hidden="true"]')) return false;
+      return element.getClientRects().length > 0 && window.getComputedStyle(element).visibility === "visible";
+    }
+
+    function isAvailable(button) {
+      return !button.disabled && button.getAttribute("aria-disabled") !== "true" && isRendered(button);
     }
 
     function selectionKey() {
@@ -448,8 +451,8 @@
           return true;
         }
         // Only initialize an empty section. Existing or mixed settings must stay intact.
-        if (panel.querySelector('input,select,[role="combobox"]') || /mixed|混合/i.test(panel.textContent) ||
-            Array.from(panel.querySelectorAll("button")).some(candidate => /^(?:Export\s+\S|导出\s*\S)/.test((candidate.textContent || "").trim()))) continue;
+        if (Array.from(panel.querySelectorAll('input,select,[role="combobox"]')).some(isRendered) || /mixed|混合/i.test(panel.innerText || panel.textContent) ||
+            Array.from(panel.querySelectorAll("button")).some(candidate => /^(?:Export\s+\S|导出\s*\S)/.test((candidate.textContent || "").trim()) && isRendered(candidate))) continue;
         const add = Array.from(panel.querySelectorAll("button")).find(candidate =>
           /^(?:Add export settings?|添加导出设置)$/i.test(candidate.getAttribute("aria-label") || candidate.getAttribute("title") || "") && isAvailable(candidate));
         if (!add) continue;

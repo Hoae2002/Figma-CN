@@ -13,6 +13,12 @@ function fixture(t, url = "https://www.figma.com/design/test") {
   t.after(() => dom.window.close());
   const w = dom.window, button = w.document.querySelector("#export");
   // jsdom has no layout; Chromium regression separately checks real visibility.
+  w.HTMLElement.prototype.getClientRects = function () {
+    for (let element = this; element; element = element.parentElement) {
+      if (element.hidden || element.style.display === "none") return [];
+    }
+    return [{ width: 200, height: 28 }];
+  };
   button.getClientRects = () => [{ width: 200, height: 28 }];
   let clicks = 0;
   button.addEventListener("click", () => clicks++);
@@ -184,6 +190,19 @@ test("initialization leaves existing, mixed, hidden and disabled settings alone"
     f.press({ repeat: state === "repeat" });
     assert.equal(empty.additions(), 0, state);
   }
+});
+
+test("empty selection ignores cached export actions and controls from a previous selection", async t => {
+  const f = fixture(t), empty = emptyExport(f);
+  // Figma 126.10.7 retains this subtree when switching from page export to a
+  // frame with no settings. It is present in the DOM but has no layout boxes.
+  empty.panel.insertAdjacentHTML("beforeend", '<div class="cachedSubtree displayContents" style="display: none"><input value="4x"><button role="combobox">PNG</button><button>导出 Previous page</button></div>');
+  assert.equal(f.press(), true);
+  assert.equal(empty.additions(), 1);
+  empty.render();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(empty.exports(), 1);
+  assert.equal(empty.panel.querySelector('.cachedSubtree input').value, "4x");
 });
 
 test("pending export cancels when selection, route, editing or user input changes, or payload reloads", async t => {

@@ -297,7 +297,7 @@ app.whenReady().then(async () => {
     await until(() => editor('window.__desktopExportClicks === 3'));
     await editor(`window.__desktopExportAdditions = 0;
       const panel = document.querySelector('[data-testid="fullscreen-export-panel"]');
-      panel.innerHTML = '<button aria-label="Add export settings">+</button>';
+      panel.innerHTML = '<button aria-label="Add export settings">+</button><div class="cachedSubtree displayContents" style="display: none"><input value="4x"><button role="combobox">PNG</button><button>导出 Previous page</button></div>';
       panel.querySelector('button').onclick = () => {
         window.__desktopExportAdditions++;
         setTimeout(() => {
@@ -305,14 +305,15 @@ app.whenReady().then(async () => {
           document.getElementById('default-export').onclick = () => {
             window.__desktopExportClicks++; window.__desktopExportGesture = navigator.userActivation.isActive;
           };
-          panel.querySelector('input').focus();
+          panel.querySelector('input[value="1x"]').focus();
         }, 30);
       }; true`);
     exportKey();
     await until(() => editor('window.__desktopExportClicks === 4'));
     assert.equal(await editor('window.__desktopExportAdditions'), 1, 'empty settings must use the native add action once');
     assert.equal(await editor('window.__desktopExportGesture'), true, 'asynchronous default export must retain user activation for saving');
-    assert.equal(await editor('document.querySelector("input").value'), '1x');
+    assert.equal(await editor(`document.querySelector('input[value="1x"]').value`), '1x');
+    assert.equal(await editor('document.querySelector(".cachedSubtree input").value'), '4x', 'hidden previous settings must remain untouched');
     assert.equal(await editor('document.querySelector("select").value'), 'PNG');
     assert.equal(exportEntry.accelerator, 'CmdOrCtrl+Shift+E');
   } finally {
