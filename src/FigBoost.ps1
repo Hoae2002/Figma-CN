@@ -24,7 +24,7 @@ if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClo
 
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V7"
 $UpdaterDisableMarker = "FIGMA_ZH_DISABLE_BUILTIN_UPDATER"
-$PatcherVersion = "0.5.43"
+$PatcherVersion = "0.5.44"
 $PayloadFile = "i.js"
 $MainPayloadFile = "m.js"
 $FeatureConfigFile = "features.json"
@@ -968,7 +968,7 @@ function Get-PatchStatus {
     AsarPath = $Target.AsarPath
     BackupPath = $Target.BackupPath
     RuntimeDir = (Resolve-Path -LiteralPath $RuntimeDir -ErrorAction SilentlyContinue).Path
-    Patched = $source.Contains($PatchMarker)
+    Patched = $source.Contains((Build-MainHook $RuntimeDir))
     HasBackup = Test-Path -LiteralPath $Target.BackupPath
     HasRuntimePayload = Test-Path -LiteralPath (Join-Path $RuntimeDir $PayloadFile)
     HasRuntimeMainPayload = Test-Path -LiteralPath (Join-Path $RuntimeDir $MainPayloadFile)
@@ -998,19 +998,23 @@ function Patch-Asar {
   $changed = $false
   $source = [System.Text.Encoding]::UTF8.GetString($nextBytes)
   $alreadyPatched = $source.Contains($PatchMarker)
+  $hook = Build-MainHook $RuntimeDir
+  $hookCurrent = $source.Contains($hook)
 
   $updaterPatch = Disable-BuiltInUpdaterInMain $nextBytes
   $nextBytes = $updaterPatch.Bytes
   if ($updaterPatch.Changed) { $changed = $true }
 
-  if (-not $alreadyPatched) {
-    $needle = [System.Text.Encoding]::UTF8.GetBytes($LicenseCommentTarget)
+  if (-not $hookCurrent) {
+    # V7 hooks live in the replaced license tail. Rewrite that same slot when
+    # the runtime directory changes instead of trusting the marker alone.
+    $injectionTarget = if ($alreadyPatched) { ';(()=>{const M=' + (ConvertTo-JsString $PatchMarker) + ';' } else { $LicenseCommentTarget }
+    $needle = [System.Text.Encoding]::UTF8.GetBytes($injectionTarget)
     $targetIndex = Get-BytesIndex $nextBytes $needle
     if ($targetIndex -lt 0) {
       throw "Cannot find bundled license comment injection target"
     }
 
-    $hook = Build-MainHook $RuntimeDir
     $hookBytes = [System.Text.Encoding]::UTF8.GetBytes($hook)
     $chunkSize = $nextBytes.Length - $targetIndex
     if ($hookBytes.Length -gt $chunkSize) {
@@ -1048,7 +1052,7 @@ function Patch-Asar {
   [Array]::Copy($nextHeaderBytes, 0, $asar.Bytes, $asar.HeaderStart, $nextHeaderBytes.Length)
   [Array]::Copy($nextBytes, 0, $asar.Bytes, $main.Start, $nextBytes.Length)
   [System.IO.File]::WriteAllBytes($Target.AsarPath, $asar.Bytes)
-  return [pscustomobject]@{ Changed = $true; Hash = $nextHash; AlreadyPatched = $alreadyPatched }
+  return [pscustomobject]@{ Changed = $true; Hash = $nextHash; AlreadyPatched = $hookCurrent }
 }
 
 function Assert-FigmaClosed {
@@ -1403,6 +1407,30 @@ function Invoke-SelfTest {
     if ($refreshStatus.AlreadyPatched) { throw "Self-test did not report refreshed runtime." }
     if ([System.IO.File]::ReadAllText((Join-Path $fakeRuntime "translation-service.js")) -ne (Read-PayloadText "payload\src\main\translation-service.js")) { throw "Self-test runtime upgrade failed." }
     if ([System.IO.File]::ReadAllText($personalData) -ne '{"preserve":true}') { throw "Self-test upgrade changed personal data." }
+
+    # Reproduce a current payload in a new folder while Figma still points at
+    # the old folder. Both status and installation must detect the stale hook.
+    $relocatedRuntime = Join-Path $temp "new runtime's\汉化"
+    Write-RuntimeFiles $relocatedRuntime
+    $relocationTarget = Resolve-Target $fakeAppDir
+    $backupHash = Get-Sha256Hex ([IO.File]::ReadAllBytes($relocationTarget.BackupPath))
+    $asarLength = (Get-Item -LiteralPath $fakeAsar).Length
+    $oldPayloadHash = Get-Sha256Hex ([IO.File]::ReadAllBytes((Join-Path $fakeRuntime $PayloadFile)))
+    if ((Get-PatchStatus $relocationTarget $relocatedRuntime).Patched) { throw "Self-test accepted a hook pointing at another runtime directory." }
+    $relocationStatus = Install-Patch $fakeAppDir $relocatedRuntime -SkipProcessCheck -ShortcutRoots @($shortcutRoot)
+    if (-not $relocationStatus.Patched -or $relocationStatus.AlreadyPatched) { throw "Self-test runtime relocation did not repair the hook." }
+    $relocatedAsar = Read-Asar $fakeAsar
+    $relocatedMain = Get-AsarFileSlice $relocatedAsar "main.js"
+    $relocatedSource = [Text.Encoding]::UTF8.GetString($relocatedMain.Bytes)
+    if (-not $relocatedSource.Contains((Build-MainHook $relocatedRuntime)) -or $relocatedSource.Contains((Build-MainHook $fakeRuntime))) { throw "Self-test runtime relocation retained the old hook path." }
+    if ($relocatedMain.Entry.integrity.hash -ne (Get-Sha256Hex $relocatedMain.Bytes) -or (Get-Item -LiteralPath $fakeAsar).Length -ne $asarLength) { throw "Self-test runtime relocation broke ASAR integrity or size." }
+    if ((Get-Sha256Hex ([IO.File]::ReadAllBytes($relocationTarget.BackupPath))) -ne $backupHash) { throw "Self-test runtime relocation changed the original backup." }
+    if ((Get-Sha256Hex ([IO.File]::ReadAllBytes((Join-Path $fakeRuntime $PayloadFile)))) -ne $oldPayloadHash) { throw "Self-test runtime relocation modified files in the old directory." }
+    $relocatedHash = Get-Sha256Hex $relocatedAsar.Bytes
+    $repeatRelocation = Install-Patch $fakeAppDir $relocatedRuntime -SkipProcessCheck -ShortcutRoots @($shortcutRoot)
+    if (-not $repeatRelocation.AlreadyPatched -or (Get-Sha256Hex ([IO.File]::ReadAllBytes($fakeAsar))) -ne $relocatedHash) { throw "Self-test repeated relocation changed the installed hook." }
+    Install-Patch $fakeAppDir $fakeRuntime -SkipProcessCheck -ShortcutRoots @($shortcutRoot) | Out-Null
+    if (-not (Get-PatchStatus $relocationTarget $fakeRuntime).Patched) { throw "Self-test could not move the hook back to a shorter runtime path." }
 
     $asar = Read-Asar (Join-Path $fakeAppDir "resources\app.asar")
     $main = Get-AsarFileSlice $asar "main.js"
