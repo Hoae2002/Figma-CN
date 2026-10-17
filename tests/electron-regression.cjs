@@ -104,8 +104,8 @@ app.whenReady().then(async () => {
     document.getElementById('quick-export-canvas').focus();
   })()`);
   const exportKey = () => {
-    retryPage.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S', modifiers: ['control', 'shift'] });
-    retryPage.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S', modifiers: ['control', 'shift'] });
+    retryPage.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S', modifiers: ['control', 'shift', 'alt'] });
+    retryPage.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S', modifiers: ['control', 'shift', 'alt'] });
   };
   exportKey();
   await until(() => editor('window.__quickExportClicks === 1'));
@@ -212,7 +212,7 @@ app.whenReady().then(async () => {
   global.__FIGBOOST_TRANSLATION_HOST__ = host;
   fs.writeFileSync(path.join(runtime, 'figma-zh-official-preload.js'), payload);
   require(path.join(root, 'main/menu-localizer.js'));
-  const { Menu, webContents } = require('electron');
+  const { Menu } = require('electron');
   let originalUpdates = 0;
   let nativeExports = 0;
   const nativeMenu = Menu.buildFromTemplate([{ label: 'Help', submenu: [
@@ -238,37 +238,36 @@ app.whenReady().then(async () => {
   const exportEntry = nativeMenu.items[1].submenu.items[0];
   assert.equal(exportEntry.action, 'export-selected-exportables', 'real Electron MenuItem preserves the Figma action');
   assert.equal(exportEntry.accelerator, 'CmdOrCtrl+Shift+E');
-  // Hidden standalone fixture: only emulate focus, never operate Figma Desktop.
-  // No web export panel or selection markers exist in this document.
-  const focusedContents = webContents.getFocusedWebContents;
-  const focusedWindow = BrowserWindow.getFocusedWindow;
-  webContents.getFocusedWebContents = () => retryPage.webContents;
-  BrowserWindow.getFocusedWindow = () => retryPage;
+  const alias = nativeMenu.items[1].submenu.items.find(item => item.id === 'figboost-quick-export');
+  assert.equal(alias.accelerator, 'Control+Shift+Alt+S');
+  assert.equal(alias.visible, false);
+  assert.equal(alias.action, undefined);
+  // No web export panel, DOM selection markers or mocked focus APIs.
   try {
     await retryPage.loadURL('https://www.figma.com/design/native-export');
     await until(() => editor('window.__FIGBOOST_NATIVE_QUICK_EXPORT__ === true'));
     assert.equal(await editor('typeof window.__figboostQuickExportHandler'), 'undefined', 'desktop payload must not install the web shortcut');
     await editor(`document.body.innerHTML = '<input id="canvas" readonly role="application" aria-hidden="true"><input id="name"><div contenteditable="true" id="text">Text</div>'; document.getElementById('canvas').focus()`);
+    retryPage.show(); retryPage.focus(); retryPage.webContents.focus();
+    await until(() => retryPage.isFocused());
     exportKey();
     await until(() => nativeExports === 1);
-    for (const id of ['name', 'text']) {
-      await editor(`document.getElementById('${id}').focus()`);
-      exportKey(); await wait(100);
-      assert.equal(nativeExports, 1, 'editable fields must not invoke native export');
-    }
-    await editor(`document.getElementById('canvas').focus(); document.body.insertAdjacentHTML('beforeend', '<div role="dialog" aria-modal="true"></div>')`);
+    exportEntry.enabled = false;
     exportKey(); await wait(100);
-    assert.equal(nativeExports, 1, 'modal dialog must block export even with the canvas input focused');
-    await editor(`document.querySelector('[role="dialog"]').remove()`);
+    assert.equal(nativeExports, 1, 'the alias must obey the original native action state');
+    exportEntry.enabled = true;
+    retryPage.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S', modifiers: ['control', 'shift'] });
+    retryPage.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S', modifiers: ['control', 'shift'] });
+    await wait(100);
+    assert.equal(nativeExports, 1, 'the old Ctrl+Shift+S shortcut must not export');
     exportKey();
     await until(() => nativeExports === 2);
     assert.equal(exportEntry.accelerator, 'CmdOrCtrl+Shift+E');
   } finally {
-    webContents.getFocusedWebContents = focusedContents;
-    BrowserWindow.getFocusedWindow = focusedWindow;
+    retryPage.hide();
     Menu.setApplicationMenu(null);
   }
-  console.log('Electron native export regression passed: real keyboard event invokes native action without web selectors; canvas, text editing and modal guards verified; Ctrl+Shift+E preserved.');
+  console.log('Electron native export regression passed: Ctrl+Shift+Alt+S dispatches the registered native menu alias without focus mocks or web selectors; disabled native action respected; old Ctrl+Shift+S inactive; Ctrl+Shift+E preserved.');
   console.log('Electron native update regression passed: original menu position restored, FigBoost callback installed, batch export IPC disabled; idle localization has zero scans.');
   console.log('Chromium file-browser regression passed: 12 grid/list redraws, zero English time samples and zero layout measurements; file names preserved.');
   console.log("Chromium localization regression passed: 12 nested property-panel redraws have zero untranslated samples before paint; 600 labels converge, page names remain original, attributes do not rescan text, reconnects make zero restore writes, recycled labels translate again.");

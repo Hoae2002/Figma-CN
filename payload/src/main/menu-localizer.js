@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const { app, autoUpdater, clipboard, dialog, ipcMain, Menu, BrowserWindow, webContents } = require("electron");
+  const { app, autoUpdater, clipboard, dialog, ipcMain, Menu, MenuItem, BrowserWindow, webContents } = require("electron");
   const fs = require("fs");
   const https = require("https");
   const path = require("path");
@@ -230,7 +230,8 @@
   function localizeMenu() {
     const menu = Menu.getApplicationMenu();
     if (!menu) return;
-    if (localizeItems(menu.items)) Menu.setApplicationMenu(menu);
+    const shortcutAdded = installNativeQuickExport(menu);
+    if (localizeItems(menu.items) || shortcutAdded) Menu.setApplicationMenu(menu);
   }
 
   function scheduleLocalize() {
@@ -3435,53 +3436,56 @@
     }
   }
 
-  function installNativeQuickExport(contents) {
-    // Use the same desktop command as Figma's native Export menu. DOM keydown
-    // handlers and web-panel selectors are not reliable inside desktop views.
-    if (contents.__figboostNativeQuickExportInstalled) return;
-    contents.__figboostNativeQuickExportInstalled = true;
-    let busy = false;
-    const findExport = (items) => {
-      for (const item of items || []) {
-        if (item.action === "export-selected-exportables" && item.enabled !== false && typeof item.click === "function") return item;
-        const nested = item.submenu && findExport(item.submenu.items);
+  function installNativeQuickExport(menu) {
+    let added = false;
+    for (const item of [...menu.items]) {
+      if (item.submenu) added = installNativeQuickExport(item.submenu) || added;
+      if (item.action !== "export-selected-exportables" || typeof item.click !== "function") continue;
+      if (menu.items.some(entry => entry.id === "figboost-quick-export")) continue;
+      // Register with Electron's native accelerator system, just like Figma's
+      // own export shortcut. Keep action off the alias so Figma's action-state
+      // map continues to update the original item; check that state on each use.
+      menu.append(new MenuItem({
+        id: "figboost-quick-export", label: "FigBoost Quick Export", visible: false,
+        accelerator: "Control+Shift+Alt+S",
+        click(_alias, owner, event) {
+          if (owner && item.enabled !== false) item.click(event, owner, webContents.getFocusedWebContents());
+        }
+      }));
+      added = true;
+    }
+    return added;
+  }
+
+  function installNativeQuickExportInput(contents) {
+    const findAlias = menu => {
+      for (const item of menu?.items || []) {
+        if (item.id === "figboost-quick-export") return item;
+        const nested = item.submenu && findAlias(item.submenu);
         if (nested) return nested;
       }
       return null;
     };
+    // Figma can forward input between its shell and editor views. Dispatch the
+    // registered native alias synchronously too, without an async focus probe.
     contents.prependListener("before-input-event", (event, input) => {
-      if (input.type !== "keyDown" || !input.control || !input.shift || input.alt || input.meta || input.isComposing) return;
+      if (input.type !== "keyDown" || !input.control || !input.shift || !input.alt || input.meta || input.isComposing) return;
       if (input.code ? input.code !== "KeyS" : String(input.key).toLowerCase() !== "s") return;
-      const url = contents.getURL();
       try {
-        const parsed = new URL(url);
-        if (parsed.protocol !== "https:" || !/(^|\.)figma\.com$/.test(parsed.hostname) || !/^\/(design|file)\//.test(parsed.pathname)) return;
+        const url = new URL(contents.getURL());
+        if (url.protocol !== "https:" || !/(^|\.)figma\.com$/.test(url.hostname) || !/^\/(design|file)\//.test(url.pathname)) return;
       } catch (_) { return; }
-      const menu = Menu.getApplicationMenu();
-      const item = menu && findExport(menu.items);
-      if (!item) return;
+      const alias = findAlias(Menu.getApplicationMenu()), owner = BrowserWindow.getFocusedWindow();
+      if (!alias || !owner) return;
       event.preventDefault();
-      if (input.isAutoRepeat || busy) return;
-      busy = true;
-      const guard = `(() => {
-        if (document.querySelector('[role="dialog"][aria-modal="true"]')) return false;
-        const element = document.activeElement;
-        if (!element || element.matches('input[readonly][role="application"][aria-hidden="true"]')) return true;
-        return !element.closest('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"]');
-      })()`;
-      contents.executeJavaScriptInIsolatedWorld(1004, [{ code: guard }]).then((allowed) => {
-        if (!allowed || contents.isDestroyed() || contents.getURL() !== url || webContents.getFocusedWebContents() !== contents) return;
-        const owner = BrowserWindow.getFocusedWindow();
-        if (owner && item.enabled !== false) item.click({ triggeredByAccelerator: true }, owner, contents);
-      }).catch((error) => console.error("[FigBoost] native quick export failed", error))
-        .finally(() => { busy = false; });
+      if (!input.isAutoRepeat) alias.click({ triggeredByAccelerator: true }, owner, contents);
     });
   }
 
   function injectRendererPayload(contents) {
     if (!contents || contents.__FIGBOOST_RENDERER_INJECTED__ || contents.__FIGBOOST_SKIP_RENDERER_INJECTION__) return;
     contents.__FIGBOOST_RENDERER_INJECTED__ = true;
-    installNativeQuickExport(contents);
+    installNativeQuickExportInput(contents);
     contents.on("will-navigate", (event, url) => handleFigBoostNavigation(contents, event, url));
     if (contents.setWindowOpenHandler) {
       contents.setWindowOpenHandler(({ url }) => (
@@ -3522,9 +3526,10 @@
     global.__FIGMA_ZH_MENU_LOCALIZER__ = true;
     const buildFromTemplate = Menu.buildFromTemplate.bind(Menu);
     Menu.buildFromTemplate = function (template) {
-      if (!translationHost) { localizeTemplate(template); return buildFromTemplate(template); }
+      if (!translationHost) localizeTemplate(template);
       const menu = buildFromTemplate(template);
-      localizeItems(menu.items);
+      if (translationHost) localizeItems(menu.items);
+      installNativeQuickExport(menu);
       return menu;
     };
     const popup = Menu.prototype.popup;

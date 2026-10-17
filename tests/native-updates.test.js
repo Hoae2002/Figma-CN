@@ -11,8 +11,15 @@ function boot({ enabled = true, response = 1, offline = false, missing = false, 
   const handlers = new Map();
   const config = { enabledFeatures: ["auto-check-official-latest", "bulk-export-figma-files"], patcherPath: "E:/FigBoost/FigBoost.exe", runtimeDir: "C:/FZ" };
   let applicationMenu = null;
+  class MenuItem {
+    constructor(options) {
+      Object.assign(this, options);
+      if (options.click) this.click = (event, window) => options.click(this, window, event);
+    }
+  }
   class Menu {
     popup(options) {}
+    append(item) { this.items.push(item); }
     static buildFromTemplate(template) {
       return Object.assign(new Menu(), { items: template.map(item => {
         const result = { ...item, submenu: Array.isArray(item.submenu) ? Menu.buildFromTemplate(item.submenu) : item.submenu };
@@ -47,7 +54,7 @@ function boot({ enabled = true, response = 1, offline = false, missing = false, 
   const electron = {
     app: { on() {}, getVersion: () => current, whenReady: () => Promise.resolve() },
     autoUpdater: { checkForUpdates() { throw Error("Built-in updater must not run"); } },
-    Menu, BrowserWindow, clipboard: {},
+    Menu, MenuItem, BrowserWindow, clipboard: {},
     dialog: { async showMessageBox(options) { calls.dialogs.push(options); return { response }; } },
     ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
     webContents: { getAllWebContents: () => contents, getFocusedWebContents: () => contents[0] || null }
@@ -182,13 +189,9 @@ test("native titlebar gets no renderer payload and stale settings routes cannot 
   assert.equal(state.calls.requests.length, 0);
 });
 
-function quickExportFixture() {
-  const contents = new EventEmitter();
-  let url = "https://www.figma.com/design/test", allowed = true, exported = 0, prevented = 0;
-  contents.getURL = () => url;
-  contents.isDestroyed = () => false;
-  contents.executeJavaScriptInIsolatedWorld = () => Promise.resolve(allowed);
-  const state = boot({ contents: [contents] });
+function quickExportFixture(contents = []) {
+  let exported = 0;
+  const state = boot({ contents });
   const owner = {};
   state.electron.BrowserWindow.getFocusedWindow = () => owner;
   const menu = state.electron.Menu.buildFromTemplate([{ label: "File", submenu: [{
@@ -202,53 +205,53 @@ function quickExportFixture() {
   }] }]);
   state.electron.Menu.setApplicationMenu(menu);
   return {
-    state, contents, item: menu.items[0].submenu.items[0],
-    navigate(value) { url = value; }, allow(value) { allowed = value; },
-    press(input = {}) {
-      contents.emit("before-input-event", { preventDefault() { prevented++; } }, {
-        type: "keyDown", control: true, shift: true, code: "KeyS", key: "S", ...input
-      });
-    },
-    exported: () => exported, prevented: () => prevented
+    state, menu, item: menu.items[0].submenu.items[0], alias: menu.items[0].submenu.items[1],
+    press(window = owner) { this.alias.click({ triggeredByAccelerator: true }, window); },
+    exported: () => exported
   };
 }
 
-test("desktop quick export calls the existing native command once and preserves its accelerator", async () => {
+test("desktop quick export registers Ctrl+Shift+Alt+S and preserves the original native command", () => {
   const f = quickExportFixture();
-  f.press(); f.press(); f.press({ isAutoRepeat: true });
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(f.exported(), 1, "overlapping events must not double-export");
-  assert.equal(f.prevented(), 3);
+  assert.equal(f.alias.accelerator, "Control+Shift+Alt+S");
+  assert.equal(f.alias.visible, false);
+  assert.equal(f.alias.action, undefined, "Figma must continue updating the original action's enabled state");
   assert.equal(f.item.accelerator, "CmdOrCtrl+Shift+E");
-  f.press({ code: "KeyE", key: "E" });
-  assert.equal(f.prevented(), 3, "the original native shortcut remains untouched");
-  f.navigate("https://www.figma.com/file/legacy"); f.press();
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(f.exported(), 2);
+  f.press();
+  assert.equal(f.exported(), 1);
 });
 
-test("desktop export ignores other routes, disabled commands, IME and other combinations", async () => {
+test("desktop export follows native action availability and requires a native owner window", () => {
   const f = quickExportFixture();
-  for (const url of ["https://www.figma.com/files/test", "https://www.figma.com/proto/test", "https://figma.com.evil.test/design/test", "file:///Figma/titlebar.html"]) {
-    f.navigate(url); f.press();
-  }
-  f.navigate("https://www.figma.com/design/test");
-  for (const input of [{ type: "keyUp" }, { control: false }, { shift: false }, { alt: true }, { meta: true }, { isComposing: true }, { code: "KeyA", key: "S" }]) f.press(input);
   f.item.enabled = false; f.press();
-  f.state.electron.Menu.setApplicationMenu(null); f.press();
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(f.exported(), 0); assert.equal(f.prevented(), 0);
+  f.item.enabled = true; f.press(null);
+  assert.equal(f.exported(), 0);
+  f.press();
+  assert.equal(f.exported(), 1, "an existing alias follows changes to the original command");
 });
 
-test("desktop export protects editing and cannot export a different tab after its async focus check", async () => {
+test("native menu refreshes cannot duplicate the alias and unrelated menus stay unchanged", () => {
   const f = quickExportFixture();
-  f.allow(false); f.press();
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(f.exported(), 0);
-  f.allow(true); f.press(); f.navigate("https://www.figma.com/design/other");
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(f.exported(), 0);
-  f.press(); f.state.electron.webContents.getFocusedWebContents = () => null;
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(f.exported(), 0);
+  for (const timer of [...f.state.calls.timers]) timer.fn();
+  assert.equal(f.menu.items[0].submenu.items.filter(item => item.id === "figboost-quick-export").length, 1);
+  const plainMenu = f.state.electron.Menu.buildFromTemplate([{ label: "Export user file" }]);
+  assert.equal(plainMenu.items.length, 1, "labels alone must not create an export capability");
+});
+
+test("forwarded editor input requires all three modifiers and ignores other routes and repeats", () => {
+  const contents = new EventEmitter();
+  let url = "https://www.figma.com/design/test", prevented = 0;
+  contents.getURL = () => url;
+  const f = quickExportFixture([contents]);
+  const press = (input = {}) => contents.emit("before-input-event", { preventDefault() { prevented++; } }, {
+    type: "keyDown", control: true, shift: true, alt: true, code: "KeyS", key: "S", ...input
+  });
+  for (const input of [{ control: false }, { shift: false }, { alt: false }, { meta: true }, { isComposing: true }, { type: "keyUp" }, { code: "KeyA", key: "S" }]) press(input);
+  for (const otherURL of ["https://www.figma.com/files/test", "https://www.figma.com/proto/test", "https://figma.com.evil.test/design/test", "file:///Figma/titlebar.html"]) {
+    url = otherURL; press();
+  }
+  assert.equal(prevented, 0); assert.equal(f.exported(), 0);
+  url = "https://www.figma.com/design/test";
+  press(); press({ isAutoRepeat: true });
+  assert.equal(prevented, 2); assert.equal(f.exported(), 1);
 });

@@ -18,7 +18,7 @@ function fixture(t, url = "https://www.figma.com/design/test") {
   button.addEventListener("click", () => clicks++);
   w.eval(source);
   function press(overrides = {}, target = w.document.body) {
-    const event = new w.KeyboardEvent("keydown", { key: "S", code: "KeyS", ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true, ...overrides });
+    const event = new w.KeyboardEvent("keydown", { key: "S", code: "KeyS", ctrlKey: true, shiftKey: true, altKey: true, bubbles: true, cancelable: true, ...overrides });
     target.dispatchEvent(event);
     return event.defaultPrevented;
   }
@@ -66,7 +66,7 @@ test("text editing, IME and other key combinations keep their normal behavior", 
     input.blur();
   }
   assert.equal(f.press({}, f.w.document.querySelector("#text")), false);
-  for (const keys of [{ ctrlKey: false }, { shiftKey: false }, { altKey: true }, { metaKey: true }, { isComposing: true }, { code: "KeyA", key: "a" }]) {
+  for (const keys of [{ ctrlKey: false }, { shiftKey: false }, { altKey: false }, { metaKey: true }, { isComposing: true }, { code: "KeyA", key: "a" }]) {
     assert.equal(f.press(keys), false);
   }
   assert.equal(f.clicks(), 0);

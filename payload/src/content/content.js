@@ -408,7 +408,7 @@
     }
 
     const handler = (event) => {
-      if (!event.ctrlKey || !event.shiftKey || event.altKey || event.metaKey || event.isComposing) return;
+      if (!event.ctrlKey || !event.shiftKey || !event.altKey || event.metaKey || event.isComposing) return;
       if (event.code !== "KeyS" && (event.code || String(event.key).toLowerCase() !== "s")) return;
       if (!/^\/(design|file)\/[^/]+/.test(location.pathname)) return;
       if (isEditingText(event.target) || isEditingText(document.activeElement)) return;
