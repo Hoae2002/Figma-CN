@@ -25,7 +25,7 @@
   ];
   const fileBrowserTime = "(?:\\d+ (?:seconds?|minutes?|hours?|days?|weeks?|months?|years?) ago|just now|yesterday)";
   const fileBrowserAction = "(?:Updated|Edited|Viewed|Trashed by you)";
-  const fileBrowserTimestampSource = new RegExp(`^(?:${fileBrowserAction}(?: ${fileBrowserTime})?|${fileBrowserTime})$`);
+  const fileBrowserTimestampSource = new RegExp(`^(?:${fileBrowserAction}(?: ${fileBrowserTime})?|${fileBrowserTime}|(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?) ago)$`);
   const fileBrowserTimestampLabel = new RegExp(`^(?:${fileBrowserAction}|已更新|编辑于|查看于|由你删除于) (?:${fileBrowserTime}|\\d+\\s*(?:秒|分钟|小时|天|周|个月|年)前|刚刚|昨天)$`);
   function isFileBrowserMetadata(element, source) {
     if (!/^\/files(?:\/|$)/.test(window.location.pathname) || P.isCommunityLocation(window.location)) return false;

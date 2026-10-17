@@ -189,7 +189,7 @@ app.whenReady().then(async () => {
         const list = round % 2 === 0;
         main.innerHTML = list ? '<table><tbody>' + Array.from({length: 45}, () =>
           '<tr><td><button data-card-main-action aria-label="Untitled, Design file"></button></td><td><span class="generic_tile_title_contents--itemsViewTitle--test">Untitled</span></td><td><span data-time>2 months ago</span></td><td><span data-time>1 year ago</span></td></tr>').join('') + '</tbody></table>' :
-          '<div role="list">' + Array.from({length: 45}, () => '<div role="group" aria-label="Untitled"><h2>Untitled</h2><i18n-text data-time>Edited <span>2 months ago</span></i18n-text></div>').join('') + '</div>';
+          '<div role="list">' + Array.from({length: 45}, () => '<div role="group" aria-label="Untitled"><h2>Untitled</h2><i18n-text data-time>Edited <span>5</span> years ago</i18n-text></div>').join('') + '</div>';
         await Promise.resolve(); await Promise.resolve();
         await new Promise(resolve => requestAnimationFrame(resolve));
         const labels = [...main.querySelectorAll('[data-time]')].slice(0, list ? 36 : 18);
@@ -233,6 +233,20 @@ app.whenReady().then(async () => {
   assert.equal(updateEntry.label, '检查更新');
   assert.equal(updateEntry.click, global.__FIGBOOST_CHECK_OFFICIAL_UPDATE__);
   assert.equal(originalUpdates, 0);
+  for (const missing of [true, false]) {
+    const legacyMenu = Menu.buildFromTemplate([
+      { label: 'Preferences', submenu: [] }, { label: 'Help', submenu: [] },
+      { label: 'About Figma' },
+      ...(!missing ? [{ label: 'Check for Updates…', visible: false, enabled: false }] : []),
+      { type: 'separator' }, { label: 'Exit', role: 'quit' }
+    ]);
+    const legacyUpdate = legacyMenu.items[3];
+    assert.equal(legacyUpdate.label, '检查更新');
+    assert.equal(legacyUpdate.visible, true);
+    assert.equal(legacyUpdate.enabled, true);
+    assert.equal(legacyUpdate.click, global.__FIGBOOST_CHECK_OFFICIAL_UPDATE__);
+    assert.equal(legacyMenu.items.length, 6);
+  }
   assert.equal(global.__FIGBOOST_BULK_EXPORT_FILES__, undefined);
   Menu.setApplicationMenu(nativeMenu);
   const exportEntry = nativeMenu.items[1].submenu.items[0];

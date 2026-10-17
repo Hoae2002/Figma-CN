@@ -437,6 +437,30 @@ test("file browser metadata translates whole and split labels across redraws and
   }
 });
 
+test("file card times translate separately rendered numbers and units while names remain protected", async t => {
+  const dictionary = require("../payload/src/dictionary/zh-CN.js");
+  const { document, runtime, snapshot } = fixture(t, `<main><div role="group" aria-label="Private file">
+    <h2><i18n-text>Edited <span>5</span> years ago</i18n-text></h2>
+    <span data-testid="file-name"><i18n-text>Edited <span>5</span> years ago</i18n-text></span>
+    <i18n-text data-time>Edited <span>5</span> years ago</i18n-text>
+    <i18n-text data-time>Edited <span>3</span> days ago</i18n-text>
+    <i18n-text data-time>Edited <span>1</span> year ago</i18n-text>
+    <i18n-text data-private>Edited private roadmap years ago</i18n-text>
+  </div></main>`, {}, {}, "https://www.figma.com/files/team/test/recents-and-sharing/recently-viewed", dictionary);
+  const times = [...document.querySelectorAll('[data-time]')];
+  assert.deepEqual(times.map(e => e.textContent), ["编辑于 5 年前", "编辑于 3 天前", "编辑于 1 年前"]);
+  assert.equal(document.querySelector('h2').textContent, "Edited 5 years ago");
+  assert.equal(document.querySelector('[data-testid]').textContent, "Edited 5 years ago");
+  assert.equal(document.querySelector('[data-private]').textContent, "Edited private roadmap years ago");
+  times[0].querySelector('span').textContent = "6";
+  await tick();
+  assert.equal(times[0].textContent, "编辑于 6 年前");
+  runtime.apply({ ...snapshot, revision: 2, settings: { enabled: false, communityOnline: false } });
+  assert.deepEqual(times.map(e => e.textContent), ["Edited 6 years ago", "Edited 3 days ago", "Edited 1 year ago"]);
+  runtime.apply({ ...snapshot, revision: 3 });
+  assert.equal(times[0].textContent, "编辑于 6 年前");
+});
+
 test("trash title is scoped to its system route while list names and metadata stay separate", async t => {
   const dictionary = require("../payload/src/dictionary/zh-CN.js");
   const { w, document, localizer, runtime } = fixture(t, `

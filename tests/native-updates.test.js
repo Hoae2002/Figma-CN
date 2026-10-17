@@ -20,6 +20,7 @@ function boot({ enabled = true, response = 1, offline = false, missing = false, 
   class Menu {
     popup(options) {}
     append(item) { this.items.push(item); }
+    insert(index, item) { this.items.splice(index, 0, item); }
     static buildFromTemplate(template) {
       return Object.assign(new Menu(), { items: template.map(item => {
         const result = { ...item, submenu: Array.isArray(item.submenu) ? Menu.buildFromTemplate(item.submenu) : item.submenu };
@@ -119,6 +120,37 @@ test("native update entry is visible and routed through FigBoost in both languag
       assert.equal(originalCalls, 2, "a same-named file must keep its original click handler");
     }
   }
+});
+
+test("older native app menus restore missing or ID-less update commands without duplicates", async () => {
+  for (const enabled of [true, false]) {
+    for (const missing of [true, false]) {
+      const state = boot({ enabled, current: "126.6.9" });
+      let unrelatedCalls = 0;
+      const menu = state.electron.Menu.buildFromTemplate([
+        { label: "Preferences", submenu: [] }, { label: "Help", submenu: [] },
+        { label: "About Figma" },
+        ...(!missing ? [{ label: "Check for Updates…", visible: false, enabled: false }] : []),
+        { type: "separator" }, { label: "Exit", role: "quit" },
+        { id: "recent-file", label: "Check for Updates…", click() { unrelatedCalls++; } }
+      ]);
+      menu.popup({}); menu.popup({});
+      const entries = menu.items.filter(item => item.click === state.global.__FIGBOOST_CHECK_OFFICIAL_UPDATE__);
+      assert.equal(entries.length, 1);
+      assert.equal(menu.items.indexOf(entries[0]), 3);
+      assert.equal(entries[0].visible, true);
+      assert.equal(entries[0].enabled, true);
+      assert.equal(entries[0].label, enabled ? "检查更新" : "Check for Updates…");
+      assert.equal(state.calls.requests.length, 0);
+      assert.equal((await entries[0].click()).declined, true);
+      menu.items.find(item => item.id === "recent-file").click();
+      assert.equal(unrelatedCalls, 1);
+    }
+  }
+  const state = boot();
+  const fileMenu = state.electron.Menu.buildFromTemplate([{ label: "About Figma" }, { label: "Exit" }]);
+  fileMenu.popup({});
+  assert.equal(fileMenu.items.length, 2, "file names alone must not identify the native app menu");
 });
 
 test("manual updates work without feature installation and reapply localization only after confirmation", async () => {

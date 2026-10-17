@@ -5116,6 +5116,13 @@
   };
 
   const patterns = [
+    ["^seconds? ago$","秒前"],
+    ["^minutes? ago$","分钟前"],
+    ["^hours? ago$","小时前"],
+    ["^days? ago$","天前"],
+    ["^weeks? ago$","周前"],
+    ["^months? ago$","个月前"],
+    ["^years? ago$","年前"],
     ["^From (.+)$","来自 $1","",true,true],
     ["^(.+)'s team admin$","$1 的团队管理","",true],
     ["^(.+)'s team$","$1 的团队","",true],

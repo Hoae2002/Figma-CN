@@ -215,9 +215,9 @@
     }
   }
 
-  function bindNativeUpdateEntry(item) {
-    // Match the native command ID, never a user's file/tab name.
-    if (!item || item.id !== "checkForUpdates") return false;
+  function bindNativeUpdateEntry(item, legacyCommand = false) {
+    // Match the command ID; legacy callers must first verify the native menu.
+    if (!item || (item.id !== "checkForUpdates" && !legacyCommand)) return false;
     // Keep Figma's own menu position, including when its built-in updater guard
     // hides the entry. Only an explicit click starts the FigBoost update flow.
     if (item.click === checkOfficialUpdateManually && item.visible === true && item.enabled === true) return false;
@@ -227,11 +227,35 @@
     return true;
   }
 
+  function ensureNativeUpdateEntry(menu) {
+    let changed = false;
+    for (const item of menu.items) {
+      if (item.submenu) changed = ensureNativeUpdateEntry(item.submenu) || changed;
+    }
+    const items = menu.items;
+    const aboutIndex = items.findIndex(item => /^(?:About Figma|关于 Figma)$/.test(item.label));
+    // Older clients may omit the command or its ID. Require the native app
+    // menu's other anchors before matching labels or inserting a fallback.
+    if (aboutIndex < 0
+      || !items.some(item => item.role === "quit" || /^(?:Exit|退出)$/.test(item.label))
+      || !items.some(item => item.submenu && /^(?:Preferences|偏好设置)$/.test(item.label))
+      || !items.some(item => item.submenu && /^(?:Help|帮助)$/.test(item.label))) return changed;
+    const existing = items.find(item => item.id === "checkForUpdates"
+      || (!item.id && /^(?:Check for Updates(?:\.\.\.|…)?|检查更新(?:\.\.\.|…)?)$/.test(item.label)));
+    if (existing) return bindNativeUpdateEntry(existing, true) || changed;
+    menu.insert(aboutIndex + 1, new MenuItem({
+      id: "checkForUpdates", label: "Check for Updates…",
+      click: checkOfficialUpdateManually
+    }));
+    return true;
+  }
+
   function localizeMenu() {
     const menu = Menu.getApplicationMenu();
     if (!menu) return;
+    const updateAdded = ensureNativeUpdateEntry(menu);
     const shortcutAdded = installNativeQuickExport(menu);
-    if (localizeItems(menu.items) || shortcutAdded) Menu.setApplicationMenu(menu);
+    if (localizeItems(menu.items) || shortcutAdded || updateAdded) Menu.setApplicationMenu(menu);
   }
 
   function scheduleLocalize() {
@@ -3542,12 +3566,14 @@
     Menu.buildFromTemplate = function (template) {
       if (!translationHost) localizeTemplate(template);
       const menu = buildFromTemplate(template);
-      if (translationHost) localizeItems(menu.items);
+      ensureNativeUpdateEntry(menu);
+      localizeItems(menu.items);
       installNativeQuickExport(menu);
       return menu;
     };
     const popup = Menu.prototype.popup;
     Menu.prototype.popup = function (...args) {
+      ensureNativeUpdateEntry(this);
       localizeItems(this.items);
       return popup.apply(this, args);
     };
