@@ -147,6 +147,35 @@ app.whenReady().then(async () => {
     return failures;
   })()`);
   assert.deepEqual(redraw, [], 'property labels must stay localized at every redraw, before paint');
+  const fileRedraw = await editor(`(async () => {
+    history.replaceState({}, '', '/files/team/test/recents-and-sharing/recently-viewed');
+    document.body.replaceChildren(document.createElement('main'));
+    const main = document.querySelector('main');
+    const originalStyle = window.getComputedStyle;
+    const originalRect = Element.prototype.getBoundingClientRect;
+    let measurements = 0;
+    window.getComputedStyle = (...args) => { measurements++; return originalStyle(...args); };
+    Element.prototype.getBoundingClientRect = function(...args) { measurements++; return originalRect.apply(this, args); };
+    const failures = [];
+    try {
+      for (let round = 0; round < 12; round++) {
+        const list = round % 2 === 0;
+        main.innerHTML = list ? '<table><tbody>' + Array.from({length: 45}, () =>
+          '<tr><td><button data-card-main-action aria-label="Untitled, Design file"></button></td><td><span class="generic_tile_title_contents--itemsViewTitle--test">Untitled</span></td><td><span data-time>2 months ago</span></td><td><span data-time>1 year ago</span></td></tr>').join('') + '</tbody></table>' :
+          '<div role="list">' + Array.from({length: 45}, () => '<div role="group" aria-label="Untitled"><h2>Untitled</h2><i18n-text data-time>Edited <span>2 months ago</span></i18n-text></div>').join('') + '</div>';
+        await Promise.resolve(); await Promise.resolve();
+        await new Promise(resolve => requestAnimationFrame(resolve));
+        const labels = [...main.querySelectorAll('[data-time]')].slice(0, list ? 36 : 18);
+        if (labels.some(e => /[A-Za-z]/.test(e.textContent))) failures.push({round, text: labels.map(e => e.textContent)});
+        if ([...main.querySelectorAll('h2,[class*="itemsViewTitle"]')].some(e => e.textContent !== 'Untitled')) failures.push({round, names: 'changed'});
+        await new Promise(resolve => setTimeout(resolve, 30));
+      }
+    } finally { window.getComputedStyle = originalStyle; Element.prototype.getBoundingClientRect = originalRect; }
+    return {failures, measurements};
+  })()`);
+  assert.deepEqual(fileRedraw.failures, [], 'visible grid/list times must be localized before paint');
+  assert.equal(fileRedraw.measurements, 0, 'file metadata must not trigger tooltip layout measurements');
+  console.log('Chromium file-browser regression passed: 12 grid/list redraws, zero English time samples and zero layout measurements; file names preserved.');
   console.log("Chromium localization regression passed: 12 nested property-panel redraws have zero untranslated samples before paint; 600 labels converge, page names remain original, attributes do not rescan text, reconnects make zero restore writes, recycled labels translate again.");
   console.log("Electron regression passed: dictionary-only regular pages and native menus, Community-only Google fallback, UI switch and cache reuse, isolated settings with default-session 404, removed exclusion capability, protected inputs, untrusted IPC rejection and responsive layout.");
 }).then(() => finish(0)).catch(error => { console.error(error.stack); finish(1); });

@@ -579,6 +579,45 @@ test("tool-section protection refreshes when a property panel is reused", async 
   assert.equal(document.querySelector("span").textContent, "导出");
 });
 
+test("file browser timestamps translate without measuring static rows as tooltips", async t => {
+  const dictionary = require("../payload/src/dictionary/zh-CN.js");
+  const { w, document } = fixture(t, '<main></main>', {}, {},
+    'https://www.figma.com/files/team/test/recents-and-sharing/recently-viewed', dictionary);
+  w.getComputedStyle = () => { assert.fail('static file metadata must not trigger style or layout reads after each text write'); };
+  w.Element.prototype.getBoundingClientRect = () => { assert.fail('static file rows must not force layout'); };
+  document.querySelector('main').innerHTML = '<table><tbody>' + Array.from({ length: 18 }, () =>
+    '<tr><td><span class="generic_tile_title_contents--itemsViewTitle--test">2 months ago</span></td>' +
+    '<td><span>2 months ago</span></td><td><span>1 year ago</span></td></tr>').join('') + '</tbody></table>' +
+    '<div role="group" aria-label="Private file"><h2>Private file</h2><i18n-text>Edited <span>2 months ago</span></i18n-text></div>';
+  await tick();
+  assert.ok([...document.querySelectorAll('td:nth-child(2)')].every(cell => cell.textContent === '2 个月前'));
+  assert.ok([...document.querySelectorAll('td:nth-child(3)')].every(cell => cell.textContent === '1 年前'));
+  assert.ok([...document.querySelectorAll('td:first-child')].every(cell => cell.textContent === '2 months ago'));
+  assert.equal(document.querySelector('i18n-text').textContent, '编辑于 2 个月前');
+});
+
+test("file time labels finish before paint even when a view rebuild exhausts the general budget", async t => {
+  const dictionary = require("../payload/src/dictionary/zh-CN.js");
+  const { w, document, localizer } = fixture(t, '<main></main>', {}, {},
+    'https://www.figma.com/files/team/test/recents-and-sharing/recently-viewed', dictionary);
+  let clock = 0;
+  w.performance.now = () => clock++;
+  w.requestAnimationFrame = () => 1;
+  w.cancelAnimationFrame = () => {};
+  localizer.setOptions({ budgetMs: 1 });
+  document.querySelector('main').innerHTML = '<button>Save</button>'.repeat(250) + '<table><tbody>' +
+    Array.from({length: 18}, () => '<tr><td><span class="generic_tile_title_contents--itemsViewTitle--test">2 months ago</span></td><td><span>2 months ago</span></td><td><span>1 year ago</span></td></tr>').join('') + '</tbody></table>' +
+    '<div role="group" aria-label="Edited 2 months ago"><h2>Edited 2 months ago</h2><i18n-text>Edited <span>2 months ago</span></i18n-text></div>';
+  await Promise.resolve(); await Promise.resolve();
+  assert.ok([...document.querySelectorAll('td:nth-child(2)')].every(cell => cell.textContent === '2 个月前'));
+  assert.ok([...document.querySelectorAll('td:nth-child(3)')].every(cell => cell.textContent === '1 年前'));
+  assert.equal(document.querySelector('i18n-text').textContent, '编辑于 2 个月前');
+  assert.equal(document.querySelector('h2').textContent, 'Edited 2 months ago');
+  assert.ok([...document.querySelectorAll('td:first-child')].every(cell => cell.textContent === '2 months ago'));
+  assert.ok(localizer.getStats().queueSize > 0, 'the remaining general scan still yields');
+  assert.ok([...document.querySelectorAll('button')].some(button => button.textContent === 'Save'));
+});
+
 test("static property labels translate without layout reads, including attribute-marked labels", async t => {
   const { w, document } = fixture(t, '<main></main>', {}, { Position: "位置", Opacity: "不透明度" });
   w.getComputedStyle = () => { assert.fail('property labels must not measure ancestor styles'); };

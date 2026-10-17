@@ -968,6 +968,7 @@
     );
     if (interactiveScope) return true;
     if (isEditorPanelLabel(element)) return true;
+    if (isStaticFileBrowserContent(element)) return false;
     if (findTooltipContainer(element)) return true;
 
     const style = window.getComputedStyle(element);
@@ -1001,6 +1002,11 @@
     )) && !closestInBatch(element, "[role='tooltip'],[role='dialog'],[role='menu'],[data-testid*='tooltip' i],[data-testid*='popover' i],[class*='popover' i]");
   }
 
+  function isStaticFileBrowserContent(element) {
+    return isFileBrowserRoute() && Boolean(closestInBatch(element, "main"))
+      && !closestInBatch(element, "[role='tooltip'],[role='dialog'],[role='alertdialog'],[role='menu'],[role='listbox'],[data-testid*='tooltip' i],[data-testid*='popover' i],[class*='popover' i]");
+  }
+
   function findTooltipContainer(element) {
     if (!element || element.nodeType !== Node.ELEMENT_NODE) return null;
     // Text inside a control is its label, not a floating tooltip. Avoid layout
@@ -1015,6 +1021,10 @@
     // Property labels live in a known static panel. Measuring every ancestor
     // after text writes forces layout and delays later labels past the paint.
     if (isEditorPanelLabel(element)) return null;
+    // Grid/list metadata is static content. Measuring every timestamp and its
+    // ancestors as a possible tooltip forces layout after each translated write,
+    // exhausting the observer slice before later visible rows reach Chinese.
+    if (isStaticFileBrowserContent(element)) return null;
 
     const likely = closestLikelyFloatingTooltip(element);
     if (likely && !isTooltipTriggerElement(likely) && !hasMenuLikeControls(likely)) {
@@ -1385,6 +1395,35 @@
       schedule();
     }
 
+    function translateFileBrowserTimes(roots) {
+      if (!/^\/files(?:\/|$)/.test(window.location.pathname)) return;
+      // A view switch replaces many rows together. Finish the small, bounded
+      // set of time labels before the general scan yields to another frame.
+      // Use the normal translation/protection path, including same-named files.
+      const time = /^(?:(?:Updated|Edited|Viewed|Trashed by you)\s*)?(?:\d+ (?:seconds?|minutes?|hours?|days?|weeks?|months?|years?) ago|just now|yesterday)?$/;
+      const seen = new Set();
+      let remaining = options.chunkSize;
+      for (const root of roots) {
+        const element = root.nodeType === Node.TEXT_NODE ? root.parentElement : root;
+        if (!element || element.nodeType !== Node.ELEMENT_NODE || !isInBodyRegion(element)) continue;
+        const main = closestInBatch(element, 'main') ? element : element.querySelector('main');
+        if (!main) continue;
+        const labels = root.nodeType === Node.TEXT_NODE ? [element]
+          : [...(main.matches('i18n-text,td span') ? [main] : []), ...main.querySelectorAll('i18n-text,td span')];
+        for (const label of labels) {
+          const walker = document.createTreeWalker(label, NodeFilter.SHOW_TEXT);
+          for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+            if (seen.has(node)) continue;
+            if (seen.size >= options.chunkSize * 8) return;
+            seen.add(node);
+            if (isOwnTextMutation(node) || !/[A-Za-z]/.test(node.nodeValue) || !time.test(node.nodeValue.trim())) continue;
+            if (remaining-- <= 0) return;
+            translateTextNode(node);
+          }
+        }
+      }
+    }
+
     function start(root) {
       if (observer && enabled) return;
       enabled = true;
@@ -1406,6 +1445,7 @@
           }
           // Direct label rewrites must not wait behind ancestor panel scans.
           const orderedRoots = [...roots].sort((a, b) => (b.nodeType === Node.TEXT_NODE) - (a.nodeType === Node.TEXT_NODE));
+          translateFileBrowserTimes(orderedRoots);
           for (const node of orderedRoots) {
             let covered = false;
             for (let parent = node.nodeType === Node.TEXT_NODE ? null : node.parentNode; parent; parent = parent.parentNode) {
