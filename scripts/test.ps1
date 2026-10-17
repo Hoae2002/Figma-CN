@@ -49,6 +49,8 @@ if (-not $figBoost.Contains('$Host.Name -eq "ConsoleHost"') -or -not $figBoost.C
 }
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root "tests\updater.test.ps1")
 if ($LASTEXITCODE -ne 0) { throw "FigBoost update behavior tests failed." }
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root "tests\updater-host.test.ps1")
+if ($LASTEXITCODE -ne 0) { throw "FigBoost compiled update worker tests failed." }
 foreach ($mode in @(@(), @('-Windows10'), @('-MissingClient'))) {
   & powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File (Join-Path $root "tests\updater-gui.test.ps1") @mode
   if ($LASTEXITCODE -ne 0) { throw "FigBoost update GUI tests failed." }

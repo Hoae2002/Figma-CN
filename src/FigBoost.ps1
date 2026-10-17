@@ -24,7 +24,7 @@ if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClo
 
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V7"
 $UpdaterDisableMarker = "FIGMA_ZH_DISABLE_BUILTIN_UPDATER"
-$PatcherVersion = "0.5.28"
+$PatcherVersion = "0.5.29"
 $PayloadFile = "i.js"
 $MainPayloadFile = "m.js"
 $FeatureConfigFile = "features.json"
@@ -66,7 +66,7 @@ function Save-VerifiedUpdateDownload {
   try {
     Invoke-WebRequest -Uri $Release.DownloadUrl -OutFile $Destination -UseBasicParsing -TimeoutSec 120 | Out-Null
     $file = Get-Item -LiteralPath $Destination
-    if ($file.Length -ne [long]$Release.size -or (Get-FileHash -LiteralPath $Destination -Algorithm SHA256).Hash -ine $Release.sha256) { throw "下载文件校验失败，请重新检查更新。" }
+    if ($file.Length -ne [long]$Release.size -or (Get-Sha256Hex ([IO.File]::ReadAllBytes($Destination))) -ine $Release.sha256) { throw "下载文件校验失败，请重新检查更新。" }
   } catch {
     Remove-Item -LiteralPath $Destination -Force -ErrorAction SilentlyContinue
     throw
@@ -162,7 +162,7 @@ function Install-PayloadUpdate {
     foreach ($path in $originalFiles.Keys) {
       if ($null -eq $originalFiles[$path]) {
         Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
-      } elseif (-not (Test-Path -LiteralPath $path) -or (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ine (Get-Sha256Hex $originalFiles[$path])) {
+      } elseif (-not (Test-Path -LiteralPath $path) -or (Get-Sha256Hex ([IO.File]::ReadAllBytes($path))) -ine (Get-Sha256Hex $originalFiles[$path])) {
         [IO.File]::WriteAllBytes($path, $originalFiles[$path])
       }
     }
@@ -179,7 +179,7 @@ function Invoke-UpdateWorker {
   $worker = [PowerShell]::Create()
   try {
     $setup = '$ErrorActionPreference = "Stop"; [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12;'
-    foreach ($name in @('Assert-UpdateVersion', 'Get-LatestFigBoostUpdate', 'Save-VerifiedUpdateDownload')) { $setup += (Get-Command $name).Definition.Insert(0, "function $name {") + "}`n" }
+    foreach ($name in @('Assert-UpdateVersion', 'Get-LatestFigBoostUpdate', 'Get-Sha256Hex', 'Save-VerifiedUpdateDownload')) { $setup += (Get-Command $name).Definition.Insert(0, "function $name {") + "}`n" }
     foreach ($name in @('PatcherVersion', 'UpdateRepository', 'UpdateCommitApi')) { $setup += "`$$name = '" + (Get-Variable $name -ValueOnly).Replace("'", "''") + "';`n" }
     [void]$worker.AddScript($setup + "function Invoke-Work {" + $Action.ToString() + "}`nInvoke-Work @args")
     foreach ($argument in $Arguments) { [void]$worker.AddArgument($argument) }
@@ -443,7 +443,7 @@ function Invoke-PatcherSelfUpdate {
   param([object]$Release, [string]$TempExe, [string]$SelectedRuntimeDir, [string]$SelectedAppDir)
   $currentExe = [Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
   if ((Split-Path -Leaf $currentExe) -ine 'FigBoost.exe') { throw "请在打包后的 FigBoost.exe 中升级客户端。" }
-  if ((Get-Item -LiteralPath $TempExe).Length -ne [long]$Release.size -or (Get-FileHash -LiteralPath $TempExe -Algorithm SHA256).Hash -ine $Release.sha256) { throw "客户端更新文件校验失败。" }
+  if ((Get-Item -LiteralPath $TempExe).Length -ne [long]$Release.size -or (Get-Sha256Hex ([IO.File]::ReadAllBytes($TempExe))) -ine $Release.sha256) { throw "客户端更新文件校验失败。" }
   $downloadVersion = (Get-Item -LiteralPath $TempExe).VersionInfo.FileVersion
   if ($downloadVersion -ne "$($Release.version).0") { throw "客户端更新文件版本不匹配。" }
   $psExe = (Get-Command powershell.exe -ErrorAction Stop).Source
@@ -547,7 +547,7 @@ function Get-Sha256Hex {
   param([byte[]]$Bytes)
   $sha = [System.Security.Cryptography.SHA256]::Create()
   try {
-    return (($sha.ComputeHash($Bytes) | ForEach-Object { $_.ToString("x2") }) -join "")
+    return ([BitConverter]::ToString($sha.ComputeHash($Bytes))).Replace('-', '').ToLowerInvariant()
   } finally {
     $sha.Dispose()
   }
