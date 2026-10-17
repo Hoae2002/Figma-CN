@@ -24,6 +24,21 @@ function fixture(t, html, custom = {}, exact = {}, pageUrl = "https://www.figma.
 }
 const tick = () => new Promise(r => setTimeout(r, 50));
 
+test("single and multiple page selection menus translate ordering actions while page names stay original", async t => {
+  const dictionary = require("../payload/src/dictionary/zh-CN.js");
+  const labels = ["Move up", "Move down", "Move to top", "Move to bottom"];
+  const expected = ["上移", "下移", "移至顶部", "移至底部"];
+  const { document } = fixture(t, `<aside aria-label="Left sidebar">${labels.map(label => `<div data-testid="page-name">${label}</div>`).join("")}</aside>
+    <div role="menu"><div role="menuitem">Rename page</div>${labels.map(label => `<div role="menuitem"><i18n-text>${label}</i18n-text></div>`).join("")}</div>`,
+    {}, dictionary.exact, "https://www.figma.com/design/test", dictionary);
+  const menu = document.querySelector('[role="menu"]');
+  assert.deepEqual([...menu.querySelectorAll('i18n-text')].map(e => e.textContent), expected);
+  menu.innerHTML = `<div role="menuitem">Rename 7 pages</div>${labels.map(label => `<div role="menuitem"><i18n-text>${label}</i18n-text></div>`).join("")}`;
+  await tick();
+  assert.deepEqual([...menu.querySelectorAll('i18n-text')].map(e => e.textContent), expected);
+  assert.deepEqual([...document.querySelectorAll('[data-testid="page-name"]')].map(e => e.textContent), labels);
+});
+
 test("admin drafts and settings translate system headings and split upgrade prose without changing names", async t => {
   const dictionary = require("../payload/src/dictionary/zh-CN.js");
   const upgrade = "Upgrade to the Professional plan or to an Organization and get access to shared team libraries, advanced security features and";
