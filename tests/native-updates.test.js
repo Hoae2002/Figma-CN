@@ -189,8 +189,20 @@ test("native titlebar gets no renderer payload and stale settings routes cannot 
   assert.equal(state.calls.requests.length, 0);
 });
 
-function quickExportFixture(contents = []) {
-  let exported = 0;
+function quickExportFixture(contents) {
+  let exported = 0, dispatched = 0;
+  if (!contents) {
+    const page = new EventEmitter();
+    page.getURL = () => "https://www.figma.com/design/test";
+    contents = [page];
+  }
+  for (const page of contents) page.executeJavaScriptInIsolatedWorld = (world, scripts, userGesture) => {
+    assert.equal(world, 1004);
+    assert.equal(scripts[0].code, "window.__figboostQuickExport?.()");
+    assert.equal(userGesture, true);
+    dispatched++;
+    return Promise.resolve(true);
+  };
   const state = boot({ contents });
   const owner = {};
   state.electron.BrowserWindow.getFocusedWindow = () => owner;
@@ -207,7 +219,7 @@ function quickExportFixture(contents = []) {
   return {
     state, menu, item: menu.items[0].submenu.items[0], alias: menu.items[0].submenu.items[1],
     press(window = owner) { this.alias.click({ triggeredByAccelerator: true }, window); },
-    exported: () => exported
+    exported: () => exported, dispatched: () => dispatched
   };
 }
 
@@ -218,16 +230,18 @@ test("desktop quick export registers Ctrl+Shift+Alt+S and preserves the original
   assert.equal(f.alias.action, undefined, "Figma must continue updating the original action's enabled state");
   assert.equal(f.item.accelerator, "CmdOrCtrl+Shift+E");
   f.press();
-  assert.equal(f.exported(), 1);
+  assert.equal(f.dispatched(), 1);
+  assert.equal(f.exported(), 0, "the export-list menu command must not run");
 });
 
-test("desktop export follows native action availability and requires a native owner window", () => {
+test("desktop export uses sidebar availability independently from the export-list command", () => {
   const f = quickExportFixture();
   f.item.enabled = false; f.press();
   f.item.enabled = true; f.press(null);
-  assert.equal(f.exported(), 0);
+  assert.equal(f.dispatched(), 1, "renderer guards determine whether the sidebar action is available");
   f.press();
-  assert.equal(f.exported(), 1, "an existing alias follows changes to the original command");
+  assert.equal(f.dispatched(), 2, "missing native owner must not dispatch");
+  assert.equal(f.exported(), 0);
 });
 
 test("native menu refreshes cannot duplicate the alias and unrelated menus stay unchanged", () => {
@@ -250,8 +264,9 @@ test("forwarded editor input requires all three modifiers and ignores other rout
   for (const otherURL of ["https://www.figma.com/files/test", "https://www.figma.com/proto/test", "https://figma.com.evil.test/design/test", "file:///Figma/titlebar.html"]) {
     url = otherURL; press();
   }
-  assert.equal(prevented, 0); assert.equal(f.exported(), 0);
+  assert.equal(prevented, 0); assert.equal(f.dispatched(), 0);
   url = "https://www.figma.com/design/test";
   press(); press({ isAutoRepeat: true });
-  assert.equal(prevented, 2); assert.equal(f.exported(), 1);
+  assert.equal(prevented, 2); assert.equal(f.dispatched(), 1);
+  assert.equal(f.exported(), 0);
 });

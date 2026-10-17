@@ -3436,20 +3436,34 @@
     }
   }
 
+  function dispatchQuickExport(contents) {
+    try {
+      if (!contents || contents.isDestroyed?.()) return;
+      const url = new URL(contents.getURL());
+      if (url.protocol !== "https:" || !/(^|\.)figma\.com$/.test(url.hostname) || !/^\/(design|file)\/[^/]+/.test(url.pathname)) return;
+      const code = "window.__figboostQuickExport?.()";
+      // Translation payloads live in world 1004. Keep the user gesture for the
+      // sidebar button's native save/folder dialog.
+      const result = translationHost
+        ? contents.executeJavaScriptInIsolatedWorld(1004, [{ code }], true)
+        : contents.executeJavaScript(code, true);
+      result.catch(() => {});
+    } catch (_) {}
+  }
+
   function installNativeQuickExport(menu) {
     let added = false;
     for (const item of [...menu.items]) {
       if (item.submenu) added = installNativeQuickExport(item.submenu) || added;
       if (item.action !== "export-selected-exportables" || typeof item.click !== "function") continue;
       if (menu.items.some(entry => entry.id === "figboost-quick-export")) continue;
-      // Register with Electron's native accelerator system, just like Figma's
-      // own export shortcut. Keep action off the alias so Figma's action-state
-      // map continues to update the original item; check that state on each use.
+      // Keep the original menu command and action-state map intact. The quick
+      // shortcut invokes the sidebar export button instead of its list popover.
       menu.append(new MenuItem({
         id: "figboost-quick-export", label: "FigBoost Quick Export", visible: false,
         accelerator: "Control+Shift+Alt+S",
-        click(_alias, owner, event) {
-          if (owner && item.enabled !== false) item.click(event, owner, webContents.getFocusedWebContents());
+        click(_alias, owner) {
+          if (owner) dispatchQuickExport(webContents.getFocusedWebContents());
         }
       }));
       added = true;
@@ -3466,8 +3480,8 @@
       }
       return null;
     };
-    // Figma can forward input between its shell and editor views. Dispatch the
-    // registered native alias synchronously too, without an async focus probe.
+    // Figma can forward input between shell and editor views. Capture the editor
+    // key before forwarding, then dispatch into that exact renderer.
     contents.prependListener("before-input-event", (event, input) => {
       if (input.type !== "keyDown" || !input.control || !input.shift || !input.alt || input.meta || input.isComposing) return;
       if (input.code ? input.code !== "KeyS" : String(input.key).toLowerCase() !== "s") return;
@@ -3478,7 +3492,7 @@
       const alias = findAlias(Menu.getApplicationMenu()), owner = BrowserWindow.getFocusedWindow();
       if (!alias || !owner) return;
       event.preventDefault();
-      if (!input.isAutoRepeat) alias.click({ triggeredByAccelerator: true }, owner, contents);
+      if (!input.isAutoRepeat) dispatchQuickExport(contents);
     });
   }
 

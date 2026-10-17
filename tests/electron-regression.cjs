@@ -242,32 +242,50 @@ app.whenReady().then(async () => {
   assert.equal(alias.accelerator, 'Control+Shift+Alt+S');
   assert.equal(alias.visible, false);
   assert.equal(alias.action, undefined);
-  // No web export panel, DOM selection markers or mocked focus APIs.
+  // The desktop key entry must reach the isolated sidebar action, preserving its
+  // settings and bypassing the native menu command's extra export-list popover.
   try {
     await retryPage.loadURL('https://www.figma.com/design/native-export');
     await until(() => editor('window.__FIGBOOST_NATIVE_QUICK_EXPORT__ === true'));
     assert.equal(await editor('typeof window.__figboostQuickExportHandler'), 'undefined', 'desktop payload must not install the web shortcut');
-    await editor(`document.body.innerHTML = '<input id="canvas" readonly role="application" aria-hidden="true"><input id="name"><div contenteditable="true" id="text">Text</div>'; document.getElementById('canvas').focus()`);
+    await until(() => editor('typeof window.__figboostQuickExport === "function"'));
+    await editor(`document.body.innerHTML = '<div id="hidden-input-activedescendant" aria-label="Figma Design, 5 items selected"></div><div data-testid="fullscreen-export-panel"><input value="4x"><select><option>PNG</option></select><button id="sidebar-export">Export 5 layers</button></div><input id="canvas" readonly role="application" aria-hidden="true"><input id="name"><div contenteditable="true" id="text" tabindex="0">Text</div>';
+      window.__desktopExportClicks = 0; window.__desktopExportGesture = false;
+      document.getElementById('sidebar-export').onclick = () => { window.__desktopExportClicks++; window.__desktopExportGesture = navigator.userActivation.isActive; };
+      document.getElementById('canvas').focus()`);
     retryPage.show(); retryPage.focus(); retryPage.webContents.focus();
     await until(() => retryPage.isFocused());
     exportKey();
-    await until(() => nativeExports === 1);
+    await until(() => editor('window.__desktopExportClicks === 1'));
+    assert.equal(await editor('window.__desktopExportGesture'), true, 'native save flow requires a user gesture');
+    assert.equal(await editor(`document.querySelector('[value="4x"]').value`), '4x');
+    assert.equal(await editor('document.querySelector("select").value'), 'PNG');
+    for (const id of ['name', 'text']) {
+      await editor(`document.getElementById('${id}').focus()`);
+      exportKey(); await wait(80);
+      assert.equal(await editor('window.__desktopExportClicks'), 1, 'desktop text editing must not export');
+    }
+    await editor(`document.getElementById('canvas').focus(); document.getElementById('sidebar-export').disabled = true`);
+    exportKey(); await wait(80);
+    assert.equal(await editor('window.__desktopExportClicks'), 1, 'disabled sidebar action must not export');
+    await editor(`document.getElementById('sidebar-export').disabled = false`);
     exportEntry.enabled = false;
-    exportKey(); await wait(100);
-    assert.equal(nativeExports, 1, 'the alias must obey the original native action state');
+    exportKey();
+    await until(() => editor('window.__desktopExportClicks === 2'));
+    assert.equal(nativeExports, 0, 'sidebar export must never invoke the list popover command');
     exportEntry.enabled = true;
     retryPage.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S', modifiers: ['control', 'shift'] });
     retryPage.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S', modifiers: ['control', 'shift'] });
     await wait(100);
-    assert.equal(nativeExports, 1, 'the old Ctrl+Shift+S shortcut must not export');
+    assert.equal(await editor('window.__desktopExportClicks'), 2, 'the old Ctrl+Shift+S shortcut must not export');
     exportKey();
-    await until(() => nativeExports === 2);
+    await until(() => editor('window.__desktopExportClicks === 3'));
     assert.equal(exportEntry.accelerator, 'CmdOrCtrl+Shift+E');
   } finally {
     retryPage.hide();
     Menu.setApplicationMenu(null);
   }
-  console.log('Electron native export regression passed: Ctrl+Shift+Alt+S dispatches the registered native menu alias without focus mocks or web selectors; disabled native action respected; old Ctrl+Shift+S inactive; Ctrl+Shift+E preserved.');
+  console.log('Electron desktop export regression passed: Ctrl+Shift+Alt+S clicks the isolated sidebar action with user activation, bypasses the export-list command, preserves 4x PNG, protects text editing and disabled buttons; Ctrl+Shift+E preserved.');
   console.log('Electron native update regression passed: original menu position restored, FigBoost callback installed, batch export IPC disabled; idle localization has zero scans.');
   console.log('Chromium file-browser regression passed: 12 grid/list redraws, zero English time samples and zero layout measurements; file names preserved.');
   console.log("Chromium localization regression passed: 12 nested property-panel redraws have zero untranslated samples before paint; 600 labels converge, page names remain original, attributes do not rescan text, reconnects make zero restore writes, recycled labels translate again.");

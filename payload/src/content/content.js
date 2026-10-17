@@ -398,7 +398,6 @@
     if (window.__figboostQuickExportHandler) {
       window.removeEventListener("keydown", window.__figboostQuickExportHandler, true);
     }
-    if (window.__FIGBOOST_NATIVE_QUICK_EXPORT__) return;
 
     function isEditingText(element) {
       if (!element || !element.closest) return false;
@@ -407,18 +406,16 @@
       return Boolean(element.closest('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"]'));
     }
 
-    const handler = (event) => {
-      if (!event.ctrlKey || !event.shiftKey || !event.altKey || event.metaKey || event.isComposing) return;
-      if (event.code !== "KeyS" && (event.code || String(event.key).toLowerCase() !== "s")) return;
-      if (!/^\/(design|file)\/[^/]+/.test(location.pathname)) return;
-      if (isEditingText(event.target) || isEditingText(document.activeElement)) return;
-      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+    const quickExport = (target, repeat = false) => {
+      if (!/^\/(design|file)\/[^/]+/.test(location.pathname)) return false;
+      if (isEditingText(target) || isEditingText(document.activeElement)) return false;
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return false;
 
       const canvas = document.getElementById("hidden-input-activedescendant");
       const selectedLayer = document.querySelector('[data-testid^="layer-row"][aria-selected="true"]');
       // The accessibility mirror remains available when selected rows are virtualized.
       const selectionLabel = canvas && canvas.getAttribute("aria-label") || "";
-      if (!selectedLayer && !/\b[1-9]\d* items? selected\b|[1-9]\d*\s*(?:个|项).*选|选.*[1-9]\d*\s*(?:个|项)/i.test(selectionLabel)) return;
+      if (!selectedLayer && !/\b[1-9]\d* items? selected\b|[1-9]\d*\s*(?:个|项).*选|选.*[1-9]\d*\s*(?:个|项)/i.test(selectionLabel)) return false;
 
       const buttons = document.querySelectorAll('[data-testid="fullscreen-export-panel"] button');
       const button = Array.from(buttons).find((candidate) => {
@@ -430,11 +427,22 @@
         if (!candidate.getClientRects().length) return false;
         return window.getComputedStyle(candidate).visibility === "visible";
       });
-      if (!button) return;
+      if (!button) return false;
+      if (!repeat) button.click();
+      return true;
+    };
+    // The desktop main process calls this in the same isolated world as the
+    // payload. Clicking the sidebar action preserves Figma's native save flow;
+    // the menu command instead opens an extra export-list popover.
+    window.__figboostQuickExport = quickExport;
+    if (window.__FIGBOOST_NATIVE_QUICK_EXPORT__) return;
 
+    const handler = (event) => {
+      if (!event.ctrlKey || !event.shiftKey || !event.altKey || event.metaKey || event.isComposing) return;
+      if (event.code !== "KeyS" && (event.code || String(event.key).toLowerCase() !== "s")) return;
+      if (!quickExport(event.target, event.repeat)) return;
       event.preventDefault();
       event.stopImmediatePropagation();
-      if (!event.repeat) button.click();
     };
     window.__figboostQuickExportHandler = handler;
     window.addEventListener("keydown", handler, true);

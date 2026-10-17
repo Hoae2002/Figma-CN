@@ -45,7 +45,12 @@ test("desktop native handling disables the renderer shortcut on reinjection", t 
   f.w.__FIGBOOST_NATIVE_QUICK_EXPORT__ = true;
   f.w.eval(source);
   assert.equal(f.press(), false);
-  assert.equal(f.clicks(), 0, "desktop must not also click a web export button");
+  assert.equal(f.clicks(), 0, "desktop must not also handle the renderer key event");
+  assert.equal(f.w.__figboostQuickExport(), true);
+  assert.equal(f.clicks(), 1, "desktop dispatch must click the sidebar action directly");
+  f.w.document.querySelector('#name').focus();
+  assert.equal(f.w.__figboostQuickExport(), false);
+  assert.equal(f.clicks(), 1, "desktop dispatch must protect text input too");
 });
 
 test("single Chinese export label and legacy file route work from the canvas input", t => {
