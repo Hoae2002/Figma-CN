@@ -395,6 +395,7 @@
   }
 
   function installQuickExportShortcut() {
+    window.__figboostCancelQuickExport?.();
     if (window.__figboostQuickExportHandler) {
       window.removeEventListener("keydown", window.__figboostQuickExportHandler, true);
     }
@@ -407,30 +408,84 @@
       return Boolean(element.closest('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"]'));
     }
 
+    let pending = false;
+    let cancelPending = () => {};
+    window.__figboostCancelQuickExport = () => cancelPending();
+
+    function isAvailable(button) {
+      if (button.disabled || button.getAttribute("aria-disabled") === "true") return false;
+      // Figma retains hidden panels for previous selections in cached subtrees.
+      if (button.closest('[hidden],[inert],[aria-hidden="true"]')) return false;
+      return button.getClientRects().length > 0 && window.getComputedStyle(button).visibility === "visible";
+    }
+
+    function selectionKey() {
+      const canvas = document.getElementById("hidden-input-activedescendant");
+      const rows = Array.from(document.querySelectorAll('[data-testid^="layer-row"][aria-selected="true"]'));
+      const label = canvas && canvas.getAttribute("aria-label") || "";
+      if (!rows.length && !/\b[1-9]\d* items? selected\b|[1-9]\d*\s*(?:个|项).*选|选.*[1-9]\d*\s*(?:个|项)/i.test(label)) return "";
+      return JSON.stringify([location.href, label, rows.map(row => [row.id, row.getAttribute("data-node-id"), row.textContent])]);
+    }
+
+    function findExportButton(panel) {
+      return Array.from(panel.querySelectorAll("button")).find(candidate =>
+        /^(?:Export\s+\S|导出\s*\S)/.test((candidate.textContent || "").trim()) && isAvailable(candidate));
+    }
+
     const quickExport = (target, repeat = false) => {
       if (!/^\/(design|file)\/[^/]+/.test(location.pathname)) return false;
       if (isEditingText(target) || isEditingText(document.activeElement)) return false;
       if (document.querySelector('[role="dialog"][aria-modal="true"]')) return false;
 
-      const canvas = document.getElementById("hidden-input-activedescendant");
-      const selectedLayer = document.querySelector('[data-testid^="layer-row"][aria-selected="true"]');
       // The accessibility mirror remains available when selected rows are virtualized.
-      const selectionLabel = canvas && canvas.getAttribute("aria-label") || "";
-      if (!selectedLayer && !/\b[1-9]\d* items? selected\b|[1-9]\d*\s*(?:个|项).*选|选.*[1-9]\d*\s*(?:个|项)/i.test(selectionLabel)) return false;
-
-      const buttons = document.querySelectorAll('[data-testid="fullscreen-export-panel"] button');
-      const button = Array.from(buttons).find((candidate) => {
-        const label = (candidate.textContent || "").trim();
-        if (!/^(?:Export\s+\S|导出\s*\S)/.test(label)) return false;
-        if (candidate.disabled || candidate.getAttribute("aria-disabled") === "true") return false;
-        // Figma retains hidden panels for previous selections in cached subtrees.
-        if (candidate.closest('[hidden],[inert],[aria-hidden="true"]')) return false;
-        if (!candidate.getClientRects().length) return false;
-        return window.getComputedStyle(candidate).visibility === "visible";
-      });
-      if (!button) return false;
-      if (!repeat) button.click();
-      return true;
+      const selection = selectionKey();
+      if (!selection) return false;
+      if (pending) return true;
+      for (const panel of document.querySelectorAll('[data-testid="fullscreen-export-panel"]')) {
+        const button = findExportButton(panel);
+        if (button) {
+          if (!repeat) button.click();
+          return true;
+        }
+        // Only initialize an empty section. Existing or mixed settings must stay intact.
+        if (panel.querySelector('input,select,[role="combobox"]') || /mixed|混合/i.test(panel.textContent) ||
+            Array.from(panel.querySelectorAll("button")).some(candidate => /^(?:Export\s+\S|导出\s*\S)/.test((candidate.textContent || "").trim()))) continue;
+        const add = Array.from(panel.querySelectorAll("button")).find(candidate =>
+          /^(?:Add export settings?|添加导出设置)$/i.test(candidate.getAttribute("aria-label") || candidate.getAttribute("title") || "") && isAvailable(candidate));
+        if (!add) continue;
+        if (repeat) return true;
+        pending = true;
+        const cancelOnKey = event => {
+          if (!(event.ctrlKey && event.shiftKey && event.altKey && !event.metaKey && event.code === "KeyS")) cancelPending();
+        };
+        const observer = new MutationObserver(() => {
+          // The native add action may focus its new scale input. User key/pointer
+          // input still cancels, while that automatic focus must allow export.
+          if (selectionKey() !== selection || (isEditingText(document.activeElement) && !panel.contains(document.activeElement)) || document.querySelector('[role="dialog"][aria-modal="true"]')) {
+            cancelPending();
+            return;
+          }
+          const action = findExportButton(panel);
+          if (!action) return;
+          cancelPending();
+          action.click();
+        });
+        const timeout = setTimeout(() => cancelPending(), 2000);
+        cancelPending = () => {
+          observer.disconnect();
+          clearTimeout(timeout);
+          window.removeEventListener("pointerdown", cancelPending, true);
+          window.removeEventListener("keydown", cancelOnKey, true);
+          pending = false;
+        };
+        window.addEventListener("pointerdown", cancelPending, true);
+        window.addEventListener("keydown", cancelOnKey, true);
+        observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true });
+        // Let Figma create its own default 1x PNG setting, then use its save flow.
+        add.click();
+        return true;
+      }
+      return false;
     };
     // The desktop main process calls this in the same isolated world as the
     // payload. Clicking the sidebar action preserves Figma's native save flow;

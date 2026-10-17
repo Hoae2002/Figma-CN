@@ -134,3 +134,82 @@ test("hidden, disabled and absent native actions are ignored without adding expo
   assert.equal(f.press(), false);
   assert.equal(f.clicks(), 0);
 });
+
+function emptyExport(f, label = "Add export settings") {
+  const panel = f.w.document.querySelector('[data-testid="fullscreen-export-panel"]');
+  panel.innerHTML = `<button aria-label="${label}">+</button>`;
+  const add = panel.querySelector("button");
+  add.getClientRects = () => [{ width: 24, height: 24 }];
+  let additions = 0, exports = 0;
+  add.onclick = () => additions++;
+  return {
+    panel, additions: () => additions, exports: () => exports,
+    render() {
+      panel.insertAdjacentHTML("beforeend", '<input value="1x"><select><option>PNG</option></select><button id="new-export">Export Home</button>');
+      const button = panel.querySelector("#new-export");
+      button.getClientRects = () => [{ width: 200, height: 28 }];
+      button.onclick = () => exports++;
+    }
+  };
+}
+
+test("empty native settings are added once, then asynchronously exported with native defaults", async t => {
+  for (const native of [false, true]) {
+    const f = fixture(t), empty = emptyExport(f, native ? "添加导出设置" : "Add export settings");
+    if (native) { f.w.__FIGBOOST_NATIVE_QUICK_EXPORT__ = true; f.w.eval(source); }
+    const invoke = () => native ? f.w.__figboostQuickExport() : f.press();
+    assert.equal(invoke(), true);
+    assert.equal(invoke(), true);
+    assert.equal(f.w.__figboostQuickExport(undefined, true), true);
+    assert.equal(empty.additions(), 1);
+    empty.render();
+    empty.panel.querySelector("input").focus(); // Native add may autofocus its scale field.
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(empty.exports(), 1);
+    assert.equal(empty.panel.querySelector("input").value, "1x");
+    assert.equal(empty.panel.querySelector("select").value, "PNG");
+    empty.panel.append("unrelated redraw");
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(empty.exports(), 1);
+  }
+});
+
+test("initialization leaves existing, mixed, hidden and disabled settings alone", t => {
+  for (const state of ["existing", "mixed", "hidden", "disabled", "repeat"]) {
+    const f = fixture(t), empty = emptyExport(f);
+    if (state === "existing") empty.panel.insertAdjacentHTML("beforeend", '<input value="4x">');
+    if (state === "mixed") empty.panel.append("Click + to replace mixed export settings");
+    if (state === "hidden") empty.panel.hidden = true;
+    if (state === "disabled") empty.panel.querySelector("button").disabled = true;
+    f.press({ repeat: state === "repeat" });
+    assert.equal(empty.additions(), 0, state);
+  }
+});
+
+test("pending export cancels when selection, route, editing or user input changes, or payload reloads", async t => {
+  for (const change of ["selection", "route", "editing", "dialog", "pointer", "key", "reload"]) {
+    const f = fixture(t), empty = emptyExport(f);
+    assert.equal(f.press(), true);
+    if (change === "selection") f.w.document.getElementById("hidden-input-activedescendant").setAttribute("aria-label", "Board");
+    if (change === "route") f.w.history.replaceState({}, "", "/design/other");
+    if (change === "editing") f.w.document.querySelector("#name").focus();
+    if (change === "dialog") f.w.document.body.insertAdjacentHTML("beforeend", '<div role="dialog" aria-modal="true"></div>');
+    if (change === "pointer") f.w.dispatchEvent(new f.w.Event("pointerdown"));
+    if (change === "key") f.w.dispatchEvent(new f.w.KeyboardEvent("keydown", { code: "ArrowDown" }));
+    if (change === "reload") f.w.eval(source);
+    empty.render();
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(empty.exports(), 0, change);
+  }
+});
+
+test("pending export expires and can be retried without a stale observer", async t => {
+  const f = fixture(t), empty = emptyExport(f);
+  f.press();
+  await new Promise(resolve => setTimeout(resolve, 2100));
+  empty.render();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(empty.exports(), 0);
+  assert.equal(f.press(), true);
+  assert.equal(empty.exports(), 1);
+});

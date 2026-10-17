@@ -295,12 +295,31 @@ app.whenReady().then(async () => {
     await editor(`document.getElementById('canvas').setAttribute('aria-hidden', 'false')`);
     exportKey();
     await until(() => editor('window.__desktopExportClicks === 3'));
+    await editor(`window.__desktopExportAdditions = 0;
+      const panel = document.querySelector('[data-testid="fullscreen-export-panel"]');
+      panel.innerHTML = '<button aria-label="Add export settings">+</button>';
+      panel.querySelector('button').onclick = () => {
+        window.__desktopExportAdditions++;
+        setTimeout(() => {
+          panel.insertAdjacentHTML('beforeend', '<input value="1x"><select><option>PNG</option></select><button id="default-export">Export 5 layers</button>');
+          document.getElementById('default-export').onclick = () => {
+            window.__desktopExportClicks++; window.__desktopExportGesture = navigator.userActivation.isActive;
+          };
+          panel.querySelector('input').focus();
+        }, 30);
+      }; true`);
+    exportKey();
+    await until(() => editor('window.__desktopExportClicks === 4'));
+    assert.equal(await editor('window.__desktopExportAdditions'), 1, 'empty settings must use the native add action once');
+    assert.equal(await editor('window.__desktopExportGesture'), true, 'asynchronous default export must retain user activation for saving');
+    assert.equal(await editor('document.querySelector("input").value'), '1x');
+    assert.equal(await editor('document.querySelector("select").value'), 'PNG');
     assert.equal(exportEntry.accelerator, 'CmdOrCtrl+Shift+E');
   } finally {
     retryPage.hide();
     Menu.setApplicationMenu(null);
   }
-  console.log('Electron desktop export regression passed: Ctrl+Shift+Alt+S clicks the isolated sidebar action with user activation, bypasses the export-list command, preserves 4x PNG, protects text editing and disabled buttons; Ctrl+Shift+E preserved.');
+  console.log('Electron desktop export regression passed: Ctrl+Shift+Alt+S initializes empty settings to native 1x PNG and asynchronously exports with user activation, preserves existing 4x PNG, bypasses the export-list command, protects text editing and disabled buttons; Ctrl+Shift+E preserved.');
   console.log('Electron native update regression passed: original menu position restored, FigBoost callback installed, batch export IPC disabled; idle localization has zero scans.');
   console.log('Chromium file-browser regression passed: 12 grid/list redraws, zero English time samples and zero layout measurements; file names preserved.');
   console.log("Chromium localization regression passed: 12 nested property-panel redraws have zero untranslated samples before paint; 600 labels converge, page names remain original, attributes do not rescan text, reconnects make zero restore writes, recycled labels translate again.");
