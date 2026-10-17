@@ -91,6 +91,33 @@ app.whenReady().then(async () => {
   await until(async () => (await retryPage.webContents.executeJavaScript("document.querySelector('#save').textContent")) === "保存");
   assert.equal((await command("snapshot")).state.pages.pending, 0);
   const editor = code => retryPage.webContents.executeJavaScriptInIsolatedWorld(1004, [{ code }]);
+  // Verify the shortcut through Chromium's real keyboard pipeline and the actual
+  // installer payload in its isolated world, without opening Figma Desktop.
+  await editor(`(() => {
+    const fixture = document.createElement('div'); fixture.id = 'quick-export-fixture';
+    fixture.innerHTML = '<div id="hidden-input-activedescendant" aria-label="Figma Design, 5 items selected"></div>' +
+      '<div data-testid="fullscreen-export-panel"><input value="4x"><button id="native-export">Export 5 layers</button></div>' +
+      '<input id="quick-export-name"><input id="quick-export-canvas" readonly role="application" aria-hidden="true">';
+    document.body.append(fixture);
+    window.__quickExportClicks = 0;
+    document.getElementById('native-export').onclick = () => window.__quickExportClicks++;
+    document.getElementById('quick-export-canvas').focus();
+  })()`);
+  const exportKey = () => {
+    retryPage.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S', modifiers: ['control', 'shift'] });
+    retryPage.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S', modifiers: ['control', 'shift'] });
+  };
+  exportKey();
+  await until(() => editor('window.__quickExportClicks === 1'));
+  assert.equal(await editor(`document.querySelector('#quick-export-fixture [value="4x"]').value`), '4x');
+  await editor(`document.getElementById('quick-export-name').focus()`);
+  exportKey(); await wait(80);
+  assert.equal(await editor('window.__quickExportClicks'), 1, 'typing must not export');
+  await editor(`document.getElementById('quick-export-canvas').focus(); document.getElementById('native-export').parentElement.style.display = 'none'`);
+  exportKey(); await wait(80);
+  assert.equal(await editor('window.__quickExportClicks'), 1, 'cached hidden export panels must not be clicked');
+  await editor(`document.getElementById('quick-export-fixture').remove()`);
+  console.log('Chromium quick export regression passed: native keyboard event clicks once, preserves 4x, protects text input and ignores cached hidden panels.');
   // Exercise the real Chromium DOM/observer/RAF path with the complete embedded
   // dictionary. These are synthetic documents; no real Figma client is opened.
   await editor(`(() => {

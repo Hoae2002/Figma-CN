@@ -394,7 +394,53 @@
     setTimeout(run, 3000);
   }
 
+  function installQuickExportShortcut() {
+    if (window.__figboostQuickExportHandler) {
+      window.removeEventListener("keydown", window.__figboostQuickExportHandler, true);
+    }
+
+    function isEditingText(element) {
+      if (!element || !element.closest) return false;
+      // Figma's read-only canvas input receives shortcuts, even with a selection.
+      if (element.matches('input[readonly][role="application"][aria-hidden="true"]')) return false;
+      return Boolean(element.closest('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"]'));
+    }
+
+    const handler = (event) => {
+      if (!event.ctrlKey || !event.shiftKey || event.altKey || event.metaKey || event.isComposing) return;
+      if (event.code !== "KeyS" && (event.code || String(event.key).toLowerCase() !== "s")) return;
+      if (!/^\/(design|file)\/[^/]+/.test(location.pathname)) return;
+      if (isEditingText(event.target) || isEditingText(document.activeElement)) return;
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+
+      const canvas = document.getElementById("hidden-input-activedescendant");
+      const selectedLayer = document.querySelector('[data-testid^="layer-row"][aria-selected="true"]');
+      // The accessibility mirror remains available when selected rows are virtualized.
+      const selectionLabel = canvas && canvas.getAttribute("aria-label") || "";
+      if (!selectedLayer && !/\b[1-9]\d* items? selected\b|[1-9]\d*\s*(?:个|项).*选|选.*[1-9]\d*\s*(?:个|项)/i.test(selectionLabel)) return;
+
+      const buttons = document.querySelectorAll('[data-testid="fullscreen-export-panel"] button');
+      const button = Array.from(buttons).find((candidate) => {
+        const label = (candidate.textContent || "").trim();
+        if (!/^(?:Export\s+\S|导出\s*\S)/.test(label)) return false;
+        if (candidate.disabled || candidate.getAttribute("aria-disabled") === "true") return false;
+        // Figma retains hidden panels for previous selections in cached subtrees.
+        if (candidate.closest('[hidden],[inert],[aria-hidden="true"]')) return false;
+        if (!candidate.getClientRects().length) return false;
+        return window.getComputedStyle(candidate).visibility === "visible";
+      });
+      if (!button) return;
+
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (!event.repeat) button.click();
+    };
+    window.__figboostQuickExportHandler = handler;
+    window.addEventListener("keydown", handler, true);
+  }
+
   scheduleAntiFlashStyleInstall();
+  if (IS_FIGMA_PAGE || IS_TEST_PAGE) installQuickExportShortcut();
   // Suspended: do not create the button or its observer/timers.
   // if (SHOULD_INSTALL_UPDATE_BUTTON) scheduleUpdateButtonInstall();
   if (IS_TITLEBAR_PAGE && !IS_FIGMA_PAGE && !IS_TEST_PAGE) return;
