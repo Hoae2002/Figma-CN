@@ -179,6 +179,37 @@ namespace FigBoost.UI
         }
     }
 
+    // Small status glyph with a full button hit area and native keyboard access.
+    public class UpdateIndicatorButton : Button
+    {
+        public UpdateIndicatorButton()
+        {
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint |
+                ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+            FlatStyle = FlatStyle.Flat;
+            FlatAppearance.BorderSize = 0;
+            Cursor = Cursors.Hand;
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            e.Graphics.Clear(Parent == null ? SystemColors.Control : Parent.BackColor);
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            float size = Math.Min(Width, Height) * 0.56f;
+            float x = (Width - size) / 2, y = (Height - size) / 2;
+            Color green = SystemInformation.HighContrast ? SystemColors.Highlight : Color.FromArgb(35, 215, 53);
+            using (var fill = new SolidBrush(green)) e.Graphics.FillEllipse(fill, x, y, size, size);
+            using (var pen = new Pen(SystemInformation.HighContrast ? SystemColors.HighlightText : Color.White, size * 0.09f))
+            {
+                pen.StartCap = pen.EndCap = LineCap.Round;
+                e.Graphics.DrawLine(pen, x + size / 2, y + size * 0.72f, x + size / 2, y + size * 0.28f);
+                e.Graphics.DrawLines(pen, new[] { new PointF(x + size * 0.31f, y + size * 0.47f),
+                    new PointF(x + size / 2, y + size * 0.28f), new PointF(x + size * 0.69f, y + size * 0.47f) });
+            }
+            if (Focused && ShowFocusCues) ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(ClientRectangle, -2, -2), Color.White, BackColor);
+        }
+    }
+
     // Paint the read-only path surface without a native square window border.
     public class PathPanel : Panel
     {

@@ -1,9 +1,9 @@
 {
     "schema":  1,
     "client":  {
-                   "version":  "0.5.44",
-                   "size":  1058304,
-                   "sha256":  "decab946ed22a29ccf07a33cfcc37c2c99140b701e658e6ea7c03f00bd229f2c"
+                   "version":  "0.5.45",
+                   "size":  1060352,
+                   "sha256":  "d0dea0ea5f65a546008137331adaa0b6d5d8655d1a7ae793bc7721ee6e73bf55"
                },
     "payload":  {
                     "version":  "1.2.35",

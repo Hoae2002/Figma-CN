@@ -159,10 +159,10 @@ try {
   New-Item -ItemType Directory -Path $helperDir | Out-Null
   $fakeClient = Join-Path $helperDir 'FigBoost.exe'
   $newClient = Join-Path $helperDir 'new.exe'
-  Add-Type -TypeDefinition 'using System; using System.IO; public class UpdateFixture { public static void Main(string[] args) { File.WriteAllLines(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "launched.txt"), args); } }' -OutputAssembly $newClient -OutputType WindowsApplication
+  Add-Type -TypeDefinition 'using System; using System.IO; public class UpdateFixture { public static void Main(string[] args) { var apply = Array.IndexOf(args, "-ApplyBundledUpdate") >= 0; File.WriteAllLines(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, apply ? "applied.txt" : "launched.txt"), args); if (apply && File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "fail-apply"))) Environment.Exit(1); } }' -OutputAssembly $newClient -OutputType WindowsApplication
   [IO.File]::WriteAllText($fakeClient, 'old-client')
   $newHash = (Get-FileHash -LiteralPath $newClient).Hash
-  $helperText = New-PatcherUpdateScript $fakeClient $newClient 2147483647 "C:\cache path's\" "C:\Figma path's\app-1.2.3"
+  $helperText = New-PatcherUpdateScript $fakeClient $newClient 2147483647 "C:\cache path's\" "C:\Figma path's\app-1.2.3" $nextVersion
   $helperPath = Join-Path $helperDir 'replace.ps1'
   [IO.File]::WriteAllText($helperPath, $helperText, (New-Object Text.UTF8Encoding($true)))
   $helper = Start-Process powershell.exe -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $helperPath + '"')) -WindowStyle Hidden -PassThru
@@ -172,7 +172,49 @@ try {
   for ($i = 0; $i -lt 30 -and -not (Test-Path -LiteralPath $launchPath); $i++) { Start-Sleep -Milliseconds 100 }
   $launchArgs = [IO.File]::ReadAllLines($launchPath)
   Assert-Equal ($launchArgs -join '|') "-RuntimeDir|C:\cache path's\|-AppDir|C:\Figma path's\app-1.2.3" 'Client upgrade lost or misquoted paths.'
+  $applyArgs = [IO.File]::ReadAllLines((Join-Path $helperDir 'applied.txt'))
+  Assert-Equal ($applyArgs -join '|') "-RuntimeDir|C:\cache path's\|-AppDir|C:\Figma path's\app-1.2.3|-ApplyBundledUpdate|-ExpectedPayloadVersion|$nextVersion" 'Unified helper failed to apply the bundled payload before relaunch.'
   Assert-Equal (Test-Path -LiteralPath $newClient) $false 'Client helper left a downloaded executable.'
+
+  Copy-Item -LiteralPath $fakeClient -Destination $newClient
+  [IO.File]::WriteAllText($fakeClient, 'old-client')
+  [IO.File]::WriteAllText((Join-Path $helperDir 'fail-apply'), '')
+  Remove-Item -LiteralPath $launchPath -Force
+  # Suppress only the failure message box; execute the actual rollback helper.
+  $failureReport = Join-Path $helperDir 'failed.txt'
+  $failureHelper = $helperText -replace '(?m)^.*\[Windows.Forms.MessageBox\]::Show.*$', ("[IO.File]::WriteAllText('" + $failureReport.Replace("'", "''") + "', 'failed')")
+  [IO.File]::WriteAllText($helperPath, $failureHelper, (New-Object Text.UTF8Encoding($true)))
+  $helper = Start-Process powershell.exe -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $helperPath + '"')) -WindowStyle Hidden -PassThru
+  if (-not $helper.WaitForExit(10000)) { $helper.Kill(); throw 'Rollback helper timed out.' }
+  Assert-Equal ([IO.File]::ReadAllText($fakeClient)) 'old-client' 'Bundle application failure did not restore the old executable.'
+  Assert-Equal (Test-Path -LiteralPath $failureReport) $true 'Bundle failure was not reported.'
+  Assert-Equal (Test-Path -LiteralPath $launchPath) $false 'Failed bundle was relaunched as a successful update.'
+
+  # The bundled route ignores an old cache, validates the expected version, and
+  # updates only existing localization using the same rollback-protected writer.
+  $EmbeddedPayloadFiles = @{} + $files
+  $script:UpdatedPayloadFiles = @{}
+  Assert-Throws { Install-BundledUpdate $app $runtime '999.0.0' } 'Wrong embedded release was accepted.'
+  Install-BundledUpdate $app $runtime $nextVersion
+  Assert-Equal (Get-InstalledPayloadVersion $runtime) $nextVersion 'Bundled update was not installed.'
+  Assert-Equal ([IO.File]::ReadAllText($personal)) '{"personal":"preserve"}' 'Bundled update changed personal data.'
+  $emptyRuntime = Join-Path $temp 'unpatched-runtime'
+  Install-BundledUpdate '' $emptyRuntime $nextVersion
+  Assert-Equal (Test-Path -LiteralPath $emptyRuntime) $false 'Updating FigBoost installed localization without consent.'
+  $lock = [IO.File]::Open($cache, 'Open', 'Read', 'Read')
+  try { Assert-Throws { Install-BundledUpdate $app $runtime $nextVersion } 'Bundled write failure was swallowed.' }
+  finally { $lock.Dispose() }
+  Assert-Equal (Get-InstalledPayloadVersion $runtime) $nextVersion 'Failed bundle application changed runtime.'
+
+  $release = [pscustomobject]@{ client = [pscustomobject]@{ version = $PatcherVersion }; payload = [pscustomobject]@{ version = $nextVersion; minPatcherVersion = $PatcherVersion } }
+  Assert-Equal (Test-FigBoostUpdateAvailable $release) $false 'Same bundle reports an update.'
+  $release.payload.version = $nextPackage.version
+  Assert-Equal (Test-FigBoostUpdateAvailable $release) $true 'Dictionary-only release should still trigger a combined update.'
+  $release.client.version = '0.0.1'
+  Assert-Equal (Test-FigBoostUpdateAvailable $release) $false 'Combined update allowed a client downgrade.'
+  $release.client.version = '999.0.0'
+  $release.payload.minPatcherVersion = '998.0.0'
+  Assert-Equal (Test-FigBoostUpdateAvailable $release) $true 'New client must satisfy new dictionary compatibility.'
   Write-Host 'Updater tests passed: pinned downloads, checksums, compatibility, apply, restart cache, rollback, config preservation, and real replacement helper.'
 } finally {
   $env:LOCALAPPDATA = $originalLocalAppData
