@@ -24,7 +24,7 @@ if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClo
 
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V7"
 $UpdaterDisableMarker = "FIGMA_ZH_DISABLE_BUILTIN_UPDATER"
-$PatcherVersion = "0.5.31"
+$PatcherVersion = "0.5.32"
 $PayloadFile = "i.js"
 $MainPayloadFile = "m.js"
 $FeatureConfigFile = "features.json"
@@ -1660,7 +1660,7 @@ function Show-Gui {
     $panel.Width = $Width
     $panel.Height = 34
     $panel.BorderStyle = "FixedSingle"
-    $panel.BackColor = [System.Drawing.SystemColors]::Window
+    $panel.BackColor = [System.Drawing.Color]::FromArgb(237, 240, 244)
     $panel.Anchor = "Top,Left,Right"
 
     $textBox = New-Object System.Windows.Forms.TextBox
@@ -1668,7 +1668,9 @@ function Show-Gui {
     $textBox.Top = 7
     $textBox.Width = $Width - 16
     $textBox.BorderStyle = "None"
-    $textBox.BackColor = [System.Drawing.SystemColors]::Window
+    $textBox.ReadOnly = $true
+    $textBox.BackColor = $panel.BackColor
+    $textBox.ForeColor = [System.Drawing.Color]::FromArgb(100, 116, 139)
     $textBox.Anchor = "Top,Left,Right"
     $panel.Controls.Add($textBox)
 
@@ -1743,7 +1745,7 @@ function Show-Gui {
   $btnBrowse.AccessibleName = "选择 Figma 客户端目录"
   $btnBrowse.SetBounds(($form.ClientSize.Width - 136), 256, 112, 34)
   $btnBrowse.Anchor = "Top,Right"
-  $labelAppHint = New-HomeLabel "选择包含 Figma.exe 的 app-* 文件夹，或填写空目录迁移客户端。" 24 298 $contentWidth
+  $labelAppHint = New-HomeLabel '使用“选择目录”更换客户端位置，或选择空目录迁移客户端。' 24 298 $contentWidth
   $labelAppHint.Anchor = "Top,Left,Right"
 
   $labelRuntime = New-HomeLabel "汉化文件存放位置" 24 332 $contentWidth
@@ -1790,6 +1792,8 @@ function Show-Gui {
   $toolTip.SetToolTip($btnFigBoostUpdate, "检查并升级 FigBoost 补丁器，或下载最新汉化词库。")
   $toolTip.SetToolTip($btnStatus, "重新读取本机 Figma 版本和汉化状态，不检查在线更新。")
   $toolTip.SetToolTip($btnUninstall, "移除汉化补丁并恢复原始客户端，保留个人汉化设置。")
+  $toolTip.SetToolTip($txtApp, '路径仅供查看和复制。如需更换，请使用右侧“选择目录”。')
+  $toolTip.SetToolTip($txtRuntime, '路径仅供查看和复制。如需更换，请使用右侧“选择目录”。')
 
   $refreshPathAction = {
     $btnApplyAppPath.Enabled = -not [string]::IsNullOrWhiteSpace($txtApp.Text)
@@ -1803,7 +1807,7 @@ function Show-Gui {
       $labelAppHint.Text = "迁移需要空目录：会关闭 Figma，将客户端复制到此处，并更新快捷方式。"
     } else {
       $btnApplyAppPath.Text = "保存路径"
-      $labelAppHint.Text = "选择包含 Figma.exe 的 app-* 文件夹，或填写空目录迁移客户端。"
+      $labelAppHint.Text = '使用“选择目录”更换客户端位置，或选择空目录迁移客户端。'
     }
   }
   $txtApp.Add_TextChanged($refreshPathAction)

@@ -59,6 +59,10 @@ function Assert-HomeLayout($Parent) {
       $textSize = [Windows.Forms.TextRenderer]::MeasureText($control.Text, $control.Font)
       Assert-Gui ($control.Width -ge $textSize.Width -and $control.Height -ge $textSize.Height) ("Home text clipped: " + $control.Text)
     }
+    if ($control -is [Windows.Forms.Button] -and $control.Text -ne '安装或更新汉化') {
+      Assert-Gui ([Math]::Abs($control.ForeColor.B - $control.ForeColor.R) -lt 50) ('Secondary action should use neutral text: ' + $control.Text)
+      Assert-Gui ([Math]::Abs($control.BackColor.B - $control.BackColor.R) -lt 50) ('Secondary action should use a neutral fill: ' + $control.Text)
+    }
     Assert-HomeLayout $control
   }
   for ($i = 0; $i -lt $visible.Count; $i++) {
@@ -104,6 +108,13 @@ $timer.Add_Tick({
       Assert-Gui ($null -eq (Get-ChildControl $main '当前检测结果')) 'Redundant result group remains.'
       Assert-Gui ($null -eq (Get-ChildControl $main '官方最新版：未检查')) 'Unchecked official-version field remains.'
       $pathBox = Get-AccessibleControl $main 'Figma 客户端位置'
+      $runtimeBox = Get-AccessibleControl $main '汉化文件存放位置'
+      foreach ($box in @($pathBox, $runtimeBox)) {
+        Assert-Gui ($box.ReadOnly -and $box.Enabled) 'Paths must be read-only while remaining selectable.'
+        Assert-Gui ($box.BackColor.ToArgb() -ne [Drawing.Color]::White.ToArgb() -and $box.BackColor.ToArgb() -eq $box.Parent.BackColor.ToArgb()) 'Read-only paths must have a consistent muted background.'
+        $box.SelectAll()
+        Assert-Gui ($box.SelectedText -ceq $box.Text) 'Read-only path cannot be selected for copying.'
+      }
       $pathAction = $main.Controls.Find('ApplyAppPath', $true)[0]
       $pathBox.Text = ''
       Assert-Gui (-not $pathAction.Enabled) 'Empty path allowed a save or migration action.'

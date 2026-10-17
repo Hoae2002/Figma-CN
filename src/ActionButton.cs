@@ -35,8 +35,8 @@ namespace FigBoost.UI
         {
             primary = outline.A == 0;
             BackColor = background;
-            ForeColor = primary ? foreground : Color.FromArgb(29, 78, 216);
-            border = primary ? background : Color.FromArgb(191, 219, 254);
+            ForeColor = foreground;
+            border = primary ? background : outline;
             Invalidate();
         }
 
@@ -151,8 +151,8 @@ namespace FigBoost.UI
             float inset = (float)(1 + pressAmount * 0.6) * scale;
             var rect = new RectangleF(inset, inset, Width - 2 * inset - 1, Height - 2 * inset - 1);
             Color fill = primary ? Mix(BackColor, Color.Black, hoverAmount * 0.06 + pressAmount * 0.12)
-                : Mix(Mix(BackColor, Color.FromArgb(239, 246, 255), hoverAmount), Color.FromArgb(219, 234, 254), pressAmount);
-            Color outline = Mix(border, accent, Math.Max(hoverAmount, pressAmount));
+                : Mix(Mix(BackColor, Color.FromArgb(241, 245, 249), hoverAmount), Color.FromArgb(226, 232, 240), pressAmount);
+            Color outline = Mix(border, Color.FromArgb(148, 163, 184), Math.Max(hoverAmount, pressAmount));
             Color text = ForeColor;
             if (!Enabled) { fill = Color.FromArgb(241, 245, 249); outline = Color.FromArgb(226, 232, 240); text = Color.FromArgb(148, 163, 184); }
             bool keyboardFocus = Focused && ShowFocusCues && Enabled;
