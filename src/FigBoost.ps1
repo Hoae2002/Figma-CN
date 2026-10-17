@@ -24,7 +24,7 @@ if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClo
 
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V7"
 $UpdaterDisableMarker = "FIGMA_ZH_DISABLE_BUILTIN_UPDATER"
-$PatcherVersion = "0.5.34"
+$PatcherVersion = "0.5.35"
 $PayloadFile = "i.js"
 $MainPayloadFile = "m.js"
 $FeatureConfigFile = "features.json"
@@ -1742,7 +1742,7 @@ function Show-Gui {
   $btnApplyAppPath.SetBounds(($form.ClientSize.Width - 284), 256, 136, 34)
   $btnApplyAppPath.Anchor = "Top,Right"
   $btnBrowse = New-Object FigBoost.UI.ActionButton
-  $btnBrowse.Text = "选择目录…"
+  $btnBrowse.Text = "选择目录"
   $btnBrowse.AccessibleName = "选择 Figma 客户端目录"
   $btnBrowse.SetBounds(($form.ClientSize.Width - 136), 256, 112, 34)
   $btnBrowse.Anchor = "Top,Right"
@@ -1756,7 +1756,7 @@ function Show-Gui {
   $txtRuntime.Text = $RuntimeDir
   $txtRuntime.AccessibleName = "汉化文件存放位置"
   $btnBrowseRuntime = New-Object FigBoost.UI.ActionButton
-  $btnBrowseRuntime.Text = "选择目录…"
+  $btnBrowseRuntime.Text = "选择目录"
   $btnBrowseRuntime.AccessibleName = "选择汉化文件存放目录"
   $btnBrowseRuntime.SetBounds(($form.ClientSize.Width - 136), 356, 112, 34)
   $btnBrowseRuntime.Anchor = "Top,Right"
@@ -1849,7 +1849,7 @@ function Show-Gui {
     $dialog = New-Object System.Windows.Forms.Form
     $dialog.Text = "FigBoost 更新"
     $dialog.StartPosition = "CenterParent"
-    $dialog.ClientSize = New-Object System.Drawing.Size(620, 360)
+    $dialog.ClientSize = New-Object System.Drawing.Size(620, 352)
     $dialog.FormBorderStyle = 'FixedDialog'
     $dialog.MaximizeBox = $false
     $dialog.MinimizeBox = $false
@@ -1857,49 +1857,58 @@ function Show-Gui {
     $dialog.BackColor = $form.BackColor
     $state = @{ Busy = $false; Info = $null }
 
-    $clientGroup = New-Object System.Windows.Forms.GroupBox
-    $clientGroup.Text = "FigBoost 客户端"
-    $clientGroup.SetBounds(20, 18, 580, 94)
-    $clientLabel = New-Object System.Windows.Forms.Label
-    $clientLabel.SetBounds(16, 28, 370, 44)
-    $clientLabel.Text = "当前版本：v$PatcherVersion`r`n最新版本：未检查"
-    $clientButton = New-Object FigBoost.UI.ActionButton
-    $clientButton.Text = '升级 FigBoost'
-    $clientButton.SetBounds(414, 32, 148, 34)
-    $clientGroup.Controls.AddRange(@($clientLabel, $clientButton))
+    $message = New-Object System.Windows.Forms.Label
+    $message.SetBounds(20, 18, 580, 32)
+    $message.Font = New-Object Drawing.Font($dialog.Font.FontFamily, 13, [Drawing.FontStyle]::Bold)
+    $message.ForeColor = [Drawing.Color]::FromArgb(28, 35, 45)
+    $message.AutoEllipsis = $true
 
-    $payloadGroup = New-Object System.Windows.Forms.GroupBox
-    $payloadGroup.Text = "词库与汉化运行文件"
-    $payloadGroup.SetBounds(20, 124, 580, 94)
-    $payloadLabel = New-Object System.Windows.Forms.Label
-    $payloadLabel.SetBounds(16, 28, 390, 44)
+    $clientGroup = New-Object System.Windows.Forms.Panel
+    $clientGroup.BackColor = [Drawing.Color]::White
+    $clientGroup.SetBounds(20, 62, 580, 90)
+    $clientTitle = New-HomeLabel 'FigBoost 软件' 18 12 370
+    $clientTitle.Font = New-Object Drawing.Font($dialog.Font.FontFamily, 10, [Drawing.FontStyle]::Bold)
+    $clientTitle.ForeColor = [Drawing.Color]::FromArgb(28, 35, 45)
+    $clientDescription = New-HomeLabel '获取工具功能改进与问题修复' 18 36 370 20
+    $clientLabel = New-HomeLabel "v$PatcherVersion" 18 60 380 20
+    $clientLabel.Name = 'ClientUpdateVersion'
+    $clientButton = New-Object FigBoost.UI.ActionButton
+    $clientButton.Text = '更新软件'
+    $clientButton.SetBounds(432, 28, 130, 34)
+    $clientGroup.Controls.AddRange(@($clientTitle, $clientDescription, $clientLabel, $clientButton))
+
+    $payloadGroup = New-Object System.Windows.Forms.Panel
+    $payloadGroup.BackColor = [Drawing.Color]::White
+    $payloadGroup.SetBounds(20, 164, 580, 90)
+    $payloadTitle = New-HomeLabel '汉化词库' 18 12 370
+    $payloadTitle.Font = $clientTitle.Font
+    $payloadTitle.ForeColor = $clientTitle.ForeColor
+    $payloadDescription = New-HomeLabel '补充中文翻译，改善界面汉化' 18 36 370 20
+    $payloadLabel = New-HomeLabel '' 18 60 398 20
+    $payloadLabel.Name = 'PayloadUpdateVersion'
     $payloadButton = New-Object FigBoost.UI.ActionButton
     $payloadButton.Text = '更新词库'
-    $payloadButton.SetBounds(414, 32, 148, 34)
-    $payloadGroup.Controls.AddRange(@($payloadLabel, $payloadButton))
+    $payloadButton.SetBounds(432, 28, 130, 34)
+    $payloadGroup.Controls.AddRange(@($payloadTitle, $payloadDescription, $payloadLabel, $payloadButton))
 
-    $notice = New-Object System.Windows.Forms.Label
-    $notice.Text = "升级 FigBoost 会重新打开补丁器。更新词库前请保存 Figma 工作；`r`n应用词库时会关闭并重新打开正在运行的 Figma，保留汉化设置和个人缓存。"
-    $notice.SetBounds(22, 230, 578, 40)
-    $message = New-Object System.Windows.Forms.Label
-    $message.SetBounds(22, 278, 576, 24)
-    $message.AutoEllipsis = $true
+    $notice = New-HomeLabel '' 20 266 580 20
     $retry = New-Object FigBoost.UI.ActionButton
     $retry.Text = '重新检查'
-    $retry.SetBounds(328, 312, 130, 32)
+    $retry.SetBounds(328, 304, 130, 32)
     $close = New-Object FigBoost.UI.ActionButton
     $close.Text = '关闭'
-    $close.SetBounds(470, 312, 130, 32)
+    $close.SetBounds(470, 304, 130, 32)
     foreach ($button in @($clientButton, $payloadButton, $retry, $close)) {
-      Set-ButtonStyle $button ([Drawing.Color]::FromArgb(244, 247, 251)) ([Drawing.Color]::FromArgb(28, 35, 45)) ([Drawing.Color]::FromArgb(140, 154, 174))
+      Set-ButtonStyle $button ([Drawing.Color]::White) ([Drawing.Color]::FromArgb(28, 35, 45)) ([Drawing.Color]::FromArgb(205, 214, 226))
     }
-    $dialog.Controls.AddRange(@($clientGroup, $payloadGroup, $notice, $message, $retry, $close))
+    $dialog.Controls.AddRange(@($message, $clientGroup, $payloadGroup, $notice, $retry, $close))
     $dialog.CancelButton = $close
 
     function Refresh-UpdateActions {
       $installed = Get-InstalledPayloadVersion $txtRuntime.Text
-      $clientLabel.Text = "当前版本：v$PatcherVersion`r`n最新版本：未检查"
-      $payloadLabel.Text = "当前已安装：$(if ($installed) { "v$installed" } else { '未安装' })`r`n最新版本：未检查"
+      $clientLabel.Text = "v$PatcherVersion"
+      $payloadLabel.Text = if ($installed) { "v$installed" } else { '未安装汉化，请先在主页安装' }
+      $notice.Text = ''
       $clientButton.Enabled = $false
       $payloadButton.Enabled = $false
       $clientButton.Visible = $false
@@ -1908,11 +1917,16 @@ function Show-Gui {
       $close.Enabled = -not $state.Busy
       if ($state.Info) {
         $clientNew = (Compare-VersionString $state.Info.client.version $PatcherVersion) -gt 0
-        $clientLabel.Text = "当前版本：v$PatcherVersion`r`n最新版本：v$($state.Info.client.version)$(if (-not $clientNew) { '（无需更新）' })"
+        if ($clientNew) { $clientLabel.Text = "v$PatcherVersion → v$($state.Info.client.version)" }
         $compatible = (Compare-VersionString $PatcherVersion $state.Info.payload.minPatcherVersion) -ge 0
         $payloadNew = $installed -and (Compare-VersionString $state.Info.payload.version $installed) -gt 0
-        $hint = if (-not $installed) { '（请先安装汉化补丁）' } elseif (-not $compatible) { '（请先升级 FigBoost）' } elseif (-not $payloadNew) { '（无需更新）' } else { '' }
-        $payloadLabel.Text = "当前已安装：$(if ($installed) { "v$installed" } else { '未安装' })`r`n最新版本：v$($state.Info.payload.version)$hint"
+        if ($payloadNew) {
+          $payloadLabel.Text = "v$installed → v$($state.Info.payload.version)$(if (-not $compatible) { ' · 请先更新软件' })"
+          $notice.Text = '更新词库会重启 Figma，请先保存工作。'
+        }
+        if ($clientNew) {
+          $notice.Text = if ($payloadNew) { '软件更新后重启 FigBoost；词库更新会重启 Figma，请先保存工作。' } else { '软件更新后会自动重新打开 FigBoost。' }
+        }
         $clientButton.Visible = $clientNew
         $payloadButton.Visible = [bool]$payloadNew
         $clientButton.Enabled = -not $state.Busy -and $clientNew
@@ -1923,12 +1937,12 @@ function Show-Gui {
     $check = {
       if ($state.Busy) { return }
       $state.Busy = $true
-      $message.Text = '正在检查客户端和词库版本…'
+      $message.Text = '正在检查更新…'
       Refresh-UpdateActions
       try {
         $state.Info = @(Invoke-UpdateWorker { Get-LatestFigBoostUpdate })[-1]
         Refresh-UpdateActions
-        $message.Text = if ($clientButton.Visible -or $payloadButton.Visible) { '检查完成。发现新版本。' } else { '检查完成。暂无可用更新。' }
+        $message.Text = if ($clientButton.Visible -or $payloadButton.Visible) { '有可用更新' } elseif (-not (Get-InstalledPayloadVersion $txtRuntime.Text)) { '软件已是最新版' } else { '已是最新版本' }
       } catch {
         $state.Info = $null
         $message.Text = '检查失败，请确认网络后重新检查。'

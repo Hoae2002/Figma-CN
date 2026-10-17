@@ -105,6 +105,7 @@ $timer.Add_Tick({
       Assert-Gui ($null -ne $entry) 'Update entry missing.'
       Assert-Gui ($entry.Right -le $main.ClientSize.Width) 'Update entry extends outside main window.'
       $script:phase = 10 # Prevent timer re-entry while actions process WinForms events.
+      Assert-Gui (@($main.Controls | Where-Object { $_.Text -eq '选择目录' }).Count -eq 2) 'Directory buttons should not include an ellipsis.'
       Assert-HomeLayout $main
       $main.Size = New-Object Drawing.Size(($main.Width + 160), ($main.Height + 100))
       $main.PerformLayout()
@@ -158,11 +159,15 @@ $timer.Add_Tick({
       $script:phase = 1
       $entry.PerformClick()
     } elseif ($script:phase -eq 1 -and $dialog -and $script:requestCount -eq 1) {
-      $client = Get-ChildControl $dialog '升级 FigBoost'
+      $client = Get-ChildControl $dialog '更新软件'
       $payload = Get-ChildControl $dialog '更新词库'
       Assert-Gui (-not $client.Enabled -and -not $payload.Enabled) 'Current versions must not enable update actions.'
       Assert-Gui (-not $client.Visible -and -not $payload.Visible) 'Current versions must hide update actions.'
-      Assert-Gui ($null -ne (Get-ChildControl $dialog '检查完成。暂无可用更新。')) 'No-update result must match the hidden actions.'
+      Assert-Gui ($null -ne (Get-ChildControl $dialog '已是最新版本')) 'No-update result must match the hidden actions.'
+      Assert-Gui ($dialog.Controls.Find('ClientUpdateVersion', $true)[0].Text -eq "v$PatcherVersion") 'Current software version must appear only once.'
+      Assert-Gui ($dialog.Controls.Find('PayloadUpdateVersion', $true)[0].Text -eq ("v" + (Get-PayloadVersion))) 'Current dictionary version must appear only once.'
+      Assert-Gui ($null -ne (Get-ChildControl $dialog '获取工具功能改进与问题修复') -and $null -ne (Get-ChildControl $dialog '补充中文翻译，改善界面汉化')) 'Update purposes are unclear.'
+      Assert-HomeLayout $dialog
       foreach ($group in @($client.Parent, $payload.Parent)) {
         foreach ($child in $group.Controls) {
           Assert-Gui ($child.Right -le $group.ClientSize.Width -and $child.Bottom -le $group.ClientSize.Height) 'Update content is clipped.'
@@ -173,23 +178,31 @@ $timer.Add_Tick({
       (Get-ChildControl $dialog '重新检查').PerformClick()
     } elseif ($script:phase -eq 2 -and $dialog -and $script:requestCount -eq 2) {
       Assert-Gui ($null -ne (Get-ChildControl $dialog '检查失败，请确认网络后重新检查。')) 'Offline failure not shown.'
-      Assert-Gui (-not (Get-ChildControl $dialog '升级 FigBoost').Enabled) 'Failed check left stale upgrade enabled.'
-      Assert-Gui (-not (Get-ChildControl $dialog '升级 FigBoost').Visible -and -not (Get-ChildControl $dialog '更新词库').Visible) 'Failed check must hide update actions.'
+      Assert-Gui (-not (Get-ChildControl $dialog '更新软件').Enabled) 'Failed check left stale upgrade enabled.'
+      Assert-Gui (-not (Get-ChildControl $dialog '更新软件').Visible -and -not (Get-ChildControl $dialog '更新词库').Visible) 'Failed check must hide update actions.'
+      Assert-HomeLayout $dialog
       $script:phase = 3
       (Get-ChildControl $dialog '重新检查').PerformClick()
     } elseif ($script:phase -eq 3 -and $dialog -and $script:requestCount -eq 3) {
-      Assert-Gui ((Get-ChildControl $dialog '升级 FigBoost').Enabled) 'Retry did not enable available client upgrade.'
+      Assert-Gui ((Get-ChildControl $dialog '更新软件').Enabled) 'Retry did not enable available client upgrade.'
       Assert-Gui ((Get-ChildControl $dialog '更新词库').Enabled) 'Available compatible dictionary update disabled.'
-      Assert-Gui ((Get-ChildControl $dialog '升级 FigBoost').Visible -and (Get-ChildControl $dialog '更新词库').Visible) 'Available updates must show their actions.'
+      Assert-Gui ((Get-ChildControl $dialog '更新软件').Visible -and (Get-ChildControl $dialog '更新词库').Visible) 'Available updates must show their actions.'
+      Assert-Gui ($dialog.Controls.Find('ClientUpdateVersion', $true)[0].Text -eq "v$PatcherVersion → v999.0.0") 'Software upgrade path missing.'
+      Assert-Gui ($dialog.Controls.Find('PayloadUpdateVersion', $true)[0].Text -eq ("v" + (Get-PayloadVersion) + " → v999.0.0")) 'Dictionary upgrade path missing.'
+      Assert-Gui ($null -ne (Get-ChildControl $dialog '软件更新后重启 FigBoost；词库更新会重启 Figma，请先保存工作。')) 'Update consequences missing.'
+      Assert-HomeLayout $dialog
       $script:phase = 4
       (Get-ChildControl $dialog '重新检查').PerformClick()
     } elseif ($script:phase -eq 4 -and $dialog -and $script:requestCount -eq 4) {
       Assert-Gui (-not (Get-ChildControl $dialog '更新词库').Enabled) 'Incompatible dictionary update was enabled.'
+      Assert-Gui ($dialog.Controls.Find('PayloadUpdateVersion', $true)[0].Text.EndsWith('请先更新软件')) 'Incompatible dictionary lacks a next step.'
+      Assert-HomeLayout $dialog
       $script:phase = 5
       Remove-Item -LiteralPath (Join-Path $RuntimeDir 'i.js') -Force
       (Get-ChildControl $dialog '重新检查').PerformClick()
     } elseif ($script:phase -eq 5 -and $dialog -and $script:requestCount -eq 5) {
       Assert-Gui (-not (Get-ChildControl $dialog '更新词库').Enabled) 'Dictionary update enabled without an installed patch.'
+      Assert-Gui ($null -ne (Get-ChildControl $dialog '未安装汉化，请先在主页安装')) 'Missing installation lacks a next step.'
       $script:phase = 6
       (Get-ChildControl $dialog '关闭').PerformClick()
       $main.Close()
