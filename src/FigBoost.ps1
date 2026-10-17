@@ -24,7 +24,7 @@ if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClo
 
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V7"
 $UpdaterDisableMarker = "FIGMA_ZH_DISABLE_BUILTIN_UPDATER"
-$PatcherVersion = "0.5.25"
+$PatcherVersion = "0.5.26"
 $PayloadFile = "i.js"
 $MainPayloadFile = "m.js"
 $FeatureConfigFile = "features.json"
@@ -32,10 +32,162 @@ $BackupFile = "app.asar.figma-zh-official-preload-original"
 $LicenseCommentTarget = "/*! Bundled license information:"
 $OfficialReleasesXmlUrl = "https://desktop.figma.com/win/releases.xml"
 $OfficialInstallerUrl = "https://desktop.figma.com/win/FigmaSetup.exe"
-$PatcherReleaseApiUrl = "https://api.github.com/repos/Hoae2002/Figma-CN/releases/latest"
-$PatcherReleaseAssetName = "FigBoost.exe"
 $EmbeddedPayloadFiles = @{}
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+$script:UpdatedPayloadFiles = @{}
+$UpdateRepository = "https://raw.githubusercontent.com/Hoae2002/Figma-CN"
+$UpdateCommitApi = "https://api.github.com/repos/Hoae2002/Figma-CN/commits/main"
+
+function Assert-UpdateVersion {
+  param([string]$Version)
+  if ($Version -notmatch '^\d{1,4}\.\d{1,4}\.\d{1,4}$') { throw "更新版本号无效。" }
+}
+
+function Get-LatestFigBoostUpdate {
+  $headers = @{ "User-Agent" = "FigBoost/$PatcherVersion"; "Accept" = "application/vnd.github+json" }
+  $commit = Invoke-RestMethod -Uri $UpdateCommitApi -Headers $headers -UseBasicParsing -TimeoutSec 20
+  if ([string]$commit.sha -notmatch '^[a-f0-9]{40}$') { throw "无法读取更新发布版本。" }
+  $base = "$UpdateRepository/$($commit.sha)"
+  $info = Invoke-RestMethod -Uri "$base/updates/latest.json" -Headers $headers -UseBasicParsing -TimeoutSec 20
+  if ($info.schema -ne 1) { throw "更新格式不受支持，请手动下载新版 FigBoost。" }
+  foreach ($item in @($info.client, $info.payload)) {
+    Assert-UpdateVersion ([string]$item.version)
+    if ([string]$item.sha256 -notmatch '^[a-fA-F0-9]{64}$' -or [long]$item.size -le 0 -or [long]$item.size -gt 20971520) { throw "更新文件校验信息无效。" }
+  }
+  Assert-UpdateVersion ([string]$info.payload.minPatcherVersion)
+  $info.client | Add-Member -NotePropertyName DownloadUrl -NotePropertyValue "$base/FigBoost.exe" -Force
+  $info.payload | Add-Member -NotePropertyName DownloadUrl -NotePropertyValue "$base/updates/payload.json" -Force
+  return $info
+}
+
+function Save-VerifiedUpdateDownload {
+  param([object]$Release, [string]$Destination)
+  if ([string]$Release.DownloadUrl -notmatch '^https://raw\.githubusercontent\.com/Hoae2002/Figma-CN/[a-f0-9]{40}/(FigBoost\.exe|updates/payload\.json)$') { throw "更新下载地址无效。" }
+  try {
+    Invoke-WebRequest -Uri $Release.DownloadUrl -OutFile $Destination -UseBasicParsing -TimeoutSec 120 | Out-Null
+    $file = Get-Item -LiteralPath $Destination
+    if ($file.Length -ne [long]$Release.size -or (Get-FileHash -LiteralPath $Destination -Algorithm SHA256).Hash -ine $Release.sha256) { throw "下载文件校验失败，请重新检查更新。" }
+  } catch {
+    Remove-Item -LiteralPath $Destination -Force -ErrorAction SilentlyContinue
+    throw
+  }
+}
+
+function Get-PayloadUpdateCachePath {
+  return (Join-Path $env:LOCALAPPDATA "FigBoost\updates\payload.json")
+}
+
+function ConvertFrom-PayloadUpdate {
+  param([object]$Package)
+  if ($Package.schema -ne 1) { throw "词库更新格式不受支持。" }
+  Assert-UpdateVersion ([string]$Package.version)
+  Assert-UpdateVersion ([string]$Package.minPatcherVersion)
+  if ((Compare-VersionString $PatcherVersion $Package.minPatcherVersion) -lt 0) { throw "此词库需要 FigBoost v$($Package.minPatcherVersion) 或更高版本，请先升级客户端。" }
+  $paths = @(
+    "payload\manifest.json", "payload\src\dictionary\zh-CN.js", "payload\src\content\localizer-core.js",
+    "payload\src\content\content.js", "payload\src\main\menu-localizer.js", "payload\src\shared\translation-policy.js",
+    "payload\src\content\translation-runtime.js", "payload\src\main\translation-service.js", "payload\src\main\translation-host.js",
+    "payload\src\main\translation-settings-preload.js", "payload\src\main\translation-settings.html",
+    "payload\src\main\translation-settings.css", "payload\src\main\translation-settings.js"
+  )
+  if (@($Package.files.PSObject.Properties).Count -ne $paths.Count) { throw "词库更新文件不完整。" }
+  $files = @{}
+  foreach ($path in $paths) {
+    $value = [string]$Package.files.$path
+    if (-not $value) { throw "词库更新缺少文件：$path" }
+    $bytes = [Convert]::FromBase64String($value)
+    if ($bytes.Length -eq 0 -or $bytes.Length -gt 5242880) { throw "词库更新文件大小无效。" }
+    $files[$path] = $value
+  }
+  $manifest = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($files['payload\manifest.json'])) | ConvertFrom-Json
+  if ($manifest.version -ne $Package.version) { throw "词库更新版本不一致。" }
+  return $files
+}
+
+function Initialize-PayloadUpdate {
+  # Source-mode tests and development always use the checkout, never a user's cache.
+  if ($EmbeddedPayloadFiles.Count -eq 0) { return }
+  $cache = Get-PayloadUpdateCachePath
+  if (-not (Test-Path -LiteralPath $cache)) { return }
+  try {
+    $package = [IO.File]::ReadAllText($cache, [Text.Encoding]::UTF8) | ConvertFrom-Json
+    if ((Compare-VersionString $package.version (Get-PayloadVersion)) -gt 0) { $script:UpdatedPayloadFiles = ConvertFrom-PayloadUpdate $package }
+  } catch { Write-Log "Ignored invalid payload update cache: $($_.Exception.Message)" }
+}
+
+function Get-InstalledPayloadVersion {
+  param([string]$SelectedRuntimeDir)
+  $path = Join-Path $SelectedRuntimeDir $PayloadFile
+  if (Test-Path -LiteralPath $path) {
+    $reader = [IO.File]::OpenText($path)
+    try {
+      $buffer = New-Object char[] 1024
+      $length = $reader.Read($buffer, 0, $buffer.Length)
+      $prefix = New-Object string($buffer, 0, $length)
+      if ($prefix -match 'const version = "(\d+\.\d+\.\d+)";') { return $Matches[1] }
+    } finally { $reader.Dispose() }
+  }
+  return ""
+}
+
+function Install-PayloadUpdate {
+  param([object]$Package, [string]$SelectedAppDir, [string]$SelectedRuntimeDir)
+  $files = ConvertFrom-PayloadUpdate $Package
+  if ((Compare-VersionString $Package.version (Get-PayloadVersion)) -lt 0) { throw "不能安装比当前内置词库更旧的版本。" }
+  $target = Resolve-Target (Resolve-ManagedFigmaAppDir $SelectedRuntimeDir $SelectedAppDir)
+  $status = Get-PatchStatus $target $SelectedRuntimeDir
+  if (-not $status.Patched -or -not $status.HasRuntimePayload -or -not $status.HasRuntimeMainPayload) { throw "请先安装汉化补丁，再更新词库。" }
+  $installed = Get-InstalledPayloadVersion $SelectedRuntimeDir
+  if ($installed -and (Compare-VersionString $Package.version $installed) -lt 0) { throw "不能降级已安装的词库。" }
+  $cache = Get-PayloadUpdateCachePath
+  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $cache) | Out-Null
+  $staged = "$cache.$([Guid]::NewGuid().ToString('N')).tmp"
+  $originalFiles = @{}
+  foreach ($name in @('zh-CN.js', 'translation-policy.js', 'translation-service.js', 'translation-host.js', 'translation-settings-preload.js', 'translation-settings.html', 'translation-settings.css', 'translation-settings.js', $PayloadFile, $MainPayloadFile)) {
+    $path = Join-Path $SelectedRuntimeDir $name
+    $originalFiles[$path] = if (Test-Path -LiteralPath $path) { [IO.File]::ReadAllBytes($path) } else { $null }
+  }
+  $previous = $script:UpdatedPayloadFiles
+  $restart = $false
+  try {
+    [IO.File]::WriteAllText($staged, ($Package | ConvertTo-Json -Depth 5 -Compress), $Utf8NoBom)
+    $restart = Stop-FigmaForPatch $target.AppDir -Force
+    $script:UpdatedPayloadFiles = $files
+    Write-RuntimeFiles $SelectedRuntimeDir
+    if (Test-Path -LiteralPath $cache) { [IO.File]::Replace($staged, $cache, $null) } else { [IO.File]::Move($staged, $cache) }
+  } catch {
+    $script:UpdatedPayloadFiles = $previous
+    foreach ($path in $originalFiles.Keys) {
+      if ($null -eq $originalFiles[$path]) {
+        Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+      } elseif (-not (Test-Path -LiteralPath $path) -or (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ine (Get-Sha256Hex $originalFiles[$path])) {
+        [IO.File]::WriteAllBytes($path, $originalFiles[$path])
+      }
+    }
+    throw
+  } finally {
+    Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue
+    if ($restart) { [void](Start-FigmaClient $target.AppDir) }
+  }
+  return Get-PatchStatus $target $SelectedRuntimeDir
+}
+
+function Invoke-UpdateWorker {
+  param([scriptblock]$Action, [object[]]$Arguments = @())
+  $worker = [PowerShell]::Create()
+  try {
+    $setup = '$ErrorActionPreference = "Stop"; [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12;'
+    foreach ($name in @('Assert-UpdateVersion', 'Get-LatestFigBoostUpdate', 'Save-VerifiedUpdateDownload')) { $setup += (Get-Command $name).Definition.Insert(0, "function $name {") + "}`n" }
+    foreach ($name in @('PatcherVersion', 'UpdateRepository', 'UpdateCommitApi')) { $setup += "`$$name = '" + (Get-Variable $name -ValueOnly).Replace("'", "''") + "';`n" }
+    [void]$worker.AddScript($setup + "function Invoke-Work {" + $Action.ToString() + "}`nInvoke-Work @args")
+    foreach ($argument in $Arguments) { [void]$worker.AddArgument($argument) }
+    $pending = $worker.BeginInvoke()
+    while (-not $pending.IsCompleted) { [Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 30 }
+    $result = $worker.EndInvoke($pending)
+    if ($worker.HadErrors) { throw $worker.Streams.Error[0] }
+    return $result
+  } finally { $worker.Dispose() }
+}
 
 function Get-BaseDir {
   $scriptDir = if ($PSScriptRoot) {
@@ -252,67 +404,50 @@ function Get-FigmaInstallerVersionFromText {
   return $null
 }
 
-function Get-PatcherReleaseVersionFromText {
-  param([string]$Text)
-  if ($Text -match 'v?(\d+\.\d+\.\d+)') { return $Matches[1] }
-  return $null
-}
-
-function Get-LatestPatcherRelease {
-  param([string]$ApiUrl = $PatcherReleaseApiUrl)
-  $headers = @{ "User-Agent" = "FigBoost/$PatcherVersion" }
-  $release = Invoke-RestMethod -Uri $ApiUrl -Headers $headers -UseBasicParsing -TimeoutSec 20
-  $version = Get-PatcherReleaseVersionFromText ([string]$release.tag_name)
-  if (-not $version) { $version = Get-PatcherReleaseVersionFromText ([string]$release.name) }
-  if (-not $version) { throw "无法从 GitHub Release 解析 FigBoost 版本号。" }
-
-  $asset = @($release.assets | Where-Object { $_.name -eq $PatcherReleaseAssetName } | Select-Object -First 1)
-  if (-not $asset -or -not $asset.browser_download_url) {
-    throw "GitHub Release 中未找到 $PatcherReleaseAssetName。"
+function New-PatcherUpdateScript {
+  param([string]$CurrentExe, [string]$TempExe, [int]$ProcessId, [string]$SelectedRuntimeDir, [string]$SelectedAppDir)
+  $currentExeLiteral = $currentExe.Replace("'", "''")
+  $tempExeLiteral = $tempExe.Replace("'", "''")
+  # Windows paths cannot contain quotes; double trailing slashes before the closing quote.
+  $runtimeArgument = '"' + ($SelectedRuntimeDir -replace '(\\+)$', '$1$1') + '"'
+  $appArgument = '"' + ($SelectedAppDir -replace '(\\+)$', '$1$1') + '"'
+  $argumentsLiteral = ("-RuntimeDir $runtimeArgument -AppDir $appArgument").Replace("'", "''")
+  return @"
+`$ErrorActionPreference = 'Stop'
+try {
+  if (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) { Wait-Process -Id $ProcessId -Timeout 60 -ErrorAction Stop }
+  Copy-Item -LiteralPath '$currentExeLiteral' -Destination '$currentExeLiteral.update-backup' -Force
+  try {
+    for (`$attempt = 0; `$attempt -lt 30; `$attempt++) {
+      try { Copy-Item -LiteralPath '$tempExeLiteral' -Destination '$currentExeLiteral' -Force; break }
+      catch { if (`$attempt -eq 29) { throw }; Start-Sleep -Milliseconds 300 }
+    }
+    Start-Process -FilePath '$currentExeLiteral' -ArgumentList '$argumentsLiteral'
+  } catch {
+    Copy-Item -LiteralPath '$currentExeLiteral.update-backup' -Destination '$currentExeLiteral' -Force
+    throw
   }
-
-  return [pscustomobject]@{
-    Version = $version
-    Name = [string]$release.name
-    ReleaseUrl = [string]$release.html_url
-    DownloadUrl = [string]$asset.browser_download_url
-  }
+  Remove-Item -LiteralPath '$currentExeLiteral.update-backup' -Force -ErrorAction SilentlyContinue
+} catch {
+  Add-Type -AssemblyName System.Windows.Forms
+  [Windows.Forms.MessageBox]::Show(('FigBoost 升级失败，原版本已保留。' + [Environment]::NewLine + `$_.Exception.Message), 'FigBoost', 'OK', 'Error') | Out-Null
+} finally {
+  Remove-Item -LiteralPath '$tempExeLiteral' -Force -ErrorAction SilentlyContinue
 }
-
-function Check-PatcherUpdate {
-  param([string]$CurrentVersion = $PatcherVersion)
-  $release = Get-LatestPatcherRelease
-  if ((Compare-VersionString $release.Version $CurrentVersion) -gt 0) { return $release }
-  return $null
+"@
 }
 
 function Invoke-PatcherSelfUpdate {
-  param([object]$Release)
-  if (-not $Release -or -not $Release.DownloadUrl) { throw "缺少 FigBoost 更新下载地址。" }
-
-  $currentExe = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
-  if (-not $currentExe -or -not (Test-Path -LiteralPath $currentExe)) { throw "找不到当前 FigBoost.exe 路径。" }
-
-  $tempExe = Join-Path ([System.IO.Path]::GetTempPath()) ("FigBoost-update-" + [Guid]::NewGuid().ToString("N") + ".exe")
-  Invoke-WebRequest -Uri $Release.DownloadUrl -OutFile $tempExe -UseBasicParsing -TimeoutSec 300
-  $downloaded = Get-Item -LiteralPath $tempExe -ErrorAction Stop
-  if ($downloaded.Length -le 0) { throw "下载到的 FigBoost.exe 为空。" }
-
+  param([object]$Release, [string]$TempExe, [string]$SelectedRuntimeDir, [string]$SelectedAppDir)
+  $currentExe = [Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+  if ((Split-Path -Leaf $currentExe) -ine 'FigBoost.exe') { throw "请在打包后的 FigBoost.exe 中升级客户端。" }
+  if ((Get-Item -LiteralPath $TempExe).Length -ne [long]$Release.size -or (Get-FileHash -LiteralPath $TempExe -Algorithm SHA256).Hash -ine $Release.sha256) { throw "客户端更新文件校验失败。" }
+  $downloadVersion = (Get-Item -LiteralPath $TempExe).VersionInfo.FileVersion
+  if ($downloadVersion -ne "$($Release.version).0") { throw "客户端更新文件版本不匹配。" }
   $psExe = (Get-Command powershell.exe -ErrorAction Stop).Source
-  $pidValue = [System.Diagnostics.Process]::GetCurrentProcess().Id
-  $currentExeLiteral = $currentExe.Replace("'", "''")
-  $tempExeLiteral = $tempExe.Replace("'", "''")
-  $script = @"
-`$ErrorActionPreference = 'Stop'
-Wait-Process -Id $pidValue -ErrorAction SilentlyContinue
-Start-Sleep -Milliseconds 500
-Copy-Item -LiteralPath '$tempExeLiteral' -Destination '$currentExeLiteral' -Force
-Remove-Item -LiteralPath '$tempExeLiteral' -Force -ErrorAction SilentlyContinue
-Start-Process -FilePath '$currentExeLiteral'
-"@
+  $script = New-PatcherUpdateScript $currentExe $TempExe $PID $SelectedRuntimeDir $SelectedAppDir
   $encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($script))
   Start-Process -FilePath $psExe -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $encoded) -WindowStyle Hidden
-  [System.Windows.Forms.Application]::Exit()
 }
 
 function Get-OfficialLatestFigmaInstallerRelease {
@@ -469,6 +604,9 @@ function Get-AsarFileSlice {
 
 function Read-PayloadText {
   param([string]$RelativePath)
+  if ($script:UpdatedPayloadFiles -and $script:UpdatedPayloadFiles.ContainsKey($RelativePath)) {
+    return [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($script:UpdatedPayloadFiles[$RelativePath]))
+  }
   if ($EmbeddedPayloadFiles.ContainsKey($RelativePath)) {
     $bytes = [System.Convert]::FromBase64String($EmbeddedPayloadFiles[$RelativePath])
     return [System.Text.Encoding]::UTF8.GetString($bytes)
@@ -821,7 +959,7 @@ function Get-PatchStatus {
   $source = [System.Text.Encoding]::UTF8.GetString($main.Bytes)
   return [pscustomobject]@{
     PatcherVersion = $PatcherVersion
-    PayloadVersion = Get-PayloadVersion
+    PayloadVersion = $(if (Get-InstalledPayloadVersion $RuntimeDir) { Get-InstalledPayloadVersion $RuntimeDir } else { Get-PayloadVersion })
     AppDir = $Target.AppDir
     FigmaVersion = $Target.FigmaVersion
     AsarPath = $Target.AsarPath
@@ -1233,8 +1371,6 @@ function Invoke-SelfTest {
     if ((Compare-VersionString "126.4.10" "126.3.12") -le 0) { throw "Self-test version compare failed." }
     if ((Compare-VersionString "126.3.12" "126.4.10") -ge 0) { throw "Self-test version compare failed." }
     if ((Compare-VersionString "126.3.12" "126.3.12") -ne 0) { throw "Self-test version compare failed." }
-    if ((Get-PatcherReleaseVersionFromText "v0.3.6") -ne "0.3.6") { throw "Self-test patcher release tag parse failed." }
-    if ((Get-PatcherReleaseVersionFromText "FigBoost 0.3.7") -ne "0.3.7") { throw "Self-test patcher release name parse failed." }
     if ((Get-FigmaInstallerVersionFromText "PK Figma-126.4.11-full.nupkg") -ne "126.4.11") { throw "Self-test installer version parse failed." }
     $selectedRelease = Select-LatestFigmaRelease @(
       (New-FigmaReleaseInfo "126.3.12" "Figma 126.3.12" "msi" "feed"),
@@ -1746,7 +1882,15 @@ function Show-Gui {
   $btnFeatureManager.Width = 180
   $btnFeatureManager.Height = 34
 
-  foreach ($button in @($btnBrowse, $btnApplyAppPath, $btnBrowseRuntime, $btnStatus, $btnInstall, $btnUninstall, $btnFeatureManager)) {
+  $btnFigBoostUpdate = New-Object System.Windows.Forms.Button
+  $btnFigBoostUpdate.Text = "检查 FigBoost 更新"
+  $btnFigBoostUpdate.Left = 680
+  $btnFigBoostUpdate.Top = 350
+  $btnFigBoostUpdate.Width = 184
+  $btnFigBoostUpdate.Height = 34
+  $btnFigBoostUpdate.Anchor = "Top,Left,Right"
+
+  foreach ($button in @($btnBrowse, $btnApplyAppPath, $btnBrowseRuntime, $btnStatus, $btnInstall, $btnUninstall, $btnFeatureManager, $btnFigBoostUpdate)) {
     if ($button -ne $btnFeatureManager) {
       Set-ButtonStyle $button `
         ([System.Drawing.Color]::FromArgb(244, 247, 251)) `
@@ -1893,6 +2037,9 @@ function Show-Gui {
     $btnFeatureManager.Left = 538
     $btnFeatureManager.Top = 384
     $btnFeatureManager.Width = 190
+    $btnFigBoostUpdate.Left = 742
+    $btnFigBoostUpdate.Top = 384
+    $btnFigBoostUpdate.Width = 222
 
     $progressLabel.Top = 436
     $progressLabel.Width = 946
@@ -1936,20 +2083,149 @@ function Show-Gui {
     [System.Windows.Forms.Application]::DoEvents()
   }
 
-  function Prompt-PatcherUpdateIfAvailable {
-    try {
-      $release = Check-PatcherUpdate
-      if (-not $release) { return }
+  function Show-FigBoostUpdateDialog {
+    $dialog = New-Object System.Windows.Forms.Form
+    $dialog.Text = "FigBoost 更新"
+    $dialog.StartPosition = "CenterParent"
+    $dialog.ClientSize = New-Object System.Drawing.Size(620, 360)
+    $dialog.FormBorderStyle = 'FixedDialog'
+    $dialog.MaximizeBox = $false
+    $dialog.MinimizeBox = $false
+    $dialog.Font = $form.Font
+    $dialog.BackColor = $form.BackColor
+    $state = @{ Busy = $false; Info = $null }
 
-      $message = "发现 FigBoost 新版本 v$($release.Version)，是否更新到最新版本？`r`n`r`n当前版本：v$PatcherVersion`r`n最新版本：v$($release.Version)"
-      $choice = [System.Windows.Forms.MessageBox]::Show($message, "FigBoost 自动更新", "YesNo", "Question")
-      if ($choice -ne "Yes") { return }
+    $clientGroup = New-Object System.Windows.Forms.GroupBox
+    $clientGroup.Text = "FigBoost 客户端"
+    $clientGroup.SetBounds(20, 18, 580, 94)
+    $clientLabel = New-Object System.Windows.Forms.Label
+    $clientLabel.SetBounds(16, 28, 370, 44)
+    $clientLabel.Text = "当前版本：v$PatcherVersion`r`n最新版本：未检查"
+    $clientButton = New-Object System.Windows.Forms.Button
+    $clientButton.Text = '升级客户端'
+    $clientButton.SetBounds(414, 32, 148, 34)
+    $clientGroup.Controls.AddRange(@($clientLabel, $clientButton))
 
-      Set-ProgressState 35 "正在下载 FigBoost v$($release.Version)..."
-      Invoke-PatcherSelfUpdate $release
-    } catch {
-      Write-Log "FigBoost update check failed: $($_.Exception.Message)"
+    $payloadGroup = New-Object System.Windows.Forms.GroupBox
+    $payloadGroup.Text = "词库与汉化运行文件"
+    $payloadGroup.SetBounds(20, 124, 580, 94)
+    $payloadLabel = New-Object System.Windows.Forms.Label
+    $payloadLabel.SetBounds(16, 28, 390, 44)
+    $payloadButton = New-Object System.Windows.Forms.Button
+    $payloadButton.Text = '更新词库'
+    $payloadButton.SetBounds(414, 32, 148, 34)
+    $payloadGroup.Controls.AddRange(@($payloadLabel, $payloadButton))
+
+    $notice = New-Object System.Windows.Forms.Label
+    $notice.Text = "升级客户端会重新打开 FigBoost。更新词库前请保存 Figma 工作；`r`n应用词库时会关闭并重新打开正在运行的 Figma，保留汉化设置和个人缓存。"
+    $notice.SetBounds(22, 230, 578, 40)
+    $message = New-Object System.Windows.Forms.Label
+    $message.SetBounds(22, 278, 576, 24)
+    $message.AutoEllipsis = $true
+    $retry = New-Object System.Windows.Forms.Button
+    $retry.Text = '重新检查'
+    $retry.SetBounds(328, 312, 130, 32)
+    $close = New-Object System.Windows.Forms.Button
+    $close.Text = '关闭'
+    $close.SetBounds(470, 312, 130, 32)
+    foreach ($button in @($clientButton, $payloadButton, $retry, $close)) {
+      Set-ButtonStyle $button ([Drawing.Color]::FromArgb(244, 247, 251)) ([Drawing.Color]::FromArgb(28, 35, 45)) ([Drawing.Color]::FromArgb(140, 154, 174))
     }
+    $dialog.Controls.AddRange(@($clientGroup, $payloadGroup, $notice, $message, $retry, $close))
+    $dialog.CancelButton = $close
+
+    function Refresh-UpdateActions {
+      $installed = Get-InstalledPayloadVersion $txtRuntime.Text
+      $clientLabel.Text = "当前版本：v$PatcherVersion`r`n最新版本：未检查"
+      $payloadLabel.Text = "当前已安装：$(if ($installed) { "v$installed" } else { '未安装' })`r`n最新版本：未检查"
+      $clientButton.Enabled = $false
+      $payloadButton.Enabled = $false
+      $retry.Enabled = -not $state.Busy
+      $close.Enabled = -not $state.Busy
+      if ($state.Info) {
+        $clientNew = (Compare-VersionString $state.Info.client.version $PatcherVersion) -gt 0
+        $clientLabel.Text = "当前版本：v$PatcherVersion`r`n最新版本：v$($state.Info.client.version)$(if (-not $clientNew) { '（无需更新）' })"
+        $compatible = (Compare-VersionString $PatcherVersion $state.Info.payload.minPatcherVersion) -ge 0
+        $payloadNew = $installed -and (Compare-VersionString $state.Info.payload.version $installed) -gt 0
+        $hint = if (-not $installed) { '（请先安装汉化补丁）' } elseif (-not $compatible) { '（请先升级客户端）' } elseif (-not $payloadNew) { '（无需更新）' } else { '' }
+        $payloadLabel.Text = "当前已安装：$(if ($installed) { "v$installed" } else { '未安装' })`r`n最新版本：v$($state.Info.payload.version)$hint"
+        $clientButton.Enabled = -not $state.Busy -and $clientNew
+        $payloadButton.Enabled = -not $state.Busy -and $compatible -and $payloadNew -and (Compare-VersionString $state.Info.payload.version (Get-PayloadVersion)) -ge 0
+      }
+      $dialog.Refresh()
+    }
+    $check = {
+      if ($state.Busy) { return }
+      $state.Busy = $true
+      $message.Text = '正在检查客户端和词库版本…'
+      Refresh-UpdateActions
+      try {
+        $state.Info = @(Invoke-UpdateWorker { Get-LatestFigBoostUpdate })[-1]
+        $message.Text = '检查完成。可分别升级客户端或更新词库。'
+      } catch {
+        $state.Info = $null
+        $message.Text = '检查失败，请确认网络后重新检查。'
+        Write-Log "FigBoost update check failed: $($_.Exception.Message)"
+      } finally { $state.Busy = $false; Refresh-UpdateActions }
+    }
+    $clientButton.Add_Click({
+      if ($state.Busy -or -not $state.Info) { return }
+      $state.Busy = $true
+      Refresh-UpdateActions
+      $download = Join-Path ([IO.Path]::GetTempPath()) ("FigBoost-update-$([Guid]::NewGuid().ToString('N')).exe")
+      try {
+        $message.Text = '正在下载并校验客户端，完成后将重新打开 FigBoost…'
+        $dialog.Refresh()
+        Invoke-UpdateWorker { param($release, $path) Save-VerifiedUpdateDownload $release $path } @($state.Info.client, $download)
+        Invoke-PatcherSelfUpdate $state.Info.client $download $txtRuntime.Text $txtApp.Text
+        $download = '' # The replacement helper owns this file after the current process exits.
+        $state.Busy = $false
+        $dialog.Close()
+        $form.Close()
+      } catch {
+        $message.Text = '客户端升级失败，可重新尝试。'
+        Show-ErrorMessage $_.Exception.Message
+      } finally {
+        if ($download) { Remove-Item -LiteralPath $download -Force -ErrorAction SilentlyContinue }
+        $state.Busy = $false
+        Refresh-UpdateActions
+      }
+    })
+    $payloadButton.Add_Click({
+      if ($state.Busy -or -not $state.Info) { return }
+      $state.Busy = $true
+      Refresh-UpdateActions
+      $download = Join-Path ([IO.Path]::GetTempPath()) ("FigBoost-payload-$([Guid]::NewGuid().ToString('N')).json")
+      try {
+        $message.Text = '正在下载并校验词库…'
+        $dialog.Refresh()
+        Invoke-UpdateWorker { param($release, $path) Save-VerifiedUpdateDownload $release $path } @($state.Info.payload, $download)
+        $package = [IO.File]::ReadAllText($download, [Text.Encoding]::UTF8) | ConvertFrom-Json
+        if ($package.version -ne $state.Info.payload.version -or $package.minPatcherVersion -ne $state.Info.payload.minPatcherVersion) { throw '词库更新信息不一致，请重新检查更新。' }
+        [void](ConvertFrom-PayloadUpdate $package)
+        $choice = [Windows.Forms.MessageBox]::Show($dialog, '词库已准备好。应用时会关闭并重新打开正在运行的 Figma，请先保存工作。现在应用？', '更新词库', 'YesNo', 'Question')
+        if ($choice -ne 'Yes') { $message.Text = '已取消应用，当前词库未改动。'; return }
+        $message.Text = '正在应用词库…'
+        $dialog.Refresh()
+        $result = Install-PayloadUpdate $package $txtApp.Text $txtRuntime.Text
+        Set-StatusLabels $result
+        $message.Text = "词库已更新至 v$($package.version)。"
+      } catch {
+        $message.Text = '词库更新失败，原词库已保留。'
+        Show-ErrorMessage $_.Exception.Message
+      } finally {
+        Remove-Item -LiteralPath $download -Force -ErrorAction SilentlyContinue
+        $state.Busy = $false
+        Refresh-UpdateActions
+      }
+    })
+    $retry.Add_Click($check)
+    $close.Add_Click({ $dialog.Close() })
+    $dialog.Add_FormClosing({ param($sender, $eventArgs) if ($state.Busy) { $eventArgs.Cancel = $true } })
+    $dialog.Add_Shown($check)
+    Refresh-UpdateActions
+    [void]$dialog.ShowDialog($form)
+    $dialog.Dispose()
   }
 
   $runAction = {
@@ -2258,10 +2534,10 @@ function Show-Gui {
     } {
       param($result)
       Show-InfoMessage ("检测完成。`r`n`r`nFigma 路径：$($result.AppDir)`r`nFigma 版本：$($result.FigmaVersion)`r`n词库版本：v$($result.PayloadVersion)`r`n补丁状态：$(if ($result.Patched) { "已安装" } else { "未安装" })")
-      Prompt-PatcherUpdateIfAvailable
     } "检测失败" "正在检测当前版本..."
   })
   $btnFeatureManager.Add_Click({ Show-FeatureInstallDialog })
+  $btnFigBoostUpdate.Add_Click({ Show-FigBoostUpdateDialog })
   $btnInstall.Add_Click({
     & $runAction {
       Set-ProgressState 30 "正在安装汉化补丁..."
@@ -2289,12 +2565,12 @@ function Show-Gui {
   $form.Controls.AddRange(@(
     $header, $currentGroup,
     $labelApp, $appInput.Panel, $btnApplyAppPath, $btnBrowse, $labelRuntime, $runtimeInput.Panel, $btnBrowseRuntime, $labelNotice,
-    $btnStatus, $btnInstall, $btnUninstall, $btnFeatureManager, $progressLabel, $progressBar, $statusGroup
+    $btnStatus, $btnInstall, $btnUninstall, $btnFeatureManager, $btnFigBoostUpdate, $progressLabel, $progressBar, $statusGroup
   ))
 
   try {
     $preferredAppDir = Get-PreferredAppDir $txtRuntime.Text
-    $initialAppDir = if ($preferredAppDir) { $preferredAppDir } else { Find-CurrentFigmaAppDir }
+    $initialAppDir = if ($AppDir -and (Test-FigmaAppDir $AppDir)) { $AppDir } elseif ($preferredAppDir) { $preferredAppDir } else { Find-CurrentFigmaAppDir }
     $txtApp.Text = $initialAppDir
     Set-StatusLabels (Get-CompleteStatus $initialAppDir $txtRuntime.Text)
   } catch {
@@ -2305,6 +2581,8 @@ function Show-Gui {
 
   [void]$form.ShowDialog()
 }
+
+Initialize-PayloadUpdate
 
 if ($SelfTest) {
   Invoke-SelfTest

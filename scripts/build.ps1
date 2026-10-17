@@ -1,6 +1,6 @@
 ﻿param(
   [string]$OutputPath = "$PSScriptRoot\..\FigBoost.exe",
-  [string]$Version = "0.5.25"
+  [string]$Version = "0.5.26"
 )
 
 $ErrorActionPreference = "Stop"
@@ -60,3 +60,23 @@ try {
 }
 
 Write-Host "Built $output v$Version"
+
+# Publish the exact build and payload together; the updater pins downloads to one Git commit.
+$updateDir = Join-Path $root "updates"
+New-Item -ItemType Directory -Force -Path $updateDir | Out-Null
+$payloadMap = [ordered]@{}
+foreach ($relativePath in $payloadFiles) {
+  $payloadMap[$relativePath] = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $root $relativePath)))
+}
+$payloadVersion = (Get-Content -LiteralPath (Join-Path $root 'payload\manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json).version
+$bundle = [ordered]@{ schema = 1; version = $payloadVersion; minPatcherVersion = '0.5.26'; files = $payloadMap }
+$bundlePath = Join-Path $updateDir 'payload.json'
+$utf8 = New-Object Text.UTF8Encoding($false)
+[IO.File]::WriteAllText($bundlePath, ($bundle | ConvertTo-Json -Depth 5 -Compress), $utf8)
+$latest = [ordered]@{
+  schema = 1
+  client = [ordered]@{ version = $Version; size = (Get-Item -LiteralPath $output).Length; sha256 = (Get-FileHash -LiteralPath $output -Algorithm SHA256).Hash.ToLowerInvariant() }
+  payload = [ordered]@{ version = $payloadVersion; minPatcherVersion = $bundle.minPatcherVersion; size = (Get-Item -LiteralPath $bundlePath).Length; sha256 = (Get-FileHash -LiteralPath $bundlePath -Algorithm SHA256).Hash.ToLowerInvariant() }
+}
+[IO.File]::WriteAllText((Join-Path $updateDir 'latest.json'), ($latest | ConvertTo-Json -Depth 4) + "`n", $utf8)
+Write-Host "Prepared updates/latest.json and updates/payload.json"

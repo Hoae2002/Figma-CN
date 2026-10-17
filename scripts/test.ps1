@@ -56,8 +56,11 @@ if (-not $figBoost.Contains('$form.Width = 900') -or -not $figBoost.Contains('$f
 if (-not $figBoost.Contains('$form.Width = 1000') -or -not $figBoost.Contains('$form.Height = 700') -or -not $figBoost.Contains('$currentGroup.Height = 104') -or -not $figBoost.Contains('$btnInstall.Width = 150') -or -not $figBoost.Contains('$btnFeatureManager.Width = 190') -or -not $figBoost.Contains('$form.StartPosition = "Manual"') -or -not $figBoost.Contains('[System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea')) {
   throw "Windows 11 layout must use roomier dimensions and button widths."
 }
-if (-not $figBoost.Contains("https://api.github.com/repos/Hoae2002/Figma-CN/releases/latest") -or -not $figBoost.Contains('$PatcherReleaseAssetName = "FigBoost.exe"') -or -not $figBoost.Contains("function Get-LatestPatcherRelease") -or -not $figBoost.Contains("browser_download_url") -or -not $figBoost.Contains("function Check-PatcherUpdate") -or -not $figBoost.Contains('Compare-VersionString $release.Version $CurrentVersion') -or -not $figBoost.Contains("function Invoke-PatcherSelfUpdate") -or -not $figBoost.Contains('$currentExeLiteral = $currentExe.Replace') -or -not $figBoost.Contains('Copy-Item -LiteralPath ''$tempExeLiteral'' -Destination ''$currentExeLiteral'' -Force') -or -not $figBoost.Contains("Prompt-PatcherUpdateIfAvailable")) {
-  throw "FigBoost self-update must use GitHub latest release, FigBoost.exe asset, version compare, and post-exit replacement."
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root "tests\updater.test.ps1")
+if ($LASTEXITCODE -ne 0) { throw "FigBoost update behavior tests failed." }
+foreach ($mode in @(@(), @('-Windows10'))) {
+  & powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File (Join-Path $root "tests\updater-gui.test.ps1") @mode
+  if ($LASTEXITCODE -ne 0) { throw "FigBoost update GUI tests failed." }
 }
 $expectedUpdateFeatureTitle = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("VGl0bGUgPSAi6Ieq5Yqo5pu05pawIEZpZ21hIOWuouaIt+erryI="))
 $oldMenuFeatureTitle = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("VGl0bGUgPSAi5ZyoIEZpZ21hIOmhtumDqOaYvuekuiBGaWdCb29zdCDoj5zljZUi"))

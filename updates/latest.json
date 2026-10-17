@@ -1,0 +1,14 @@
+{
+    "schema":  1,
+    "client":  {
+                   "version":  "0.5.26",
+                   "size":  1033216,
+                   "sha256":  "cc49d16bb638a5c6178527dfe221e4dbe7c993c98ed93204a413c5721e80d0d8"
+               },
+    "payload":  {
+                    "version":  "1.2.26",
+                    "minPatcherVersion":  "0.5.26",
+                    "size":  788482,
+                    "sha256":  "4af010e8e3630ab56fd7637303aedccf12e17149601abfcbfc17b2ad62a4efa2"
+                }
+}
