@@ -167,3 +167,50 @@ test("nested plugin commands follow each native submenu and survive cache reload
   f.click("运行 Nested"); f.click("运行命令 Tools / Open"); await tick(); await tick();
   assert.equal(runs, 1); assert.match(f.status(), /Tools \/ Open/);
 });
+
+test("switching to a direct plugin closes the previous command chooser", async t => {
+  const data = seed(); data.plugins[0].commands = [{ name: "Open", command: "open" }];
+  const f = fixture(t, data), w = f.w;
+  const native = w.document.createElement("button"); native.setAttribute("aria-label", "Run Plugin 2"); w.document.body.append(native);
+  f.click("FigBoost 插件侧边栏"); f.click("运行 Plugin 1");
+  assert.equal(f.root().querySelector(".editor").hidden, false);
+  f.click("运行 Plugin 2"); await tick();
+  assert.equal(f.root().querySelector(".editor").hidden, true);
+});
+
+test("launch follows controlled submenus, ignores stale names and matches localized labels with shortcuts", async t => {
+  const data = seed(); data.plugins[0].commands = [{ name: "Open", command: "open" }];
+  const f = fixture(t, data), w = f.w; let runs = 0, wrong = 0;
+  function pane(id) { const p = w.document.createElement("div"); p.id = id; p.role = "menu"; w.document.body.append(p); return p; }
+  function item(p, name, action, next) {
+    const e = w.document.createElement("div"); e.role = "menuitem";
+    const text = w.document.createElement("span"); text.textContent = name; e.append(text);
+    if (name === "打开") { text.firstChild.__figmaZhOriginalText = "Open"; text.firstChild.__figmaZhTranslatedText = "打开"; }
+    if (name === "Plugin 1") { const shortcut = w.document.createElement("span"); shortcut.textContent = "Ctrl+Alt+1"; e.append(shortcut); }
+    if (next) { e.setAttribute("aria-controls", next); e.setAttribute("aria-expanded", "false"); }
+    e.onclick = () => { if (next) e.setAttribute("aria-expanded", "true"); action(); }; p.append(e); return e;
+  }
+  item(pane("stale"), "Open", () => wrong++);
+  w.document.querySelector("button").onclick = () => item(pane("main"), "Plugins", () =>
+    item(pane("plugins"), "Saved plugins", () => item(pane("saved"), "Plugin 1", () =>
+      item(pane("commands"), "打开", () => runs++), "commands"), "saved"), "plugins");
+  f.click("FigBoost 插件侧边栏"); f.click("运行 Plugin 1"); f.click("运行命令 Open");
+  await tick(); await tick();
+  assert.equal(runs, 1); assert.equal(wrong, 0); assert.deepEqual(f.saved().recent, ["1"]);
+});
+
+test("failed launch closes native menus outside the shadow root and allows a clean retry", async t => {
+  const data = seed(); data.plugins[1].commands = [{ name: "Open", command: "open" }];
+  const f = fixture(t, data), w = f.w, main = w.document.querySelector("button"); let escapes = 0, runs = 0;
+  main.onclick = () => main.setAttribute("aria-expanded", main.getAttribute("aria-expanded") === "true" ? "false" : "true");
+  w.document.body.addEventListener("keydown", e => { if (e.key === "Escape") { escapes++; main.setAttribute("aria-expanded", "false"); } });
+  f.click("FigBoost 插件侧边栏"); f.root().querySelector("input").focus(); f.click("运行 Plugin 1");
+  await new Promise(r => setTimeout(r, 1900));
+  assert.equal(escapes, 1); assert.equal(main.getAttribute("aria-expanded"), "false");
+  assert.match(f.status(), /插件入口/); assert.deepEqual(f.saved().recent, []);
+  f.click("运行 Plugin 2");
+  assert.equal(f.root().querySelector('[role="status"]').dataset.error, "false");
+  assert.equal(f.root().querySelector(".editor").hidden, false);
+  const native = w.document.createElement("button"); native.setAttribute("aria-label", "Run Plugin 1"); native.onclick = () => runs++; w.document.body.append(native);
+  f.click("运行 Plugin 1"); await tick(); assert.equal(runs, 1); assert.deepEqual(f.saved().recent, ["1"]);
+});

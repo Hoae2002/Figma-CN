@@ -244,37 +244,61 @@
   }
   function chooseCommand(plugin) {
     if (running) return;
+    editor.hidden = true; editor.replaceChildren();
     if (!plugin.commands.length) { runPlugin(plugin); return; }
-    editor.replaceChildren(); editor.hidden = false;
+    editor.hidden = false;
+    announce(`请选择 ${plugin.name} 的运行命令`);
     for (const command of plugin.commands) {
       const name = command.path.join(" / ");
       editor.appendChild(button(name, `运行命令 ${name}`, () => { editor.hidden = true; runPlugin(plugin, command.path); }));
     }
     editor.appendChild(button("取消", "取消运行", () => { editor.hidden = true; }));
   }
-  function waitFor(find, token, timeout = 1800) {
+  function waitFor(find, token, stage, timeout = 1800) {
     const started = performance.now();
     return new Promise((resolve, reject) => {
       function poll() {
         if (disposed || token !== generation || !isEditor()) return reject(Error("页面已切换，插件启动已取消"));
         const result = find(); if (result) return resolve(result);
-        if (performance.now() - started >= timeout) return reject(Error("未找到插件菜单，请在 Figma 中确认该插件已保存"));
+        if (performance.now() - started >= timeout) return reject(Error(`未找到插件菜单（${stage}），请确认插件仍已保存后重试`));
         setTimeout(poll, 40);
       }
       poll();
     });
   }
   function pointer(el, click = true) {
-    const options = { bubbles: true, cancelable: true, view: window, pointerType: "mouse", pointerId: 1, isPrimary: true };
-    for (const type of ["pointerover", "pointerenter", "mouseover", "mousemove", ...(click ? ["pointerdown", "mousedown", "pointerup", "mouseup", "click"] : [])]) {
-      el.dispatchEvent(new (type.startsWith("pointer") && window.PointerEvent ? PointerEvent : MouseEvent)(type, options));
+    el.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+    const rect = el.getBoundingClientRect();
+    const options = { bubbles: true, cancelable: true, view: window, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2, pointerType: "mouse", pointerId: 1, isPrimary: true };
+    for (const type of ["pointerover", "pointerenter", "mouseover", "pointermove", "mousemove", ...(click ? ["pointerdown", "mousedown", "pointerup", "mouseup", "click"] : [])]) {
+      el.dispatchEvent(new (type.startsWith("pointer") && window.PointerEvent ? PointerEvent : MouseEvent)(type, { ...options, buttons: type.endsWith("down") ? 1 : 0 }));
     }
   }
-  function menuItem(names) {
-    return Array.from(document.querySelectorAll(MENU_ITEMS)).find(el => visible(el) && names.includes(label(el)));
+  function menuItem(names, scope = document) {
+    // The localizer retains original strings on text nodes. Match the label
+    // separately from shortcut badges, including when the menu is translated.
+    function matches(el) {
+      const candidates = [label(el)];
+      for (const part of [el, ...el.querySelectorAll("span")]) {
+        const walker = document.createTreeWalker(part, NodeFilter.SHOW_TEXT); let text = "", node;
+        while ((node = walker.nextNode())) text += node.__figmaZhTranslatedText === node.nodeValue ? node.__figmaZhOriginalText || node.nodeValue : node.nodeValue;
+        candidates.push(text.trim());
+      }
+      return candidates.some(text => names.includes(text));
+    }
+    return Array.from(scope.querySelectorAll(MENU_ITEMS)).find(el => visible(el) && el.getAttribute("aria-disabled") !== "true" && matches(el));
+  }
+  async function submenu(item, token, stage) {
+    const controlled = item.getAttribute("aria-controls");
+    if (item.getAttribute("aria-expanded") !== "true") pointer(item);
+    // Older Figma menus do not expose aria-controls; retain their fallback.
+    return controlled ? waitFor(() => {
+      const menu = document.getElementById(controlled); return visible(menu) && menu;
+    }, token, stage) : document;
   }
   async function runPlugin(plugin, command) {
     if (running) return false;
+    editor.hidden = true;
     running = true; render(); announce(`正在打开 ${plugin.name}…`);
     const token = generation;
     let openedMenu = false;
@@ -286,19 +310,34 @@
         if (!visible(main)) throw Error("未找到 Figma 主菜单，请退出演示或全屏隐藏界面模式后重试");
         if (main.getAttribute("aria-expanded") !== "true") pointer(main);
         openedMenu = true;
-        const plugins = await waitFor(() => menuItem(["Plugins", "插件"]), token); pointer(plugins);
+        const plugins = await waitFor(() => menuItem(["Plugins", "插件"]), token, "插件入口");
+        let scope = await submenu(plugins, token, "插件列表");
         // Native recent plugins can be run without being in Saved plugins.
-        const entry = await waitFor(() => menuItem([plugin.name]) || menuItem(["Saved plugins", "Installed plugins", "已保存插件", "已保存的插件", "全部插件"]), token);
-        pointer(entry);
-        if (label(entry) !== plugin.name) { const target = await waitFor(() => menuItem([plugin.name]), token); pointer(target); }
-        for (const name of command || []) { const item = await waitFor(() => menuItem([name]), token); pointer(item); }
+        const entry = await waitFor(() => menuItem([plugin.name], scope) || menuItem(["Saved plugins", "Installed plugins", "已保存插件", "已保存的插件", "全部插件"], scope), token, "已保存插件");
+        let target = menuItem([plugin.name], scope);
+        if (!target) {
+          scope = await submenu(entry, token, "已保存插件列表");
+          target = await waitFor(() => menuItem([plugin.name], scope), token, plugin.name);
+        }
+        if (command?.length) {
+          scope = await submenu(target, token, plugin.name);
+          for (let i = 0; i < command.length; i++) {
+            const item = await waitFor(() => menuItem([command[i]], scope), token, command.slice(0, i + 1).join(" / "));
+            if (i < command.length - 1) scope = await submenu(item, token, command[i]); else pointer(item);
+          }
+        } else pointer(target);
       }
       if (token !== generation) return false;
       state.recent = ids([plugin.id, ...state.recent]).slice(0, 50);
       if (persist()) announce(`已发送 ${plugin.name}${command ? " / " + command.join(" / ") : ""} 的原生运行操作`); return true;
     } catch (error) {
       if (token === generation && !disposed) announce(error.message + "。可通过 Figma 原生插件菜单重试。", true);
-      if (openedMenu) document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
+      if (openedMenu && token === generation && !disposed) {
+        // Focus can still be inside our shadow root, which consumes Escape.
+        document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
+        const main = document.querySelector('[aria-label="Main menu"],[aria-label="主菜单"]');
+        if (main?.getAttribute("aria-expanded") === "true") pointer(main);
+      }
       return false;
     } finally { if (token === generation) { running = false; render(); } }
   }
