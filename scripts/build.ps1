@@ -1,6 +1,6 @@
 ﻿param(
   [string]$OutputPath = "$PSScriptRoot\..\FigBoost.exe",
-  [string]$Version = "0.5.54"
+  [string]$Version = "0.5.55"
 )
 
 $ErrorActionPreference = "Stop"
@@ -18,6 +18,7 @@ $payloadFiles = @(
   "payload\src\dictionary\zh-CN.js",
   "payload\src\content\localizer-core.js",
   "payload\src\content\content.js",
+  "payload\src\content\plugin-sidebar.js",
   "payload\src\main\menu-localizer.js",
   "payload\src\shared\translation-policy.js",
   "payload\src\content\translation-runtime.js",
@@ -71,7 +72,7 @@ foreach ($relativePath in $payloadFiles) {
   $payloadMap[$relativePath] = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $root $relativePath)))
 }
 $payloadVersion = (Get-Content -LiteralPath (Join-Path $root 'payload\manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json).version
-$bundle = [ordered]@{ schema = 1; version = $payloadVersion; minPatcherVersion = '0.5.28'; files = $payloadMap }
+$bundle = [ordered]@{ schema = 1; version = $payloadVersion; minPatcherVersion = '0.5.55'; files = $payloadMap }
 $bundlePath = Join-Path $updateDir 'payload.json'
 $utf8 = New-Object Text.UTF8Encoding($false)
 [IO.File]::WriteAllText($bundlePath, ($bundle | ConvertTo-Json -Depth 5 -Compress), $utf8)

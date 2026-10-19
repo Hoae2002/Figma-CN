@@ -7,6 +7,7 @@ $jsFiles = @(
   "payload\src\dictionary\zh-CN.js",
   "payload\src\content\localizer-core.js",
   "payload\src\content\content.js",
+  "payload\src\content\plugin-sidebar.js",
   "payload\src\main\menu-localizer.js",
   "payload\src\shared\translation-policy.js",
   "payload\src\content\translation-runtime.js",

@@ -27,7 +27,7 @@ if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClo
 
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V7"
 $UpdaterDisableMarker = "FIGMA_ZH_DISABLE_BUILTIN_UPDATER"
-$PatcherVersion = "0.5.54"
+$PatcherVersion = "0.5.55"
 $PayloadFile = "i.js"
 $MainPayloadFile = "m.js"
 $FeatureConfigFile = "features.json"
@@ -92,7 +92,8 @@ function ConvertFrom-PayloadUpdate {
     "payload\src\content\content.js", "payload\src\main\menu-localizer.js", "payload\src\shared\translation-policy.js",
     "payload\src\content\translation-runtime.js", "payload\src\main\translation-service.js", "payload\src\main\translation-host.js",
     "payload\src\main\translation-settings-preload.js", "payload\src\main\translation-settings.html",
-    "payload\src\main\translation-settings.css", "payload\src\main\translation-settings.js"
+    "payload\src\main\translation-settings.css", "payload\src\main\translation-settings.js",
+    "payload\src\content\plugin-sidebar.js"
   )
   if (@($Package.files.PSObject.Properties).Count -ne $paths.Count) { throw "词库更新文件不完整。" }
   $files = @{}
@@ -669,6 +670,7 @@ function Build-Payload {
     $core
     (Read-PayloadText "payload\src\content\translation-runtime.js")
     $content
+    (Read-PayloadText "payload\src\content\plugin-sidebar.js")
     '  window.__FIGMA_ZH_OFFICIAL_PRELOAD_INJECTED__ = version;'
     '  } catch (error) {'
     '    console.error("[FigmaZh] official preload injection failed", error);'

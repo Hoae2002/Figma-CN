@@ -38,6 +38,7 @@ try {
   Assert-Bundle ([IO.File]::ReadAllText($payloadPath) -ceq $oldPayload) 'Rejected release changed installed files.'
   Assert-Bundle ((Run-Bundle $version $runtime) -eq 0) 'Compiled bundle application failed.'
   Assert-Bundle ((Get-InstalledPayloadVersion $runtime) -eq $version) 'Compiled bundle did not apply the embedded dictionary.'
+  Assert-Bundle ([IO.File]::ReadAllText($payloadPath) -ceq $originalPayload) 'Shipped renderer, including plugin sidebar, differs from source.'
   Assert-Bundle ([IO.File]::ReadAllText((Get-FeatureConfigPath $runtime)) -ceq $originalFeatures) 'Compiled update changed existing preferences.'
   Assert-Bundle ([IO.File]::ReadAllText((Join-Path $runtime 'zh-CN.js')) -ceq [IO.File]::ReadAllText((Join-Path $repo 'payload\src\dictionary\zh-CN.js'))) 'Shipped dictionary differs from source.'
   $emptyRuntime = Join-Path $temp 'uninstalled'
