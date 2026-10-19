@@ -4,6 +4,10 @@
   "use strict";
   if (!/(^|\.)figma\.com$/.test(location.hostname) && !window.__FIGMA_ZH_TEST__) return;
   window.__figboostPluginSidebar?.destroy();
+  delete window.__figboostPluginSidebar;
+  // Temporarily paused; retain implementation and local data for later optimization.
+  const SIDEBAR_ENABLED = false;
+  if (!SIDEBAR_ENABLED) return;
   const KEY_PREFIX = "figboost:plugin-sidebar:v1:";
   const MENU_ITEMS = '[role="menuitem"],[role="menuitemcheckbox"]';
   let host, root, panel, toggle, list, groups, status, search, editor, clearSearch;

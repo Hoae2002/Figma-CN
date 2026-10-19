@@ -1,7 +1,9 @@
 "use strict";
 const test = require("node:test"), assert = require("node:assert/strict");
 const fs = require("node:fs"), path = require("node:path"), { JSDOM } = require("jsdom");
-const source = fs.readFileSync(path.join(__dirname, "../payload/src/content/plugin-sidebar.js"), "utf8");
+const releasedSource = fs.readFileSync(path.join(__dirname, "../payload/src/content/plugin-sidebar.js"), "utf8");
+// Keep exercising the retained implementation while the released feature is paused.
+const source = releasedSource.replace("const SIDEBAR_ENABLED = false;", "const SIDEBAR_ENABLED = true;");
 const key = "figboost:plugin-sidebar:v1:42";
 const plugin = (id, name = "Plugin " + id) => ({ id, name, description: "描述", icon: "", commands: [] });
 const seed = () => ({ plugins: [plugin("1"), plugin("2")], saved: ["1", "2"], recent: [], favorites: [], groups: [] });
@@ -13,12 +15,37 @@ function fixture(t, data = seed(), fetcher = async () => response({ meta: [], pa
   w.HTMLElement.prototype.getClientRects = function () { return this.hidden ? [] : [{ width: 200, height: 28 }]; };
   if (data !== null) w.localStorage.setItem(key, JSON.stringify(data));
   w.fetch = fetcher; w.eval(source);
-  t.after(() => { w.__figboostPluginSidebar.destroy(); w.close(); });
+  t.after(() => { w.__figboostPluginSidebar?.destroy(); w.close(); });
   const root = () => w.document.querySelector("#figboost-plugin-sidebar")?.shadowRoot;
   const click = title => { const b = [...root().querySelectorAll("button")].find(b => b.getAttribute("aria-label") === title); assert.ok(b, title); b.click(); };
   const saved = () => JSON.parse(w.localStorage.getItem(key));
   return { w, root, click, saved, status: () => root().querySelector('[role="status"]').textContent };
 }
+test("released sidebar stays disabled without requests, timers or storage changes", t => {
+  const dom = new JSDOM('<!doctype html><body></body>', { url: "https://www.figma.com/design/test?fuid=42", runScripts: "outside-only" });
+  const w = dom.window;
+  t.after(() => w.close());
+  const data = JSON.stringify(seed()); w.localStorage.setItem(key, data);
+  w.fetch = () => assert.fail("paused sidebar must not request plugins");
+  w.setInterval = () => assert.fail("paused sidebar must not poll routes");
+  w.eval(releasedSource); w.eval(releasedSource);
+  w.document.dispatchEvent(new w.Event("DOMContentLoaded"));
+  assert.equal(w.document.querySelector("#figboost-plugin-sidebar"), null);
+  assert.equal(w.__figboostPluginSidebar, undefined);
+  assert.equal(w.localStorage.getItem(key), data);
+});
+
+test("released sidebar removes a previous instance and preserves groups and favorites", t => {
+  const data = seed(); data.favorites = ["1"]; data.groups = [{ id: "group-test", name: "保留分组", plugins: ["1"] }];
+  const f = fixture(t, data);
+  const saved = f.w.localStorage.getItem(key);
+  assert.ok(f.root());
+  f.w.eval(releasedSource);
+  assert.equal(f.root(), undefined);
+  assert.equal(f.w.__figboostPluginSidebar, undefined);
+  assert.equal(f.w.localStorage.getItem(key), saved);
+});
+
 test("search, star, group deduplication and deletion persist across reinjection", t => {
   const f = fixture(t); f.click("FigBoost 插件侧边栏");
   const input = f.root().querySelector('input[type="search"]'); input.value = "plugin 1"; input.dispatchEvent(new f.w.Event("input"));
