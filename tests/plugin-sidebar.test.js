@@ -72,6 +72,44 @@ test("native relative icon URLs render correctly for recent plugins", async t =>
   const f = fixture(t, data);
   assert.equal(f.root().querySelector('.icon img').src, "https://www.figma.com/community/icon?resource_id=1&resource_type=plugin");
 });
+
+test("direct icons take priority, fail over safely and retain alternatives in the cache", async t => {
+  const raw = { id: "1", current_plugin_version_id: "v1", versions: { v1: { name: "Icon test", direct_icon_url: "https://cdn.figma.com/icon.png", redirect_icon_url: "/community/icon?resource_id=1" } } };
+  const f = fixture(t, seed(), async () => response({ meta: [{ icon_url: "https://www.figma.com/community/resource/one/icon", content: { plugin: raw } }], pagination: {} }));
+  await f.w.__figboostPluginSidebar.refresh();
+  let img = f.root().querySelector(".icon img");
+  assert.equal(img.src, "https://cdn.figma.com/icon.png");
+  img.dispatchEvent(new f.w.Event("error"));
+  assert.equal(img.src, "https://www.figma.com/community/icon?resource_id=1");
+  f.w.eval(source); img = f.root().querySelector(".icon img");
+  assert.equal(img.src, "https://cdn.figma.com/icon.png"); img.dispatchEvent(new f.w.Event("error")); img.dispatchEvent(new f.w.Event("error"));
+  assert.equal(img.src, "https://www.figma.com/community/resource/one/icon");
+});
+
+test("broken cached icons refresh metadata once and update cached recent icons", async t => {
+  const data = seed(); data.plugins[0].icon = "https://www.figma.com/expired/icon";
+  let calls = 0;
+  const f = fixture(t, data, async () => { calls++; return response({ meta: [{ content: { plugin: { id: "1", name: "Plugin 1", direct_icon_url: "https://cdn.figma.com/new.png" } } }], pagination: {} }); });
+  f.root().querySelector(".icon img").dispatchEvent(new f.w.Event("error")); await tick();
+  assert.equal(calls, 1); assert.equal(f.root().querySelector(".icon img").src, "https://cdn.figma.com/new.png");
+  f.root().querySelector(".icon img").dispatchEvent(new f.w.Event("error")); await tick(); assert.equal(calls, 1);
+  f.w.localStorage.setItem("recent-plugins-figma-design", JSON.stringify([{ id: "2" }]));
+  f.w.fetch = async url => response(new URL(url).pathname.endsWith("batch") ? { meta: [{ id: "2", name: "Plugin 2", direct_icon_url: "https://cdn.figma.com/recent.png" }] } : { meta: [], pagination: {} });
+  await f.w.__figboostPluginSidebar.refresh();
+  assert.equal(f.saved().plugins.find(p => p.id === "2").icon, "https://cdn.figma.com/recent.png");
+});
+
+test("sidebar wheel scrolls its own pane and never reaches canvas or browser zoom", t => {
+  const f = fixture(t); f.click("FigBoost 插件侧边栏");
+  let canvasWheels = 0; f.w.document.addEventListener("wheel", () => canvasWheels++);
+  const list = f.root().querySelector(".action-list"), groups = f.root().querySelector(".group-list");
+  function wheel(target, options) { const event = new f.w.WheelEvent("wheel", { deltaY: 120, bubbles: true, cancelable: true, composed: true, ...options }); target.dispatchEvent(event); return event; }
+  assert.equal(wheel(list.querySelector(".name")).defaultPrevented, true); assert.equal(list.scrollTop, 120);
+  wheel(list, { deltaY: 2, deltaMode: 1, ctrlKey: true }); assert.equal(list.scrollTop, 152);
+  wheel(groups, { deltaY: 40 }); assert.equal(groups.scrollTop, 40); assert.equal(list.scrollTop, 152);
+  wheel(f.root().querySelector(".header")); assert.equal(list.scrollTop, 272); assert.equal(canvasWheels, 0);
+  const outside = wheel(f.w.document.body); assert.equal(outside.defaultPrevented, false); assert.equal(canvasWheels, 1);
+});
 test("refresh is single flight and stale requests cannot overwrite an account switch", async t => {
   let resolve, calls = 0;
   const f = fixture(t, seed(), () => { calls++; return new Promise(r => { resolve = r; }); });

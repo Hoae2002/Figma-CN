@@ -8,7 +8,7 @@
   const MENU_ITEMS = '[role="menuitem"],[role="menuitemcheckbox"]';
   let host, root, panel, toggle, list, groups, status, search, editor, clearSearch;
   let state, storageKey, active = "saved", query = "", opened = false;
-  let loading = false, running = false, disposed = false, generation = 0, routeTimer;
+  let loading = false, running = false, disposed = false, generation = 0, routeTimer, iconsRetried = false;
   const controllers = new Set();
   const blank = () => ({ plugins: [], saved: [], recent: [], favorites: [], groups: [] });
   const ids = value => Array.isArray(value) ? [...new Set(value.filter(x => typeof x === "string" && /^\d+$/.test(x)))] : [];
@@ -38,8 +38,10 @@
       }
     }
     flatten(menus);
+    const icons = [...new Set([version.direct_icon_url, version.redirect_icon_url, resource?.icon_url, raw.icon,
+      ...(Array.isArray(raw.iconAlternates) ? raw.iconAlternates : [])].map(safeIcon).filter(Boolean))];
     return { id, name: name.trim(), description: String(resource?.tagline || version.tagline || raw.description || ""),
-      icon: safeIcon(resource?.icon_url || version.redirect_icon_url || raw.icon), commands };
+      icon: icons[0] || "", iconAlternates: icons.slice(1), commands };
   }
   function safeIcon(value) {
     if (typeof value !== "string" || !value.trim()) return "";
@@ -111,7 +113,8 @@
       }
       const savedFromPages = [...collected.keys()];
       const recent = nativeRecent();
-      const unknown = recent.filter(id => !collected.has(id) && !state.plugins.some(p => p.id === id));
+      // Refresh cached recent metadata too: signed icon URLs can expire.
+      const unknown = recent.filter(id => !collected.has(id));
       let recentError = false;
       for (let offset = 0; offset < unknown.length; offset += 50) {
         try {
@@ -158,7 +161,7 @@
       b.classList.toggle("active", active === g.id);
       b.setAttribute("aria-pressed", String(active === g.id));
       b.appendChild(element("span", "len count", String(members(g.id).length))); row.appendChild(b);
-      if (g.id.startsWith("group-")) row.appendChild(button("⋯", `管理分组 ${g.name}`, () => editGroup(g), "manage"));
+      if (g.id.startsWith("group-")) { row.classList.add("custom-group"); row.appendChild(button("⋯", `管理分组 ${g.name}`, () => editGroup(g), "manage")); }
       groups.appendChild(row);
     }
     groups.appendChild(button("＋ 新建分组", "新建分组", () => editGroup(), "new-group group"));
@@ -176,7 +179,19 @@
       const row = element("div", "ActionItem plugin"); row.dataset.pluginId = p.id;
       const run = button("", `运行 ${p.name}`, () => chooseCommand(p), "run"); run.disabled = running;
       const icon = element("span", "main-icon icon", p.name.slice(0, 1));
-      if (p.icon) { const img = document.createElement("img"); img.src = p.icon; img.alt = ""; img.referrerPolicy = "no-referrer"; img.addEventListener("error", () => img.remove(), { once: true }); icon.appendChild(img); }
+      if (p.icon) {
+        const img = document.createElement("img"), urls = [p.icon, ...p.iconAlternates]; let index = 0;
+        img.alt = ""; img.referrerPolicy = "no-referrer";
+        img.addEventListener("error", () => {
+          if (++index < urls.length) img.src = urls[index];
+          else {
+            img.remove();
+            // Migrate an old cached redirect URL once, without a reload loop.
+            if (icon.isConnected && !iconsRetried) { iconsRetried = true; refresh(); }
+          }
+        });
+        img.src = urls[0]; icon.appendChild(img);
+      }
       const info = element("span", "action-info info"); info.append(element("span", "name", p.name), element("span", "note-name description", p.description));
       run.append(info); row.appendChild(run);
       const controls = element("div", "buttons");
@@ -308,6 +323,7 @@
     host.style.top = Math.max(13, bounds?.top || 13) + "px";
   }
   function mount() {
+    iconsRetried = false;
     host = document.createElement("div"); host.id = "figboost-plugin-sidebar"; host.setAttribute("data-figma-zh-skip", "1");
     host.style.cssText = "position:fixed;z-index:90;pointer-events:none";
     root = host.attachShadow({ mode: "open" });
@@ -326,7 +342,7 @@
       .FigmaExApp .ExBar .header .logo-but{background-size:34px 34px}.FigmaExApp .ExBar.expanded .header .logo-but.color{opacity:1}.FigmaExApp .ExBar .find-input{min-width:0}.FigmaExApp .ExBar .find-input input{outline:none}.FigmaExApp .ExBar .find-input input:focus-visible{box-shadow:inset 0 -1px var(--focus)}.FigmaExApp .ExBar .find-input input::placeholder{color:#a9a9bd}.FigmaExApp .ExBar .header .clear-but{margin-left:0;margin-right:0}.FigmaExApp .ExBar .header .setting-but{margin-left:auto}
       .FigmaExApp .ExBar .action-list{min-height:0;flex:1}.FigmaExApp .ActionItem{gap:0}.FigmaExApp .ActionItem .run{display:flex;align-items:center;flex:1;min-width:0;height:100%;overflow:hidden}.FigmaExApp .ActionItem .action-info{min-width:0;text-align:left}.FigmaExApp .ActionItem .action-info .name,.FigmaExApp .ActionItem .action-info .note-name{display:block;width:100%;white-space:nowrap;min-width:0;text-overflow:ellipsis;overflow:hidden}.FigmaExApp .ActionItem .action-info .name{line-height:20px}.FigmaExApp .ActionItem .note-name{line-height:14px}
       .FigmaExApp .ActionItem .main-icon{position:relative;display:grid;place-items:center;overflow:hidden;font-size:12px;color:#7e91bc;cursor:pointer}.FigmaExApp .ActionItem .main-icon img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}.FigmaExApp .ActionItem .buttons{flex:none}.FigmaExApp .ActionItem .buttons button{background-color:transparent;right:0}.FigmaExApp .ActionItem .buttons .add,.FigmaExApp .ActionItem .buttons .remove{background-image:none;font-size:16px;text-align:center;color:#2c3c67}.FigmaExApp .ActionItem:focus-within .buttons button{display:flex;pointer-events:auto;opacity:.6}.FigmaExApp .ActionItem .buttons .isStar{pointer-events:auto}
-      .FigmaExApp .GroupPad .group-list{max-height:100%}.group-row{position:relative}.FigmaExApp .GroupPad .group-list .group{width:100%;text-align:left}.FigmaExApp .GroupPad .group-list .new-group{font-weight:400}.FigmaExApp .GroupPad .manage{position:absolute;right:0;top:0;width:20px;display:none;padding:0;height:30px;justify-content:center;background:var(--surface)}.FigmaExApp .GroupPad .group-row:hover .manage,.FigmaExApp .GroupPad .group-row:focus-within .manage{display:flex}.FigmaExApp .GroupPad .group-row:hover .len{visibility:hidden}
+      .FigmaExApp .GroupPad .group-list{max-height:100%}.group-row{position:relative}.FigmaExApp .GroupPad .group-list .group{width:100%;text-align:left}.FigmaExApp .GroupPad .group-list .new-group{font-weight:400}.FigmaExApp .GroupPad .manage{position:absolute;right:0;top:0;width:20px;display:none;padding:0;height:30px;justify-content:center;background:var(--surface)}.FigmaExApp .GroupPad .group-row:hover .manage,.FigmaExApp .GroupPad .group-row:focus-within .manage{display:flex}.FigmaExApp .GroupPad .group-list .custom-group .group{padding-right:28px}.FigmaExApp .GroupPad .group-list .len{flex-shrink:0}
       .editor{position:absolute;z-index:50;bottom:10px;left:10px;right:10px;max-height:180px;overflow:auto;display:flex;flex-wrap:wrap;gap:6px;padding:10px;border-radius:4px;background:var(--surface);color:var(--text);box-shadow:0 2px 12px #0003;font-size:12px}.editor input{min-width:0;flex:1;border-bottom:1px solid #7e91bc;padding:4px}.editor button{padding:4px 6px}.editor button:hover{background:#8882}.status{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}.status[data-error=true]{bottom:10px;left:10px;right:10px;width:auto;height:auto;clip-path:none;padding:10px;font-size:12px;background:var(--surface);color:#cf4949;border-radius:4px;z-index:60;box-shadow:0 2px 12px #0003}.empty{font-size:12px;color:#a9a9bd;padding:12px;line-height:20px}
     `;
     const app = element("div", "FigmaExApp");
@@ -363,6 +379,15 @@
     panel.addEventListener("mouseleave", () => { if (!query && editor.hidden) setOpen(false, false); });
     root.addEventListener("keydown", event => { event.stopPropagation(); if (event.key === "Escape") { event.preventDefault(); if (!editor.hidden) editor.hidden = true; else setOpen(false); } });
     for (const type of ["pointerdown", "mousedown", "click", "dblclick", "contextmenu", "keyup", "keypress"]) root.addEventListener(type, e => e.stopPropagation());
+    root.addEventListener("wheel", event => {
+      // Consume the wheel before Figma's document handlers zoom the canvas.
+      // Manual scrolling also handles Ctrl/trackpad zoom gestures and boundaries.
+      event.preventDefault(); event.stopPropagation();
+      const area = event.composedPath().find(el => el.matches?.(".editor,.group-list,.action-list")) || list;
+      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? area.clientHeight : 1;
+      area.scrollTop += event.deltaY * unit;
+      area.scrollLeft += event.deltaX * unit;
+    }, { passive: false });
     document.body.appendChild(host); render(); position();
   }
   function syncRoute() {

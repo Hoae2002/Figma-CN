@@ -1,14 +1,14 @@
 {
     "schema":  1,
     "client":  {
-                   "version":  "0.5.56",
-                   "size":  1156608,
-                   "sha256":  "a4b29c026fca9469a5239b90a5219f2509e08afc2823ccbcec80537a9a3fd6d5"
+                   "version":  "0.5.57",
+                   "size":  1158656,
+                   "sha256":  "ddce759043fae4fded4ddc6b654b7325e2945d7ff9308649a083b62d09b3ec50"
                },
     "payload":  {
-                    "version":  "1.2.40",
+                    "version":  "1.2.41",
                     "minPatcherVersion":  "0.5.55",
-                    "size":  895740,
-                    "sha256":  "4e2b2804ab2ecc2346c46caa6b9eb0490eadfdca151dee3a9ff907611b1d26a6"
+                    "size":  897500,
+                    "sha256":  "f8703ce90f507be798d018ddd922ae53a066402893dfc938eef34c34bb77c9cf"
                 }
 }

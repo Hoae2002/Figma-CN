@@ -6,7 +6,8 @@ const payload = execFileSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy"
 const plugins = [
   { id: "1", name: "Vector to 3D", description: "矢量生成 3D 渲染图", commands: [] },
   { id: "2", name: "Simple3D", description: "随机生成不规则斑点形状", commands: [] },
-  { id: "3", name: "Moonvy·月维", description: "专业的设计图交付工具", commands: [{ name: "打开面板", command: "open" }] }
+  { id: "3", name: "Moonvy·月维", description: "专业的设计图交付工具", commands: [{ name: "打开面板", command: "open" }] },
+  ...Array.from({ length: 27 }, (_, i) => ({ id: String(i + 4), name: "滚动测试插件 " + (i + 4), description: "用于验证滚轮不会缩放后面的画布", commands: [] }))
 ];
 const page = `<!doctype html><html><meta charset="utf-8"><title>FigBoost 插件侧边栏回归</title><style>
 body{margin:0;background:#eeecf5;font:14px "Microsoft YaHei",sans-serif}header{height:48px;background:white;border-bottom:1px solid #ddd;padding:12px;box-sizing:border-box}aside{position:fixed;right:0;top:48px;width:240px;bottom:0;background:white;border-left:1px solid #ddd;padding:18px;box-sizing:border-box}main{padding:60px 28px;color:#666}button{padding:6px 12px}#menu{position:fixed;left:12px;top:50px;z-index:200;background:white;padding:12px;box-shadow:0 4px 20px #0003}#menu:empty{display:none}[role=menuitem]{padding:8px;cursor:pointer}.board{background:white;margin:40px 260px 20px 80px;width:400px;height:260px;box-shadow:0 4px 20px #0001;display:grid;place-items:center}</style>
@@ -16,6 +17,8 @@ const plugins=${JSON.stringify(plugins)};
 const storageKey='figboost:plugin-sidebar:v1:local';
 if(!localStorage.getItem(storageKey))localStorage.setItem(storageKey,JSON.stringify({plugins,saved:['1','2','3'],recent:['1'],favorites:[],groups:[]}));
 window.fixtureFailure=false;window.fixtureRuns=[];
+document.body.dataset.canvasWheelCount='0';
+document.addEventListener('wheel',event=>{document.body.dataset.canvasWheelCount=String(Number(document.body.dataset.canvasWheelCount)+1);event.preventDefault()},{passive:false});
 const originalFetch=window.fetch.bind(window);
 window.fetch=async function(url,options){if(!new URL(url,location.origin).pathname.startsWith('/api/'))return originalFetch(url,options);if(window.fixtureFailure)throw Error('模拟网络断开');return {ok:true,json:async()=>({meta:plugins.map(p=>({content:{plugin:p}})),pagination:{}})}};
 const menu=document.getElementById('menu');
