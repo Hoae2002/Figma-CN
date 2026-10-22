@@ -1,6 +1,6 @@
 ﻿param(
   [string]$OutputPath = "$PSScriptRoot\..\FigBoost.exe",
-  [string]$Version = "0.5.59"
+  [string]$Version = "0.5.60"
 )
 
 $ErrorActionPreference = "Stop"

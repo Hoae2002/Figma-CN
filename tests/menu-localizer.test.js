@@ -44,6 +44,31 @@ ${marker}`);
 
 const helpers = loadMenuHelpers();
 
+test("widget development and spelling menus translate without changing commands or checked languages", () => {
+  const action = () => {};
+  const items = [{ label: "Check spelling", checked: true, click: action, submenu: { items: [
+    { label: "English (Canada)", checked: true, click: action },
+    { label: "English (Liberia)", checked: false },
+    { label: "English (Philippines)", checked: false },
+    { label: "English (United States)", checked: false },
+    { label: "zh-Latn-CN-x-ext", checked: false }
+  ] } }];
+  assert.equal(helpers.localizeItems(items), true);
+  assert.equal(items[0].label, "启用拼写检查");
+  assert.equal(items[0].checked, true);
+  assert.equal(items[0].click, action);
+  assert.deepEqual(items[0].submenu.items.map(item => item.label), ["英语（加拿大）", "英语（利比里亚）", "英语（菲律宾）", "英语（美国）", "中文（拉丁字母，zh-Latn-CN-x-ext）"]);
+  assert.deepEqual(items[0].submenu.items.map(item => item.checked), [true, false, false, false, false]);
+  assert.equal(items[0].submenu.items[0].click, action);
+  const template = [{ submenu: [
+    { label: "New widget...", click: action }, { label: "Import widget from manifest...", click: action },
+    { label: "New widget…", click: action }, { label: "Import widget from manifest…", click: action }
+  ] }];
+  helpers.localizeTemplate(template);
+  assert.deepEqual(template[0].submenu.map(item => item.label), ["新建小部件…", "从清单导入小部件…", "新建小部件…", "从清单导入小部件…"]);
+  assert.ok(template[0].submenu.every(item => item.click === action));
+});
+
 test("stable native menu dictionary remains available without the translation host", () => {
   assert.equal(helpers.localizeText("New Window"), "新建窗口");
   assert.equal(helpers.localizeText("Reopen Closed Tab or Window"), "重新打开关闭的标签页或窗口");

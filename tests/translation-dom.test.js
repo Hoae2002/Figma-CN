@@ -24,6 +24,46 @@ function fixture(t, html, custom = {}, exact = {}, pageUrl = "https://www.figma.
 }
 const tick = () => new Promise(r => setTimeout(r, 50));
 
+test("memory tips translate split emphasis and links while screenshot labels preserve user names", async t => {
+  const dictionary = require("../payload/src/dictionary/zh-CN.js");
+  const tips = [
+    ["Break up bigger files into smaller ones.", "Move a few pages to a new file, or split a large library into smaller ones."],
+    ["Clean up layers and components.", "Delete hidden layers you don’t need and reduce nested layers, especially in components."],
+    ["Flatten complex SVGs and vector shapes.", "This reduces layers, and therefore memory use."],
+    ["Trim the number of component variants.", "Replace variants with component properties instead."]
+  ];
+  const labels = ["New widget...", "Import widget from manifest...", "Check spelling", "English (Canada)", "English (Liberia)", "English (Philippines)", "English (United States)", "zh-Latn-CN-x-ext"];
+  const { document, runtime, snapshot } = fixture(t, `<div role="dialog"><ul>${tips.map(([title, body]) => `<li><strong>${title}</strong> ${body}</li>`).join("")}</ul>
+    <p>Check out our <a href="https://help.figma.com/">Help Center article</a> for more tips.</p></div>
+    <div role="menu">${labels.map(label => `<div role="menuitem">${label}</div>`).join("")}</div>
+    <div role="tooltip">Spec</div><div role="toolbar"><button title="Spec" aria-label="Spec"></button></div>
+    <div data-testid="page-name">Spec</div><div data-testid="file-name">English (Canada)</div><input value="Spec">`,
+    {}, dictionary.exact, "https://www.figma.com/design/test", dictionary);
+  await tick();
+  assert.deepEqual([...document.querySelectorAll('li')].map(e => e.textContent), [
+    "将较大的文件拆分成较小的文件。 将一些页面移动到新文件，或将大型组件库拆分成较小的组件库。",
+    "清理图层和组件。 删除不需要的隐藏图层，并减少嵌套图层，尤其是组件中的嵌套图层。",
+    "展平复杂的 SVG 和矢量形状。 这会减少图层，从而降低内存占用。",
+    "减少组件变体数量。 改用组件属性替代变体。"
+  ]);
+  assert.equal(document.querySelector('p').textContent, "查看我们的 帮助中心文章 了解更多提示。");
+  assert.equal(document.querySelector('a').getAttribute('href'), "https://help.figma.com/");
+  assert.equal(document.querySelectorAll('strong').length, 4);
+  assert.deepEqual([...document.querySelectorAll('[role="menuitem"]')].map(e => e.textContent), [
+    "新建小部件…", "从清单导入小部件…", "启用拼写检查", "英语（加拿大）", "英语（利比里亚）", "英语（菲律宾）", "英语（美国）", "中文（拉丁字母，zh-Latn-CN-x-ext）"
+  ]);
+  assert.equal(document.querySelector('[role="tooltip"]').textContent, "规范");
+  // Icon-only controls keep their accessibility attributes; the visible tooltip translates.
+  assert.equal(document.querySelector('button').title, "Spec");
+  assert.equal(document.querySelector('button').getAttribute('aria-label'), "Spec");
+  assert.equal(document.querySelector('[data-testid="page-name"]').textContent, "Spec");
+  assert.equal(document.querySelector('[data-testid="file-name"]').textContent, "English (Canada)");
+  assert.equal(document.querySelector('input').value, "Spec");
+  runtime.apply({ ...snapshot, revision: 2, settings: { ...snapshot.settings, enabled: false } });
+  assert.equal(document.querySelector('li').textContent, tips[0].join(" "));
+  assert.equal(document.querySelector('[role="tooltip"]').textContent, "Spec");
+});
+
 test("single and multiple page selection menus translate ordering actions while page names stay original", async t => {
   const dictionary = require("../payload/src/dictionary/zh-CN.js");
   const labels = ["Move up", "Move down", "Move to top", "Move to bottom"];

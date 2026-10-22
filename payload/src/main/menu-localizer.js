@@ -12,6 +12,16 @@
   const FIGBOOST_EXPORT_TIMEOUT_MS = 60000;
   const FIGBOOST_REST_FETCH_TIMEOUT_MS = 8000;
   const labels = {
+    "New widget...": "新建小部件…",
+    "New widget…": "新建小部件…",
+    "Import widget from manifest...": "从清单导入小部件…",
+    "Import widget from manifest…": "从清单导入小部件…",
+    "Check spelling": "启用拼写检查",
+    "English (Canada)": "英语（加拿大）",
+    "English (Liberia)": "英语（利比里亚）",
+    "English (Philippines)": "英语（菲律宾）",
+    "English (United States)": "英语（美国）",
+    "zh-Latn-CN-x-ext": "中文（拉丁字母，zh-Latn-CN-x-ext）",
     "New Window": "新建窗口",
     "New Tab": "新建标签页",
     "Open File Browser": "打开文件浏览器",
