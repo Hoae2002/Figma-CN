@@ -9,7 +9,7 @@ function loadMenuHelpers() {
   const marker = "  if (!global.__FIGMA_ZH_MENU_LOCALIZER__) {";
   const source = fs.readFileSync(sourcePath, "utf8").replace(marker, `
   global.__FIGBOOST_TEST_HOOKS__ = {
-    localizeText, localizeItems, localizeTemplate, localizeDialogOptions,
+    localizeShellUpdateText, localizeText, localizeItems, localizeTemplate, localizeDialogOptions,
     compareVersions, isFeatureEnabled, formatDuration, getFigBoostRemainingTimeout,
     throwIfFigBoostDeadlineExceeded, cleanDiscoveredFileName, sanitizeWindowsFileName,
     getFileNameFromUrlSlug, getFigmaFilePathForEditorType, toFigmaAbsoluteUrl,
@@ -43,6 +43,35 @@ ${marker}`);
 }
 
 const helpers = loadMenuHelpers();
+
+test("shell update label follows redraws and language changes without changing clicks or tab names", async () => {
+  const { JSDOM } = require("jsdom");
+  const dom = new JSDOM('<span role="tab">Update now</span><button id="unrelated">Update now</button><div class="tab_bar--updateButtonWrapper--PR7-P"><button id="update"><span>Update now</span></button></div>', { runScripts: "outside-only" });
+  try {
+    const { document } = dom.window;
+    const button = document.querySelector("#update");
+    let clicked = 0;
+    button.onclick = () => clicked++;
+    const original = button.onclick;
+    const run = label => dom.window.eval(`(${helpers.localizeShellUpdateText.toString()})(${JSON.stringify(label)})`);
+    assert.equal(helpers.localizeText("Update now"), "立即更新");
+    assert.equal(require("../payload/src/dictionary/zh-CN.js").exact["Update now"], "立即更新");
+    run("立即更新");
+    assert.equal(button.textContent, "立即更新");
+    assert.equal(document.querySelector('[role="tab"]').textContent, "Update now");
+    assert.equal(document.querySelector("#unrelated").textContent, "Update now");
+    assert.equal(button.onclick, original);
+    button.click(); assert.equal(clicked, 1);
+    button.innerHTML = '<span>Update now</span>';
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(button.textContent, "立即更新");
+    run("Update now");
+    assert.equal(button.textContent, "Update now");
+    run("立即更新");
+    button.click(); assert.equal(clicked, 2);
+    await new Promise(resolve => setImmediate(resolve));
+  } finally { dom.window.close(); }
+});
 
 test("widget development and spelling menus translate without changing commands or checked languages", () => {
   const action = () => {};

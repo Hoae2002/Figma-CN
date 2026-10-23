@@ -3683,6 +3683,7 @@
     "Up to 2 editors": "最多 2 个编辑者",
     "Update": "更新",
     "Update all": "全部更新",
+    "Update now": "立即更新",
     "Update Community file": "更新社区文件",
     "Update photo": "更新照片",
     "Update the current page from": "更新当前页面，来自",

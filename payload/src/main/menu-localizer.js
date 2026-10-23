@@ -84,6 +84,7 @@
     "Replace existing files?": "要替换现有文件吗？",
     "Reset Figma and Restart": "重置 Figma 并重启",
     "Update Available": "有可用更新",
+    "Update now": "立即更新",
     "Copy Link": "复制链接",
     "Rename File": "重命名文件",
     "Reload Tab": "重新加载标签页",
@@ -266,6 +267,7 @@
   }
 
   function localizeMenu() {
+    for (const contents of webContents?.getAllWebContents?.() || []) localizeShellUpdateButton(contents);
     const menu = Menu.getApplicationMenu();
     if (!menu) return;
     const updateAdded = ensureNativeUpdateEntry(menu);
@@ -3538,6 +3540,41 @@
     });
   }
 
+  // This runs only in the native shell, in a separate isolated world. Translate
+  // the known update control's text nodes without touching tabs or its action.
+  function localizeShellUpdateText(label) {
+    const key = "__FIGBOOST_SHELL_UPDATE_TEXT__";
+    if (window[key]) { window[key](label); return; }
+    let current = label;
+    const translate = () => {
+      for (const button of document.querySelectorAll('[class*="tab_bar--updateButtonWrapper--"] button')) {
+        const walker = document.createTreeWalker(button, NodeFilter.SHOW_TEXT);
+        while (walker.nextNode()) {
+          const node = walker.currentNode;
+          if (["Update now", "立即更新"].includes(node.nodeValue.trim())) {
+            const next = node.nodeValue.replace(/Update now|立即更新/, current);
+            if (node.nodeValue !== next) node.nodeValue = next;
+          }
+        }
+      }
+    };
+    window[key] = value => { current = value; translate(); };
+    new MutationObserver(translate).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+    translate();
+  }
+
+  function localizeShellUpdateButton(contents, force = false) {
+    try {
+      const url = new URL(contents.getURL());
+      if (url.protocol !== "file:" || !url.pathname.endsWith("/app.asar/shell.html")) return;
+      const label = translationHost && !translationHost.enabled() ? "Update now" : localizeText("Update now");
+      if (!force && contents.__FIGBOOST_SHELL_UPDATE_LABEL__ === label) return;
+      contents.__FIGBOOST_SHELL_UPDATE_LABEL__ = label;
+      contents.executeJavaScriptInIsolatedWorld(1005, [{ code: `(${localizeShellUpdateText.toString()})(${JSON.stringify(label)})` }])
+        .catch(() => { delete contents.__FIGBOOST_SHELL_UPDATE_LABEL__; });
+    } catch (_) { delete contents.__FIGBOOST_SHELL_UPDATE_LABEL__; }
+  }
+
   function injectRendererPayload(contents) {
     if (!contents || contents.__FIGBOOST_RENDERER_INJECTED__ || contents.__FIGBOOST_SKIP_RENDERER_INJECTION__) return;
     contents.__FIGBOOST_RENDERER_INJECTED__ = true;
@@ -3554,7 +3591,8 @@
         const url = contents.getURL();
         let isFigmaPage = false;
         try { const parsed = new URL(url); isFigmaPage = parsed.protocol === "https:" && /(^|\.)figma\.com$/.test(parsed.hostname); } catch (_) {}
-        // Only content pages need localization; leave the native titlebar alone.
+        localizeShellUpdateButton(contents, true);
+        // The native shell receives only its scoped update label, never the page payload.
         if (!isFigmaPage) return;
         // const bridge = buildFigBoostRendererBridgeScript(!isFigmaPage);
         const payload = 'window.__FIGBOOST_NATIVE_QUICK_EXPORT__ = true;\n' + getRendererPayload();

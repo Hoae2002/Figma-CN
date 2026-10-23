@@ -225,21 +225,26 @@ test("legacy feature flags cannot register exports or start background discovery
   assert.equal(state.calls.settings, 0);
 });
 
-test("native titlebar gets no renderer payload and stale settings routes cannot open a window", async () => {
+test("native shell gets only scoped update text and stale settings routes cannot open a window", async () => {
   function makeContents(url) {
     const contents = new EventEmitter();
     contents.scripts = [];
     contents.getURL = () => url;
     contents.executeJavaScript = code => { contents.scripts.push(code); return Promise.resolve(); };
+    contents.executeJavaScriptInIsolatedWorld = (world, scripts) => { contents.scripts.push(...scripts.map(item => item.code)); assert.equal(world, 1005); return Promise.resolve(); };
     contents.setWindowOpenHandler = handler => { contents.openWindow = handler; };
     return contents;
   }
   const titlebar = makeContents("file:///Figma/titlebar.html");
+  const shell = makeContents("file:///Figma/resources/app.asar/shell.html");
   const page = makeContents("https://www.figma.com/design/test");
-  const state = boot({ contents: [titlebar, page] });
+  const state = boot({ contents: [titlebar, shell, page] });
   for (const timer of [...state.calls.timers]) timer.fn();
   await Promise.resolve();
   assert.equal(titlebar.scripts.length, 0);
+  assert.ok(shell.scripts.length > 0);
+  assert.ok(shell.scripts.every(code => code.includes('tab_bar--updateButtonWrapper--') && !code.includes('__FIGBOOST_TRANSLATION_RUNTIME__')));
+  assert.ok(!state.calls.attached.includes(shell));
   assert.ok(state.calls.attached.includes(page), "Figma content must still receive localization");
   for (const url of ["figboost://translation-settings", "figboost://open-feature-menu"]) {
     let prevented = false;
