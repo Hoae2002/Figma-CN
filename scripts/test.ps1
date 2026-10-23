@@ -48,6 +48,8 @@ if (-not $figBoost.Contains('Join-Path $env:LOCALAPPDATA "FigBoost"') -or -not $
 if (-not $figBoost.Contains('$Host.Name -eq "ConsoleHost"') -or -not $figBoost.Contains('Write-Log "Self-test passed."')) {
   throw "Compiled command-mode logs must not be shown as no-console message boxes."
 }
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root "tests\app-dir.test.ps1")
+if ($LASTEXITCODE -ne 0) { throw "Figma app directory regression tests failed." }
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root "tests\updater.test.ps1")
 if ($LASTEXITCODE -ne 0) { throw "FigBoost update behavior tests failed." }
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root "tests\updater-host.test.ps1")

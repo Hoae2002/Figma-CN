@@ -27,7 +27,7 @@ if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClo
 
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V7"
 $UpdaterDisableMarker = "FIGMA_ZH_DISABLE_BUILTIN_UPDATER"
-$PatcherVersion = "0.5.60"
+$PatcherVersion = "0.5.61"
 $PayloadFile = "i.js"
 $MainPayloadFile = "m.js"
 $FeatureConfigFile = "features.json"
@@ -813,11 +813,22 @@ function Get-PreferredAppDir {
 function Resolve-ManagedFigmaAppDir {
   param([string]$RuntimeDir, [string]$SelectedAppDir = "")
   $preferred = Get-PreferredAppDir $RuntimeDir
-  if ($preferred) { return $preferred }
-  if ($SelectedAppDir -and (Test-FigmaAppDir $SelectedAppDir)) {
-    return (Resolve-Path -LiteralPath $SelectedAppDir).Path
+  $candidate = if ($preferred) {
+    $preferred
+  } elseif ($SelectedAppDir -and (Test-FigmaAppDir $SelectedAppDir)) {
+    (Resolve-Path -LiteralPath $SelectedAppDir).Path
+  } else {
+    Find-CurrentFigmaAppDir
   }
-  return Find-CurrentFigmaAppDir
+  # Official updates leave old app-* directories behind. Follow the newest
+  # complete official installation without overriding a custom client location.
+  if (Test-OfficialFigmaAppDir $candidate) {
+    $latest = Find-LatestFigmaAppDir
+    if ((Compare-VersionString (Get-FigmaVersionFromAppDir $latest) (Get-FigmaVersionFromAppDir $candidate)) -gt 0) {
+      return $latest
+    }
+  }
+  return $candidate
 }
 
 function Set-PreferredAppDir {
