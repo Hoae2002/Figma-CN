@@ -39,6 +39,12 @@ function Install-Patch {
   $script:patchCompleted = $true
   [pscustomobject]@{ FigmaVersion = '2.0.0'; Patched = $true }
 }
+# Retained updater flows require explicit test opt-in.
+$OfficialUpdateTakeoverEnabled = $false
+$blocked = $false
+try { Update-FigmaOfficial 'fixture' } catch { $blocked = $_.Exception.Message -like '*FigBoost*' }
+Assert-Test $blocked 'Paused official updater must reject old command-line requests.'
+$OfficialUpdateTakeoverEnabled = $true
 $script:fixtureId = [Guid]::NewGuid().ToString('N')
 $script:downloads = 0
 $ProgressPreference = 'Continue'

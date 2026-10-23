@@ -7,7 +7,7 @@ $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $repo 'src\
 if ($errors.Count) { throw 'Invalid installer syntax.' }
 foreach ($statement in $ast.EndBlock.Statements) {
   if ($statement -is [Management.Automation.Language.FunctionDefinitionAst]) { Invoke-Expression $statement.Extent.Text }
-  if ($statement -is [Management.Automation.Language.AssignmentStatementAst] -and $statement.Left.Extent.Text -match '^\$(PatchMarker|UpdaterDisableMarker|PatcherVersion|PayloadFile|MainPayloadFile|FeatureConfigFile|BackupFile|LicenseCommentTarget|EmbeddedPayloadFiles|Utf8NoBom|UpdateRepository|UpdateCommitApi|script:UpdatedPayloadFiles)$') { Invoke-Expression $statement.Extent.Text }
+  if ($statement -is [Management.Automation.Language.AssignmentStatementAst] -and $statement.Left.Extent.Text -match '^\$(PatchMarker|UpdaterDisableMarker|OfficialUpdateTakeoverEnabled|PatcherVersion|PayloadFile|MainPayloadFile|FeatureConfigFile|BackupFile|LicenseCommentTarget|EmbeddedPayloadFiles|Utf8NoBom|UpdateRepository|UpdateCommitApi|script:UpdatedPayloadFiles)$') { Invoke-Expression $statement.Extent.Text }
 }
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type @'

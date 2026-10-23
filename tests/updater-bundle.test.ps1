@@ -5,7 +5,7 @@ $repo = Split-Path -Parent $PSScriptRoot
 $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $repo 'src\FigBoost.ps1'), [ref]$null, [ref]$null)
 foreach ($statement in $ast.EndBlock.Statements) {
   if ($statement -is [Management.Automation.Language.FunctionDefinitionAst]) { Invoke-Expression $statement.Extent.Text }
-  if ($statement -is [Management.Automation.Language.AssignmentStatementAst] -and $statement.Left.Extent.Text -match '^\$(PatchMarker|UpdaterDisableMarker|PatcherVersion|PayloadFile|MainPayloadFile|FeatureConfigFile|BackupFile|LicenseCommentTarget|EmbeddedPayloadFiles|Utf8NoBom|script:UpdatedPayloadFiles)$') { Invoke-Expression $statement.Extent.Text }
+  if ($statement -is [Management.Automation.Language.AssignmentStatementAst] -and $statement.Left.Extent.Text -match '^\$(PatchMarker|UpdaterDisableMarker|OfficialUpdateTakeoverEnabled|PatcherVersion|PayloadFile|MainPayloadFile|FeatureConfigFile|BackupFile|LicenseCommentTarget|EmbeddedPayloadFiles|Utf8NoBom|script:UpdatedPayloadFiles)$') { Invoke-Expression $statement.Extent.Text }
 }
 function Get-BaseDir { return $repo }
 function Assert-Bundle($Condition, $Message) { if (-not $Condition) { throw $Message } }
@@ -26,6 +26,9 @@ try {
   $payloadPath = Join-Path $runtime 'i.js'
   $originalPayload = [IO.File]::ReadAllText($payloadPath)
   $originalFeatures = [IO.File]::ReadAllText((Get-FeatureConfigPath $runtime))
+  $OfficialUpdateTakeoverEnabled = $true
+  [void](Patch-Asar (Resolve-Target $app) $runtime)
+  $OfficialUpdateTakeoverEnabled = $false
   $oldPayload = $originalPayload.Replace("const version = `"$version`";", 'const version = "0.0.1";')
   [IO.File]::WriteAllText($payloadPath, $oldPayload, $Utf8NoBom)
   function Run-Bundle($ExpectedVersion, $RuntimePath) {
@@ -37,6 +40,7 @@ try {
   Assert-Bundle ((Run-Bundle '999.0.0' $runtime) -ne 0) 'Compiled bundle accepted mismatched release metadata.'
   Assert-Bundle ([IO.File]::ReadAllText($payloadPath) -ceq $oldPayload) 'Rejected release changed installed files.'
   Assert-Bundle ((Run-Bundle $version $runtime) -eq 0) 'Compiled bundle application failed.'
+  Assert-Bundle (-not (Get-PatchStatus (Resolve-Target $app) $runtime).HasBuiltInUpdaterDisabled) 'Compiled bundle did not restore the native updater.'
   Assert-Bundle ((Get-InstalledPayloadVersion $runtime) -eq $version) 'Compiled bundle did not apply the embedded dictionary.'
   Assert-Bundle ([IO.File]::ReadAllText($payloadPath) -ceq $originalPayload) 'Shipped renderer, including plugin sidebar, differs from source.'
   Assert-Bundle ([IO.File]::ReadAllText((Get-FeatureConfigPath $runtime)) -ceq $originalFeatures) 'Compiled update changed existing preferences.'

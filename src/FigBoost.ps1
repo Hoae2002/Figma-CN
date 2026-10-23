@@ -27,7 +27,9 @@ if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClo
 
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V7"
 $UpdaterDisableMarker = "FIGMA_ZH_DISABLE_BUILTIN_UPDATER"
-$PatcherVersion = "0.5.61"
+$PatcherVersion = "0.5.62"
+# Reversible pause: keep the takeover implementation, but preserve native updates.
+$OfficialUpdateTakeoverEnabled = $false
 $PayloadFile = "i.js"
 $MainPayloadFile = "m.js"
 $FeatureConfigFile = "features.json"
@@ -148,6 +150,8 @@ function Install-PayloadUpdate {
   New-Item -ItemType Directory -Force -Path (Split-Path -Parent $cache) | Out-Null
   $staged = "$cache.$([Guid]::NewGuid().ToString('N')).tmp"
   $originalFiles = @{}
+  $restoreNativeUpdater = -not $OfficialUpdateTakeoverEnabled -and $status.HasBuiltInUpdaterDisabled
+  if ($restoreNativeUpdater) { $originalFiles[$target.AsarPath] = [IO.File]::ReadAllBytes($target.AsarPath) }
   foreach ($name in @('zh-CN.js', 'translation-policy.js', 'translation-service.js', 'translation-host.js', 'translation-settings-preload.js', 'translation-settings.html', 'translation-settings.css', 'translation-settings.js', $PayloadFile, $MainPayloadFile, $FeatureConfigFile)) {
     $path = Join-Path $SelectedRuntimeDir $name
     $originalFiles[$path] = if (Test-Path -LiteralPath $path) { [IO.File]::ReadAllBytes($path) } else { $null }
@@ -158,6 +162,7 @@ function Install-PayloadUpdate {
     [IO.File]::WriteAllText($staged, ($Package | ConvertTo-Json -Depth 5 -Compress), $Utf8NoBom)
     $restart = Stop-FigmaForPatch $target.AppDir -Force
     $script:UpdatedPayloadFiles = $files
+    if ($restoreNativeUpdater) { [void](Patch-Asar $target $SelectedRuntimeDir) }
     Write-RuntimeFiles $SelectedRuntimeDir
     # Older installs may have no optional-feature file. Manual native updates need only updater paths.
     if (-not (Test-Path -LiteralPath (Get-FeatureConfigPath $SelectedRuntimeDir))) { [void](Write-FeatureConfig $SelectedRuntimeDir @()) }
@@ -962,7 +967,7 @@ function Install-Feature {
   Write-RuntimeFiles $SelectedRuntimeDir
   $target = Resolve-Target $appDir
   $status = Get-PatchStatus $target $SelectedRuntimeDir
-  if (-not $status.Patched -or -not $status.HasBuiltInUpdaterDisabled) {
+  if (-not $status.Patched -or $status.HasBuiltInUpdaterDisabled -ne $OfficialUpdateTakeoverEnabled) {
     $status = Install-Patch $appDir $SelectedRuntimeDir -Force -SkipProcessCheck -ShortcutRoots $ShortcutRoots
     $status.RestartedFigma = $restartAfterInstall -and (Start-FigmaClient $target.AppDir)
     return $status
@@ -1025,6 +1030,7 @@ function Get-CompleteStatus {
   $target = Resolve-Target (Resolve-ManagedFigmaAppDir $SelectedRuntimeDir $SelectedAppDir)
   $status = Get-PatchStatus $target $SelectedRuntimeDir
   if ($CheckOfficial) {
+    if (-not $OfficialUpdateTakeoverEnabled) { throw "FigBoost 检查 Figma 官方更新已暂停，请使用 Figma 自带的检查更新。" }
     $release = Get-OfficialLatestFigmaRelease $status.FigmaVersion
     $status | Add-Member -NotePropertyName OfficialLatestVersion -NotePropertyValue $release.Version -Force
     $status | Add-Member -NotePropertyName IsOfficialLatest -NotePropertyValue ((Compare-VersionString $status.FigmaVersion $release.Version) -ge 0) -Force
@@ -1039,13 +1045,33 @@ function Patch-Asar {
   $nextBytes = $main.Bytes
   $changed = $false
   $source = [System.Text.Encoding]::UTF8.GetString($nextBytes)
+  if (-not $OfficialUpdateTakeoverEnabled -and $source.Contains($UpdaterDisableMarker)) {
+    if (-not (Test-Path -LiteralPath $Target.BackupPath)) { throw "恢复 Figma 官方更新需要原始 app.asar 备份，请先修复客户端安装。" }
+    $original = Get-AsarFileSlice (Read-Asar $Target.BackupPath) "main.js"
+    $originalSource = [System.Text.Encoding]::UTF8.GetString($original.Bytes)
+    if ($original.Bytes.Length -ne $main.Bytes.Length -or $originalSource.Contains($UpdaterDisableMarker) -or $originalSource.Contains($PatchMarker)) { throw "原始备份不匹配，无法安全恢复 Figma 官方更新。" }
+    # Only restore main.js after proving the original belongs to this patched build.
+    $expected = Disable-BuiltInUpdaterInMain $original.Bytes
+    $prefixLength = Get-BytesIndex $original.Bytes ([System.Text.Encoding]::UTF8.GetBytes($LicenseCommentTarget))
+    if ($prefixLength -le 0) { throw "原始备份缺少校验位置。" }
+    $expectedPrefix = New-Object byte[] $prefixLength
+    $currentPrefix = New-Object byte[] $prefixLength
+    [Array]::Copy($expected.Bytes, $expectedPrefix, $prefixLength)
+    [Array]::Copy($nextBytes, $currentPrefix, $prefixLength)
+    if ((Get-Sha256Hex $expectedPrefix) -ne (Get-Sha256Hex $currentPrefix)) { throw "原始备份与当前客户端不一致，已停止恢复官方更新。" }
+    $nextBytes = $original.Bytes
+    $source = $originalSource
+    $changed = $true
+  }
   $alreadyPatched = $source.Contains($PatchMarker)
   $hook = Build-MainHook $RuntimeDir
   $hookCurrent = $source.Contains($hook)
 
-  $updaterPatch = Disable-BuiltInUpdaterInMain $nextBytes
-  $nextBytes = $updaterPatch.Bytes
-  if ($updaterPatch.Changed) { $changed = $true }
+  if ($OfficialUpdateTakeoverEnabled) {
+    $updaterPatch = Disable-BuiltInUpdaterInMain $nextBytes
+    $nextBytes = $updaterPatch.Bytes
+    if ($updaterPatch.Changed) { $changed = $true }
+  }
 
   if (-not $hookCurrent) {
     # V7 hooks live in the replaced license tail. Rewrite that same slot when
@@ -1158,7 +1184,7 @@ function Install-Patch {
       if (-not (Test-Path -LiteralPath $supportPath) -or [System.IO.File]::ReadAllText($supportPath) -ne (Read-PayloadText ("payload\src\" + $relative))) { $runtimeCurrent = $false }
     }
   }
-  if ($runtimeCurrent -and $existingStatus.Patched -and $existingStatus.HasRuntimePayload -and $existingStatus.HasRuntimeMainPayload -and $existingStatus.HasBuiltInUpdaterDisabled) {
+  if ($runtimeCurrent -and $existingStatus.Patched -and $existingStatus.HasRuntimePayload -and $existingStatus.HasRuntimeMainPayload -and ($existingStatus.HasBuiltInUpdaterDisabled -eq $OfficialUpdateTakeoverEnabled)) {
     [void](Write-FeatureConfig $SelectedRuntimeDir @((Read-FeatureConfig $SelectedRuntimeDir).enabledFeatures))
     $existingStatus | Add-Member -NotePropertyName AlreadyPatched -NotePropertyValue $true -Force
     $existingStatus | Add-Member -NotePropertyName RestartedFigma -NotePropertyValue $false -Force
@@ -1204,6 +1230,7 @@ function Uninstall-Patch {
 
 function Update-FigmaOfficial {
   param([string]$SelectedRuntimeDir, [switch]$Force, [scriptblock]$Progress)
+  if (-not $OfficialUpdateTakeoverEnabled) { throw "FigBoost 接管 Figma 官方更新已暂停，请使用 Figma 自带的检查更新。" }
   $ProgressPreference = "SilentlyContinue"
   if ($Progress) { & $Progress 5 "正在检测当前 Figma 版本..." }
   $currentTarget = Resolve-Target (Resolve-ManagedFigmaAppDir $SelectedRuntimeDir)
@@ -1434,7 +1461,26 @@ function Invoke-SelfTest {
     if (-not $installStatus.HasBackup) { throw "Self-test did not create a backup." }
     if (-not $installStatus.HasRuntimePayload) { throw "Self-test did not write the runtime payload." }
     if (-not $installStatus.HasRuntimeMainPayload) { throw "Self-test did not write the main runtime payload." }
-    if (-not $installStatus.HasBuiltInUpdaterDisabled) { throw "Self-test did not disable the built-in updater." }
+    if ($installStatus.HasBuiltInUpdaterDisabled) { throw "Self-test disabled the native updater while takeover is paused." }
+    # Simulate an older install, then verify migration, backup validation and idempotence.
+    $migrationTarget = Resolve-Target $fakeAppDir
+    $backupHash = Get-Sha256Hex ([IO.File]::ReadAllBytes($migrationTarget.BackupPath))
+    $OfficialUpdateTakeoverEnabled = $true
+    [void](Patch-Asar $migrationTarget $fakeRuntime)
+    if (-not (Get-PatchStatus $migrationTarget $fakeRuntime).HasBuiltInUpdaterDisabled) { throw "Self-test legacy guard fixture failed." }
+    $OfficialUpdateTakeoverEnabled = $false
+    $legacyHash = Get-Sha256Hex ([IO.File]::ReadAllBytes($migrationTarget.AsarPath))
+    $missingBackupTarget = [pscustomobject]@{ AsarPath = $migrationTarget.AsarPath; BackupPath = (Join-Path $temp 'missing.asar') }
+    $rejected = $false
+    try { [void](Patch-Asar $missingBackupTarget $fakeRuntime) } catch { $rejected = $true }
+    if (-not $rejected -or (Get-Sha256Hex ([IO.File]::ReadAllBytes($migrationTarget.AsarPath))) -ne $legacyHash) { throw "Self-test missing backup modified the app." }
+    $wrongBackupTarget = [pscustomobject]@{ AsarPath = $migrationTarget.AsarPath; BackupPath = $migrationTarget.AsarPath }
+    $rejected = $false
+    try { [void](Patch-Asar $wrongBackupTarget $fakeRuntime) } catch { $rejected = $true }
+    if (-not $rejected -or (Get-Sha256Hex ([IO.File]::ReadAllBytes($migrationTarget.AsarPath))) -ne $legacyHash) { throw "Self-test invalid backup modified the app." }
+    $migrated = Install-Patch $fakeAppDir $fakeRuntime -SkipProcessCheck -ShortcutRoots @($shortcutRoot)
+    if (-not $migrated.Patched -or $migrated.HasBuiltInUpdaterDisabled) { throw "Self-test did not restore native updater from legacy install." }
+    if ((Get-Sha256Hex ([IO.File]::ReadAllBytes($migrationTarget.BackupPath))) -ne $backupHash) { throw "Self-test migration changed original backup." }
     if ($installStatus.PayloadVersion -ne (Get-PayloadVersion)) { throw "Self-test payload version mismatch." }
     $manualUpdateConfig = Read-FeatureConfig $fakeRuntime
     if (-not $manualUpdateConfig.patcherPath -or $manualUpdateConfig.runtimeDir -ne (ConvertTo-JsonSafePath $fakeRuntime)) { throw "Self-test normal install did not configure manual updates." }
@@ -1488,7 +1534,7 @@ function Invoke-SelfTest {
     $upgradedMain = Get-AsarFileSlice $upgradedAsar "main.js"
     $upgradedSource = [System.Text.Encoding]::UTF8.GetString($upgradedMain.Bytes)
     if (-not $upgradedSource.Contains("global.__FIGMA_ZH_RUNTIME_DIR__=R.dirname(Q);")) { throw "Self-test old hook upgrade did not write runtime dir support." }
-    if (-not $upgradedSource.Contains($UpdaterDisableMarker)) { throw "Self-test old hook upgrade did not preserve built-in updater disable." }
+    if ($upgradedSource.Contains($UpdaterDisableMarker)) { throw "Self-test old hook upgrade disabled the native updater." }
     $featureStatus = Install-Feature "auto-check-official-latest" $fakeAppDir $fakeRuntime @($shortcutRoot)
     if (-not $featureStatus.Patched) { throw "Self-test feature install did not preserve patched status." }
     if (-not (Test-FeatureInstalled $fakeRuntime "auto-check-official-latest")) { throw "Self-test feature config did not mark feature installed." }
@@ -1618,7 +1664,7 @@ function Invoke-SelfTest {
     [System.IO.File]::WriteAllBytes($featureUpgradeAsarPath, $featureUpgradeAsar.Bytes)
     Set-PreferredAppDir $fakeRuntime $featureUpgradeAppDir | Out-Null
     $featureUpgradeStatus = Install-Feature "auto-check-official-latest" $featureUpgradeAppDir $fakeRuntime @($shortcutRoot)
-    if (-not $featureUpgradeStatus.HasBuiltInUpdaterDisabled) { throw "Self-test feature install did not upgrade updater guard." }
+    if ($featureUpgradeStatus.HasBuiltInUpdaterDisabled) { throw "Self-test feature install disabled the native updater." }
     $featureConfigPath = Get-FeatureConfigPath $fakeRuntime
     if (-not (Test-Path -LiteralPath $featureConfigPath)) { throw "Self-test feature config was not written." }
     $runtimeMainSource = [System.IO.File]::ReadAllText((Join-Path $fakeRuntime "m.js"), [System.Text.Encoding]::UTF8)

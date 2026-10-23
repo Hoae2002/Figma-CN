@@ -6,7 +6,7 @@ $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $repo 'src\
 if ($errors.Count) { throw 'Invalid installer syntax.' }
 foreach ($statement in $ast.EndBlock.Statements) {
   if ($statement -is [Management.Automation.Language.FunctionDefinitionAst]) { Invoke-Expression $statement.Extent.Text }
-  if ($statement -is [Management.Automation.Language.AssignmentStatementAst] -and $statement.Left.Extent.Text -match '^\$(PatchMarker|UpdaterDisableMarker|PatcherVersion|PayloadFile|MainPayloadFile|FeatureConfigFile|BackupFile|LicenseCommentTarget|EmbeddedPayloadFiles|Utf8NoBom|UpdateRepository|UpdateCommitApi|script:UpdatedPayloadFiles)$') { Invoke-Expression $statement.Extent.Text }
+  if ($statement -is [Management.Automation.Language.AssignmentStatementAst] -and $statement.Left.Extent.Text -match '^\$(PatchMarker|UpdaterDisableMarker|OfficialUpdateTakeoverEnabled|PatcherVersion|PayloadFile|MainPayloadFile|FeatureConfigFile|BackupFile|LicenseCommentTarget|EmbeddedPayloadFiles|Utf8NoBom|UpdateRepository|UpdateCommitApi|script:UpdatedPayloadFiles)$') { Invoke-Expression $statement.Extent.Text }
 }
 function Get-BaseDir { return $repo }
 function Assert-Equal($Actual, $Expected, $Message) { if ($Actual -cne $Expected) { throw "$Message (actual=$Actual expected=$Expected)" } }
@@ -121,6 +121,10 @@ try {
   Assert-Equal $script:UpdatedPayloadFiles.Count 0 'Equal embedded version must supersede cache.'
   $EmbeddedPayloadFiles = @{}
   $before = [IO.File]::ReadAllText((Join-Path $runtime 'i.js'))
+  $OfficialUpdateTakeoverEnabled = $true
+  [void](Patch-Asar (Resolve-Target $app) $runtime)
+  $OfficialUpdateTakeoverEnabled = $false
+  $legacyAsarHash = Get-Sha256Hex ([IO.File]::ReadAllBytes((Join-Path $app 'resources\app.asar')))
   # Lock the cache so the final atomic replacement fails after runtime writing.
   $lock = [IO.File]::Open($cache, 'Open', 'Read', 'Read')
   try { Assert-Throws { Install-PayloadUpdate $package $app $runtime } 'Locked cache update did not fail.' }
@@ -128,6 +132,10 @@ try {
   Assert-Equal ([IO.File]::ReadAllText((Join-Path $runtime 'i.js'))) $before 'Failed update did not restore old runtime.'
   Assert-Equal ([IO.File]::ReadAllText($cache)) $cachedText 'Failed update replaced cached package.'
   Assert-Equal $script:UpdatedPayloadFiles.Count 0 'Failed update did not restore active payload.'
+  Assert-Equal (Get-Sha256Hex ([IO.File]::ReadAllBytes((Join-Path $app 'resources\app.asar')))) $legacyAsarHash 'Failed migration must restore the previous ASAR.'
+  $migrated = Install-PayloadUpdate $package $app $runtime
+  Assert-Equal $migrated.HasBuiltInUpdaterDisabled $false 'Bundled payload update must restore the native updater.'
+  $script:UpdatedPayloadFiles = @{}
 
   $nextPackage = Copy-Object $package
   $nextPackage.version = "$($currentVersion.Major).$($currentVersion.Minor).$($currentVersion.Build + 2)"

@@ -6,7 +6,7 @@ const { EventEmitter } = require("node:events");
 const test = require("node:test");
 
 // Boot the shipped main script, with no Figma process or external network.
-function boot({ enabled = true, response = 1, offline = false, missing = false, current = "126.10.7", contents = [] } = {}) {
+function boot({ takeover = false, enabled = true, response = 1, offline = false, missing = false, current = "126.10.7", contents = [] } = {}) {
   const calls = { requests: [], spawns: [], dialogs: [], timers: [], settings: 0, windows: [], attached: [] };
   const handlers = new Map();
   const config = { enabledFeatures: ["auto-check-official-latest", "bulk-export-figma-files"], patcherPath: "E:/FigBoost/FigBoost.exe", runtimeDir: "C:/FZ" };
@@ -88,14 +88,45 @@ function boot({ enabled = true, response = 1, offline = false, missing = false, 
       return require(name);
     }
   };
-  vm.runInNewContext(fs.readFileSync(sourcePath, "utf8"), context);
+  const source = fs.readFileSync(sourcePath, "utf8");
+  vm.runInNewContext(takeover ? source.replace("const OFFICIAL_UPDATE_TAKEOVER_ENABLED = false;", "const OFFICIAL_UPDATE_TAKEOVER_ENABLED = true;") : source, context);
   return { calls, handlers, config, electron, global: context.global };
 }
 
-test("native update entry is visible and routed through FigBoost in both language modes", async () => {
+test("paused takeover preserves native updater actions and never registers update IPC", async () => {
+  for (const enabled of [true, false]) {
+    const state = boot({ enabled });
+    const updater = state.electron.autoUpdater.checkForUpdates;
+    let originalCalls = 0;
+    const menu = state.electron.Menu.buildFromTemplate([{ label: "Help", submenu: [
+      { id: "checkForUpdates", label: "Check for Updates…", visible: false, enabled: false, click() { originalCalls++; } }
+    ] }]);
+    const entry = menu.items[0].submenu.items[0];
+    menu.popup({}); menu.popup({});
+    entry.click();
+    assert.equal(originalCalls, 1);
+    assert.equal(entry.visible, false);
+    assert.equal(entry.enabled, false);
+    assert.equal(entry.label, enabled ? "检查更新" : "Check for Updates…");
+    const missing = state.electron.Menu.buildFromTemplate([
+      { label: "Preferences", submenu: [] }, { label: "Help", submenu: [] },
+      { label: "About Figma" }, { label: "Exit", role: "quit" }
+    ]);
+    missing.popup({});
+    assert.equal(missing.items.length, 4);
+    for (const timer of [...state.calls.timers]) timer.fn();
+    assert.equal(state.electron.autoUpdater.checkForUpdates, updater);
+    assert.equal(state.global.__FIGBOOST_CHECK_OFFICIAL_UPDATE__, undefined);
+    assert.equal(state.handlers.has("figboost:check-official-update"), false);
+    assert.equal(state.calls.requests.length, 0);
+    assert.equal(state.calls.spawns.length, 0);
+  }
+});
+
+test("native update entry is visible and routed through FigBoost when explicitly enabled", async () => {
   for (const enabled of [true, false]) {
     for (const originalLabel of ["Check for Updates...", "Check for Updates…"]) {
-      const state = boot({ enabled });
+      const state = boot({ enabled, takeover: true });
       let originalCalls = 0;
       const menu = state.electron.Menu.buildFromTemplate([{ label: "Help", submenu: [
         { id: "checkForUpdates", label: originalLabel, visible: false, enabled: false, click() { originalCalls++; } },
@@ -125,7 +156,7 @@ test("native update entry is visible and routed through FigBoost in both languag
 test("older native app menus restore missing or ID-less update commands without duplicates", async () => {
   for (const enabled of [true, false]) {
     for (const missing of [true, false]) {
-      const state = boot({ enabled, current: "126.6.9" });
+      const state = boot({ enabled, takeover: true, current: "126.6.9" });
       let unrelatedCalls = 0;
       const menu = state.electron.Menu.buildFromTemplate([
         { label: "Preferences", submenu: [] }, { label: "Help", submenu: [] },
@@ -154,7 +185,7 @@ test("older native app menus restore missing or ID-less update commands without 
 });
 
 test("manual updates work without feature installation and reapply localization only after confirmation", async () => {
-  const state = boot({ response: 0 }); state.config.enabledFeatures = [];
+  const state = boot({ response: 0, takeover: true }); state.config.enabledFeatures = [];
   const result = await state.global.__FIGBOOST_CHECK_OFFICIAL_UPDATE__();
   assert.equal(result.updateStarted, true);
   const [exe, args, options] = state.calls.spawns[0];
@@ -166,7 +197,7 @@ test("manual updates work without feature installation and reapply localization 
 
 test("offline, missing patcher, current version and repeated clicks cannot launch an update", async () => {
   for (const options of [{ offline: true }, { missing: true }, { current: "126.10.8" }]) {
-    const state = boot(options);
+    const state = boot({ ...options, takeover: true });
     const first = state.global.__FIGBOOST_CHECK_OFFICIAL_UPDATE__();
     assert.equal((await state.global.__FIGBOOST_CHECK_OFFICIAL_UPDATE__()).checking, true);
     await first;

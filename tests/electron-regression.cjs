@@ -207,7 +207,7 @@ app.whenReady().then(async () => {
   await wait(350);
   assert.equal(await editor(`window.__figmaZhLocalizer.getStats().processedNodes`), idleProcessed, 'idle localization must not keep scanning');
   // Exercise the actual Electron MenuItem implementation: the installed Figma
-  // updater guard hides this native entry, so restoring visibility is required.
+  // updater keeps its original visibility, enabled state and handler.
   global.__FIGMA_ZH_RUNTIME_DIR__ = runtime;
   global.__FIGBOOST_TRANSLATION_HOST__ = host;
   fs.writeFileSync(path.join(runtime, 'figma-zh-official-preload.js'), payload);
@@ -228,11 +228,12 @@ app.whenReady().then(async () => {
     }
   }] }]);
   const updateEntry = nativeMenu.items[0].submenu.items[0];
-  assert.equal(updateEntry.visible, true);
-  assert.equal(updateEntry.enabled, true);
+  assert.equal(updateEntry.visible, false);
+  assert.equal(updateEntry.enabled, false);
   assert.equal(updateEntry.label, '检查更新');
-  assert.equal(updateEntry.click, global.__FIGBOOST_CHECK_OFFICIAL_UPDATE__);
-  assert.equal(originalUpdates, 0);
+  assert.equal(global.__FIGBOOST_CHECK_OFFICIAL_UPDATE__, undefined);
+  updateEntry.click();
+  assert.equal(originalUpdates, 1);
   for (const missing of [true, false]) {
     const legacyMenu = Menu.buildFromTemplate([
       { label: 'Preferences', submenu: [] }, { label: 'Help', submenu: [] },
@@ -240,12 +241,13 @@ app.whenReady().then(async () => {
       ...(!missing ? [{ label: 'Check for Updates…', visible: false, enabled: false }] : []),
       { type: 'separator' }, { label: 'Exit', role: 'quit' }
     ]);
-    const legacyUpdate = legacyMenu.items[3];
-    assert.equal(legacyUpdate.label, '检查更新');
-    assert.equal(legacyUpdate.visible, true);
-    assert.equal(legacyUpdate.enabled, true);
-    assert.equal(legacyUpdate.click, global.__FIGBOOST_CHECK_OFFICIAL_UPDATE__);
-    assert.equal(legacyMenu.items.length, 6);
+    assert.equal(legacyMenu.items.length, missing ? 5 : 6);
+    if (!missing) {
+      const legacyUpdate = legacyMenu.items[3];
+      assert.equal(legacyUpdate.label, '检查更新');
+      assert.equal(legacyUpdate.visible, false);
+      assert.equal(legacyUpdate.enabled, false);
+    }
   }
   assert.equal(global.__FIGBOOST_BULK_EXPORT_FILES__, undefined);
   Menu.setApplicationMenu(nativeMenu);
@@ -321,7 +323,7 @@ app.whenReady().then(async () => {
     Menu.setApplicationMenu(null);
   }
   console.log('Electron desktop export regression passed: Ctrl+Shift+Alt+S initializes empty settings to native 1x PNG and asynchronously exports with user activation, preserves existing 4x PNG, bypasses the export-list command, protects text editing and disabled buttons; Ctrl+Shift+E preserved.');
-  console.log('Electron native update regression passed: original menu position restored, FigBoost callback installed, batch export IPC disabled; idle localization has zero scans.');
+  console.log('Electron native update regression passed: native visibility, enabled state and original callback preserved, takeover and batch export IPC disabled; idle localization has zero scans.');
   console.log('Chromium file-browser regression passed: 12 grid/list redraws, zero English time samples and zero layout measurements; file names preserved.');
   console.log("Chromium localization regression passed: 12 nested property-panel redraws have zero untranslated samples before paint; 600 labels converge, page names remain original, attributes do not rescan text, reconnects make zero restore writes, recycled labels translate again.");
   console.log("Electron regression passed: dictionary-only regular pages and native menus, Community-only Google fallback, UI switch and cache reuse, isolated settings with default-session 404, removed exclusion capability, protected inputs, untrusted IPC rejection and responsive layout.");

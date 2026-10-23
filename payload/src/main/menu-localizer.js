@@ -1,6 +1,9 @@
 (function () {
   "use strict";
 
+  // Reversible pause; leave Figma's own menu actions and updater intact.
+  const OFFICIAL_UPDATE_TAKEOVER_ENABLED = false;
+
   const { app, autoUpdater, clipboard, dialog, ipcMain, Menu, MenuItem, BrowserWindow, webContents } = require("electron");
   const fs = require("fs");
   const https = require("https");
@@ -226,6 +229,7 @@
   }
 
   function bindNativeUpdateEntry(item, legacyCommand = false) {
+    if (!OFFICIAL_UPDATE_TAKEOVER_ENABLED) return;
     // Match the command ID; legacy callers must first verify the native menu.
     if (!item || (item.id !== "checkForUpdates" && !legacyCommand)) return false;
     // Keep Figma's own menu position, including when its built-in updater guard
@@ -238,6 +242,7 @@
   }
 
   function ensureNativeUpdateEntry(menu) {
+    if (!OFFICIAL_UPDATE_TAKEOVER_ENABLED) return;
     let changed = false;
     for (const item of menu.items) {
       if (item.submenu) changed = ensureNativeUpdateEntry(item.submenu) || changed;
@@ -469,6 +474,7 @@
   }
 
   function hookBuiltInUpdateChecks() {
+    if (!OFFICIAL_UPDATE_TAKEOVER_ENABLED) return;
     if (!autoUpdater || global.__FIGMA_ZH_AUTO_UPDATER_GUARD__) return;
     global.__FIGMA_ZH_AUTO_UPDATER_GUARD__ = true;
     for (const methodName of ["checkForUpdates", "checkForUpdatesAndNotify"]) {
@@ -542,6 +548,7 @@
   }
 
   async function checkOfficialUpdateManually() {
+    if (!OFFICIAL_UPDATE_TAKEOVER_ENABLED) return { disabled: true };
     const now = Date.now();
     if (global.__FIGMA_ZH_OFFICIAL_UPDATE_CHECKING__) {
       await dialog.showMessageBox({
@@ -626,6 +633,7 @@
   }
 
   function registerManualOfficialUpdateCheck() {
+    if (!OFFICIAL_UPDATE_TAKEOVER_ENABLED) return;
     if (!ipcMain || global.__FIGBOOST_UPDATE_IPC_REGISTERED__) return;
     global.__FIGBOOST_UPDATE_IPC_REGISTERED__ = true;
     global.__FIGBOOST_CHECK_OFFICIAL_UPDATE__ = checkOfficialUpdateManually;
@@ -3590,9 +3598,9 @@
     hookDialogMethod("showMessageBox");
     hookDialogMethod("showMessageBoxSync");
     hookAboutPanelOptions();
-    // Suspended: the installer already disables Figma's background updater.
+    // Suspended: preserve Figma's native background updater.
     // hookBuiltInUpdateChecks();
-    registerManualOfficialUpdateCheck();
+  if (OFFICIAL_UPDATE_TAKEOVER_ENABLED) registerManualOfficialUpdateCheck();
     // Suspended: no IPC/global export entry, discovery or export jobs.
     // registerBulkFigmaFileExport();
     // Suspended: no titlebar feature-menu IPC or global bridge.

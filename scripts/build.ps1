@@ -1,6 +1,6 @@
 ﻿param(
   [string]$OutputPath = "$PSScriptRoot\..\FigBoost.exe",
-  [string]$Version = "0.5.61"
+  [string]$Version = "0.5.62"
 )
 
 $ErrorActionPreference = "Stop"
@@ -72,7 +72,7 @@ foreach ($relativePath in $payloadFiles) {
   $payloadMap[$relativePath] = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $root $relativePath)))
 }
 $payloadVersion = (Get-Content -LiteralPath (Join-Path $root 'payload\manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json).version
-$bundle = [ordered]@{ schema = 1; version = $payloadVersion; minPatcherVersion = '0.5.55'; files = $payloadMap }
+$bundle = [ordered]@{ schema = 1; version = $payloadVersion; minPatcherVersion = '0.5.62'; files = $payloadMap }
 $bundlePath = Join-Path $updateDir 'payload.json'
 $utf8 = New-Object Text.UTF8Encoding($false)
 [IO.File]::WriteAllText($bundlePath, ($bundle | ConvertTo-Json -Depth 5 -Compress), $utf8)
