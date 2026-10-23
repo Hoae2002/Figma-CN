@@ -27,7 +27,7 @@ if ($args -contains "-ForceClose" -or $args -contains "/ForceClose") { $ForceClo
 
 $PatchMarker = "FIGMA_ZH_OFFICIAL_MAIN_HOOK_V7"
 $UpdaterDisableMarker = "FIGMA_ZH_DISABLE_BUILTIN_UPDATER"
-$PatcherVersion = "0.5.63"
+$PatcherVersion = "0.5.64"
 # Reversible pause: keep the takeover implementation, but preserve native updates.
 $OfficialUpdateTakeoverEnabled = $false
 $PayloadFile = "i.js"

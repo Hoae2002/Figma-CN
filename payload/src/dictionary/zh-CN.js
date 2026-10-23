@@ -2,6 +2,12 @@
   "use strict";
 
   const exact = {
+    "Last week": "上周",
+    "Pop out Agents panel": "弹出 Agents 面板",
+    "Chat access": "聊天访问权限",
+    "Delete chat": "删除聊天",
+    "All plans": "所有套餐",
+    "You are already using the latest version of Figma. Missing a new feature? Try reloading your tabs and check again. If you experience any other issues, please contact support.": "您已经在使用最新版 Figma。 缺少新功能？请重新加载标签页后再检查。如果遇到其他问题，请联系支持。",
     "Break up bigger files into smaller ones.": "将较大的文件拆分成较小的文件。",
     "Move a few pages to a new file, or split a large library into smaller ones.": "将一些页面移动到新文件，或将大型组件库拆分成较小的组件库。",
     "Clean up layers and components.": "清理图层和组件。",

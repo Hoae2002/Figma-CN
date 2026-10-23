@@ -44,6 +44,22 @@ ${marker}`);
 
 const helpers = loadMenuHelpers();
 
+test("no-update dialog translates combined paragraphs while retaining spacing and actions", () => {
+  const first = "You are already using the latest version of Figma.";
+  const second = "Missing a new feature? Try reloading your tabs and check again. If you experience any other issues, please contact support.";
+  for (const separator of ["\n\n", "\r\n\r\n", " "]) {
+    const options = { title: "Figma", message: "No Update Available", detail: first + separator + second,
+      buttons: ["Reload All Tabs", "OK"], defaultId: 1, cancelId: 1, noLink: false };
+    const result = helpers.localizeDialogOptions(options);
+    assert.equal(result.detail, "您已经在使用最新版 Figma。" + separator + "缺少新功能？请重新加载标签页后再检查。如果遇到其他问题，请联系支持。");
+    assert.equal(result.message, "没有可用更新");
+    assert.equal(result.buttons[0], "重新加载全部标签页");
+    for (const key of ["title", "defaultId", "cancelId", "noLink"]) assert.equal(result[key], options[key]);
+    assert.equal(options.detail, first + separator + second);
+  }
+  assert.equal(helpers.localizeText("Custom note: " + first + "\n\n" + second), "Custom note: " + first + "\n\n" + second);
+});
+
 test("shell update label follows redraws and language changes without changing clicks or tab names", async () => {
   const { JSDOM } = require("jsdom");
   const dom = new JSDOM('<span role="tab">Update now</span><button id="unrelated">Update now</button><div class="tab_bar--updateButtonWrapper--PR7-P"><button id="update"><span>Update now</span></button></div>', { runScripts: "outside-only" });

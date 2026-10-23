@@ -24,6 +24,30 @@ function fixture(t, html, custom = {}, exact = {}, pageUrl = "https://www.figma.
 }
 const tick = () => new Promise(r => setTimeout(r, 50));
 
+test("chat and plan labels translate and restore without modifying user names or actions", async t => {
+  const dictionary = require("../payload/src/dictionary/zh-CN.js");
+  const labels = ["Last week", "Pop out Agents panel", "Chat access", "Delete chat", "All plans"];
+  const { document, runtime, snapshot } = fixture(t, `<aside><h3>Last week</h3></aside>
+    <div role="menu">${labels.slice(1).map(label => `<button role="menuitem">${label}</button>`).join("")}</div>
+    <button id="filter">All plans</button><div data-testid="file-name">All plans</div>
+    <div data-testid="page-name">Delete chat</div><input value="Chat access">`,
+    {}, dictionary.exact, "https://www.figma.com/design/test", dictionary);
+  let clicks = 0;
+  document.querySelector('[role="menuitem"]').onclick = () => clicks++;
+  await tick();
+  assert.equal(document.querySelector('h3').textContent, "上周");
+  assert.deepEqual([...document.querySelectorAll('[role="menuitem"]')].map(e => e.textContent), ["弹出 Agents 面板", "聊天访问权限", "删除聊天", "所有套餐"]);
+  assert.equal(document.querySelector('#filter').textContent, "所有套餐");
+  assert.equal(document.querySelector('[data-testid="file-name"]').textContent, "All plans");
+  assert.equal(document.querySelector('[data-testid="page-name"]').textContent, "Delete chat");
+  assert.equal(document.querySelector('input').value, "Chat access");
+  document.querySelector('[role="menuitem"]').click();
+  assert.equal(clicks, 1);
+  runtime.apply({ ...snapshot, revision: 2, settings: { ...snapshot.settings, enabled: false } });
+  assert.equal(document.querySelector('h3').textContent, "Last week");
+  assert.deepEqual([...document.querySelectorAll('[role="menuitem"]')].map(e => e.textContent), labels.slice(1));
+});
+
 test("memory tips translate split emphasis and links while screenshot labels preserve user names", async t => {
   const dictionary = require("../payload/src/dictionary/zh-CN.js");
   const tips = [

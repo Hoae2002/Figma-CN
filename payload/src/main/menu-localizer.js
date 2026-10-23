@@ -182,6 +182,7 @@
   };
 
   const labelPatterns = [
+    [/^You are already using the latest version of Figma\.(\s+)Missing a new feature\? Try reloading your tabs and check again\. If you experience any other issues, please contact support\.$/, "您已经在使用最新版 Figma。$1缺少新功能？请重新加载标签页后再检查。如果遇到其他问题，请联系支持。"],
     [/^Figma Desktop App version (.+)$/, "Figma 桌面应用版本 $1"],
     [/^Copyright © (\d{4}) Figma, Inc\.$/, "版权所有 © $1 Figma, Inc."],
     [/^→\s*Install now$/, "→ 立即安装"],
