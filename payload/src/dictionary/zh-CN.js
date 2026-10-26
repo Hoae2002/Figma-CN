@@ -2,6 +2,8 @@
   "use strict";
 
   const exact = {
+    "A new version of Figma Design is available": "Figma Design 有新版本可用",
+    "Reload": "重新加载",
     "Last week": "上周",
     "Pop out Agents panel": "弹出 Agents 面板",
     "Chat access": "聊天访问权限",
